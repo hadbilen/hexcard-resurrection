@@ -1,56 +1,56 @@
-# HexCard — Sistem Mimarisi ve Tasarım Spesifikasyonu (`v2.0-Argon`)
+# HexCard — System Architecture & Design Specification
 
-* **Proje Adı:** HexCard (HyperCard Resurrection & AI-Native Micro-App Studio)
-* **Hedef Etkinlik:** Kiroween 2026 Hackathon
-* **Birincil Kategori:** **Resurrection** *(Ölü bir teknolojiyi modern çağda yeniden diriltme)*
-* **İkincil Kategoriler:** **Costume Contest** *(Otantik 1987 Macintosh System 7 / 1-bit Dithered GUI)* & **Frankenstein** *(80'lerin yerel masaüstü kart mimarisi + 2026 LLM AST derleyicisi + Canvas2D/WebGL + WebAudio sentezleyici birleşimi)*
-* **Hedef Platform:** Web (Zero-Backend İstemci Çalışma Zamanı + Tek Dosya HTML/JSON Dağıtımı) ve Masaüstü (Tauri v2 sarmalayıcı uyumlu)
-
----
-
-## 1. Ürün Vizyonu ve Temel Mühendislik Felsefesi
-
-1987 yılında Bill Atkinson tarafından geliştirilen Apple HyperCard, programlama bilmeyen kullanıcıların bile "Kart Desteleri" (Stacks) metaforuyla veritabanları, etkileşimli kurgu oyunları (*Myst* ve *The Manhole* gibi), eğitim yazılımları ve arayüz prototipleri geliştirmesini sağlayan devrimsel bir "yazılım inşa kiti" idi.
-
-**HexCard**, HyperCard'ı basit bir slayt gösterisi olmaktan çıkaran gerçek mimari derinliğini koruyarak 2026 standartlarında yeniden diriltir:
-
-1. **Sıfır Derleme Süresi (Immediate Mode Authoring):** Tasarım modu ile çalışma zamanı arasında ayrım yoktur. Kullanıcı araç paletinden **Browse (El)** aracını seçtiği saniye uygulama canlıdır; **Button**, **Field** veya **Paint** araçlarından birini seçtiği saniye arayüzü ve mantığı canlı olarak düzenler.
-2. **Arka Plan Mirası (Background Layer Inheritance) ve `sharedText` Semantiği:** Kartlar birbirinden kopuk sayfalar değildir; ortak bir `HexBackground` şablonunu (grafik, buton ve metin alanlarını) paylaşırlar. Arka plandaki bir metin alanı tüm kartlarda aynı konumda görünür ancak `sharedText: false` ise her kart kendi verisini tutar (veritabanı kaydı mantığı), `sharedText: true` ise tüm kartlarda aynı sabit metni gösterir.
-3. **Halüsinasyonsuz Doğal Dil Programlama (NL-to-HexAST):** Kullanıcı bir bileşene sağ tıklayıp *"Tıklandığında 3. karta 'dissolve' efektiyle geç, skoru 10 artır ve 'harpsichord' sesiyle C4-E4-G4 notalarını çal"* yazdığında, AI katmanı bunu doğrudan güvenli ve deterministik bir **HexScriptAST** (Soyut Sözdizimi Ağacı) yapısına ve okunabilir **HexTalk** koduna derler.
-4. **Matematiksel 1-Bit Piksel Sadakati:** Görsel motor CSS filtreleriyle sahte bir retro görünüm vermez; Bill Atkinson'ın orijinal hata yayılım (dithering) algoritmasını, 38 klasik Macintosh `8x8` bit desenini ve **Galois LFSR (Linear Feedback Shift Register)** tabanlı gerçek piksel çözünme (`dissolve`) geçişlerini çalıştırır.
+* **Project Name:** HexCard (HyperCard Resurrection & AI-Native Micro-App Studio)
+* **Target Event:** Kiroween 2026 Hackathon
+* **Primary Category:** **Resurrection** *(Reviving a dead technology in the modern era)*
+* **Secondary Categories:** **Costume Contest** *(Authentic 1987 Macintosh System 7 / 1-bit Dithered GUI)* & **Frankenstein** *(Fusing an 80s native desktop card architecture + 2026 LLM AST compiler + Canvas2D/WebGL + WebAudio synthesizer)*
+* **Target Platform:** Web (Zero-Backend Client Runtime + Single-File HTML/JSON Distribution) and Desktop (Tauri v2 wrapper compatible)
 
 ---
 
-## 2. Çekirdek Veri Modeli ve 5 Katmanlı Mimari
+## 1. Product Vision & Core Engineering Philosophy
 
-HexCard'ın çalışma zamanı hiyerarşisi 5 katmandan oluşur:
+Developed by Bill Atkinson in 1987, Apple HyperCard was a revolutionary "software construction kit" that empowered even non-programmers to build databases, interactive fiction games (such as *Myst* and *The Manhole*), educational software, and interface prototypes using the metaphor of "Card Stacks."
+
+**HexCard** resurrects HyperCard to 2026 standards while preserving the true architectural depth that elevated it far beyond a simple slide presentation:
+
+1. **Zero Compilation Overhead (Immediate Mode Authoring):** There is no distinction between design mode and runtime. The moment the user selects the **Browse (Hand)** tool from the palette, the application is live; the moment they select the **Button**, **Field**, or **Paint** tools, they edit interface layout and logic live.
+2. **Background Layer Inheritance & `sharedText` Semantics:** Cards are not isolated standalone pages; they share a common `HexBackground` template (graphics, buttons, and text fields). A background text field appears in the exact same position across all cards, but if `sharedText: false`, each card stores its own record data (database record semantics); if `sharedText: true`, it displays the same static text across all cards.
+3. **Hallucination-Free Natural Language Programming (NL-to-HexAST):** When a user right-clicks a component and writes *"On click, transition to card 3 with a 'dissolve' effect, increase score by 10, and play notes C4-E4-G4 on 'harpsichord'"*, the AI layer compiles this directly into a safe, deterministic **HexScriptAST** (Abstract Syntax Tree) structure and human-readable **HexTalk** code.
+4. **Mathematical 1-Bit Pixel Fidelity:** The rendering engine does not rely on CSS filters for a fake retro look; it executes Bill Atkinson's original error-diffusion dithering algorithm, 38 classic Macintosh `8x8` bit patterns, and genuine **Galois LFSR (Linear Feedback Shift Register)**-based pixel-by-pixel `dissolve` transitions.
+
+---
+
+## 2. Core Data Model & 5-Layer Architecture
+
+HexCard's runtime hierarchy consists of 5 layers:
 
 ~~~text
-[ HexStack (Deste / Uygulama Kökü) ]
-   ├── Global Durum (Değişkenler, Özel İkonlar, Ses Bankaları, Tema Paleti)
-   ├── [ HexBackground (Paylaşılan Şablon Katmanı - 1..N) ]
-   │      ├── Background Bitmap Layer (512x342 1-bit paylaşılan piksel sanatı)
-   │      ├── Background Parts (Tüm kartlarda görünen ortak Butonlar / Alanlar)
-   │      └── Background Script (Alt kartların miras aldığı ortak olay işleyiciler)
-   └── [ HexCard (Tekil Ekran / Kayıt Katmanı - 1..M, bir Background'a bağlı) ]
-          ├── Card Bitmap Layer (512x342 1-bit karta özel şeffaf/maskeli piksel sanatı)
-          ├── Background Field Overrides (sharedText: false olan alanların bu karta özel verisi)
-          ├── Card Parts (Yalnızca bu kartta görünen özel Butonlar / Alanlar / Widget'lar)
-          └── Card Script (Bu karta özel olay işleyiciler)
+[ HexStack (Stack / Application Root) ]
+   ├── Global State (Variables, Custom Icons, Sound Banks, Theme Palette)
+   ├── [ HexBackground (Shared Template Layer - 1..N) ]
+   │      ├── Background Bitmap Layer (512x342 1-bit shared pixel art)
+   │      ├── Background Parts (Common Buttons / Fields visible across all cards)
+   │      └── Background Script (Shared event handlers inherited by child cards)
+   └── [ HexCard (Individual Screen / Record Layer - 1..M, bound to a Background) ]
+          ├── Card Bitmap Layer (512x342 1-bit card-specific transparent/masked pixel art)
+          ├── Background Field Overrides (Per-card data for fields with sharedText: false)
+          ├── Card Parts (Card-specific Buttons / Fields / Widgets visible only on this card)
+          └── Card Script (Card-specific event handlers)
 ~~~
 
-### 2.1. Kesin TypeScript Veri Şeması (`src/core/schema.ts`)
+### 2.1. Exact TypeScript Data Schema (`src/core/schema.ts`)
 
 ~~~typescript
 export type HexID = string; // Format: "stk_...", "bkg_...", "crd_...", "prt_..."
 
 export type VisualEffectType =
   | "cut"
-  | "dissolve"         // 18-bit Galois LFSR sözde-rastgele piksel çözünmesi
-  | "venetianBlinds"   // Yatay panjur şerit açılması
-  | "checkerboard"     // 8x8 dama tahtası geçişi
-  | "irisOpen"         // Merkezden dışa dikdörtgen açılma
-  | "irisClose"        // Dıştan merkeze kapanma
+  | "dissolve"         // 18-bit Galois LFSR pseudo-random pixel dissolution
+  | "venetianBlinds"   // Horizontal venetian blind slats opening
+  | "checkerboard"     // 8x8 checkerboard transition
+  | "irisOpen"         // Rectangular wipe from center outwards
+  | "irisClose"        // Inward rectangular wipe towards center
   | "wipeLeft"
   | "wipeRight"
   | "wipeUp"
@@ -61,25 +61,25 @@ export type VisualEffectType =
 export type VisualEffectSpeed = "verySlow" | "slow" | "normal" | "fast";
 
 export type AuthoringTool =
-  | "browse"      // Etkileşim modu (El ikonu)
-  | "button"      // Buton seçme/oluşturma/boyutlandırma aracı
-  | "field"       // Metin alanı seçme/oluşturma/boyutlandırma aracı
-  | "select"      // Dikdörtgen piksel seçimi (Marquee)
-  | "lasso"       // Serbest biçimli piksel seçimi
-  | "pencil"      // 1-piksel çizim (FatBits yakınlaştırma destekli)
-  | "brush"       // Seçili 8x8 bit deseniyle boyama
-  | "eraser"      // Piksel silici (Card katmanında şeffafa, Background'da beyaza siler)
-  | "line"        // Bresenham algoritmalı 1-bit doğru çizimi
-  | "spray"       // Rastgele matris dağılımlı sprey
-  | "rect"        // Dikdörtgen çerçeve / dolgulu kutu çizimi
-  | "paintBucket"; // 4-yönlü Flood-Fill algoritması ile 8x8 desen doldurma
+  | "browse"      // Interaction mode (Hand icon)
+  | "button"      // Button selection/creation/resize tool
+  | "field"       // Text field selection/creation/resize tool
+  | "select"      // Rectangular marquee pixel selection
+  | "lasso"       // Freeform pixel selection
+  | "pencil"      // 1-pixel drawing (FatBits zoom support)
+  | "brush"       // Paint using selected 8x8 bit pattern
+  | "eraser"      // Pixel eraser (erases to transparent on Card layer, white on Background)
+  | "line"        // Bresenham algorithm 1-bit line drawing
+  | "spray"       // Random matrix dispersion airbrush/spray
+  | "rect"        // Rectangular frame / filled box drawing
+  | "paintBucket"; // 4-way Flood-Fill algorithm using 8x8 bit pattern fill
 
 export interface HexBitmapLayer {
-  width: number;  // Standart: 512
-  height: number; // Standart: 342
+  width: number;  // Standard: 512
+  height: number; // Standard: 342
   /**
-   * RLE (Run-Length Encoding) + Base64 sıkıştırılmış 1-bit renk ve 1-bit maske verisi.
-   * Çalışma zamanında Uint8Array (0 = Şeffaf, 1 = Beyaz/Opak, 2 = Siyah/Opak) olarak açılır.
+   * RLE (Run-Length Encoding) + Base64 compressed 1-bit color and 1-bit mask data.
+   * Decompressed at runtime into a Uint8Array (0 = Transparent, 1 = White/Opaque, 2 = Black/Opaque).
    */
   rleData: string;
 }
@@ -90,18 +90,18 @@ export type ButtonStyle =
   | "transparent"
   | "opaque"
   | "rectangle"
-  | "roundRect"     // Klasik Mac yuvarlatılmış köşe buton
-  | "shadow"        // Alt ve sağ kenarda 2px siyah düşen gölgeli buton
+  | "roundRect"     // Classic Mac rounded rectangle button
+  | "shadow"        // Button with 2px black drop-shadow on bottom and right edges
   | "checkBox"
   | "radioButton"
-  | "default";      // Çift siyah çerçeveli ana aksiyon butonu
+  | "default";      // Primary action button with double black border
 
 export type FieldStyle =
   | "transparent"
   | "opaque"
   | "rectangle"
   | "shadow"
-  | "scrolling";    // Klasik Mac 1-bit oklu kaydırma çubuklu metin kutusu
+  | "scrolling";    // Classic Mac text field with 1-bit arrowed scrollbar
 
 export interface HexRect {
   x: number;
@@ -118,9 +118,9 @@ export interface HexPartBase {
   rect: HexRect;
   visible: boolean;
   enabled: boolean;
-  scriptSource: string;           // İnsan tarafından okunabilir HexTalk kaynak kodu
-  naturalLanguagePrompt?: string; // Kullanıcının girdiği son AI komutu
-  compiledAst: HexScriptAST;      // Sanal makine tarafından yürütülen deterministik AST
+  scriptSource: string;           // Human-readable HexTalk source code
+  naturalLanguagePrompt?: string; // Last AI prompt entered by the user
+  compiledAst: HexScriptAST;      // Deterministic AST executed by the virtual machine
 }
 
 export interface HexButtonPart extends HexPartBase {
@@ -128,20 +128,20 @@ export interface HexButtonPart extends HexPartBase {
   style: ButtonStyle;
   title: string;
   showName: boolean;
-  iconId?: string;                // 32x32 1-bit sprite ikonu referansı
-  autoHilite: boolean;            // Tıklandığında siyah/beyaz pikselleri ters çevir (invert)
-  hilite: boolean;                // Checkbox/Radio seçili durumu
-  family?: number;                // 1-15 arası Radio Button dışlayıcı grup numarası
+  iconId?: string;                // 32x32 1-bit sprite icon reference
+  autoHilite: boolean;            // Invert black/white pixels on click
+  hilite: boolean;                // Checked state for Checkbox/Radio
+  family?: number;                // Mutually exclusive radio button group number (1-15)
 }
 
 export interface HexFieldPart extends HexPartBase {
   type: "field";
   style: FieldStyle;
-  content: string;                // sharedText: true ise veya Card katmanındaysa buradaki metin okunur
-  sharedText: boolean;            // false ise ve Background katmanındaysa metin HexCard.bgFieldContents içinde tutulur
-  lockText: boolean;              // true ise Browse modunda kullanıcı metni düzenleyemez, tıklama olayları tetiklenir
+  content: string;                // Read if sharedText: true or when located on Card layer
+  sharedText: boolean;            // If false and on Background layer, text is stored in HexCard.bgFieldContents
+  lockText: boolean;              // If true, user cannot edit text in Browse mode; click events are triggered instead
   dontWrap: boolean;
-  showLines: boolean;             // Klasik noktalı defter satır çizgileri
+  showLines: boolean;             // Classic lined-notebook dotted horizontal rules
   textAlign: "left" | "center" | "right";
   textFont: "Chicago" | "Geneva" | "Monaco" | "NewYork";
   textSize: 9 | 10 | 12 | 14 | 18 | 24;
@@ -163,15 +163,15 @@ export interface HexBackground {
 export interface HexCard {
   id: HexID;
   name: string;
-  backgroundId: HexID;            // Miras alınan HexBackground referansı
-  bitmap: HexBitmapLayer;         // Arka planın üzerine binen şeffaf/maskeli kart çizimi
+  backgroundId: HexID;            // Inherited HexBackground reference
+  bitmap: HexBitmapLayer;         // Card drawing overlaid on background (with transparency/mask)
   parts: HexPart[];               // layerScope === "card"
   /**
-   * Arka planda tanımlı olup sharedText === false olan alanların
-   * bu karta özel metin içeriklerini tutan eşleme tablosu (Key: Part.id, Value: string)
+   * Mapping table storing card-specific text content for background fields
+   * where sharedText === false (Key: Part.id, Value: string)
    */
   bgFieldContents: Record<HexID, string>;
-  marked: boolean;                // Filtreleme ve "go to next marked card" sorguları için
+  marked: boolean;                // Used for filtering and "go to next marked card" queries
   cantDelete: boolean;
   dontSearch: boolean;
   scriptSource: string;
@@ -185,15 +185,15 @@ export interface HexStack {
   author: string;
   createdAt: string;
   updatedAt: string;
-  dimensions: { width: number; height: number }; // Varsayılan: 512 x 342
+  dimensions: { width: number; height: number }; // Default: 512 x 342
   themePalette: {
     name: "ClassicPaper" | "AmberCRT" | "GreenPhosphor" | "MidnightHex";
     darkBitHex: string;           // Classic: "#000000" | Amber: "#1A1000" | Green: "#041804"
     lightBitHex: string;          // Classic: "#FFFFFF" | Amber: "#FFB000" | Green: "#33FF33"
   };
   backgrounds: HexBackground[];
-  cards: HexCard[];               // Sıralı kart dizisi (Index 0 = First Card)
-  customIcons: Record<string, string>; // 32x32 1-bit Base64 ikon kütüphanesi
+  cards: HexCard[];               // Sequential card array (Index 0 = First Card)
+  customIcons: Record<string, string>; // 32x32 1-bit Base64 icon library
   scriptSource: string;
   compiledAst: HexScriptAST;
 }
@@ -201,42 +201,42 @@ export interface HexStack {
 
 ---
 
-## 3. Olay Zinciri ve Mesaj İletim Hiyerarşisi (The Message Path)
+## 3. The Message Path & Event Bubbling Hierarchy
 
-HyperCard mimarisinde her etkileşim bir **Mesaj (Message)** üretir. Bir bileşen bu mesajı yakalamazsa veya açıkça `pass <eventName>` çağrısı yaparsa, mesaj otomatik olarak bir üst katmana kabarcıklanır (event bubbling):
+In the HyperCard architecture, every interaction generates a **Message**. If a component does not handle the message or explicitly executes `pass <eventName>`, the message automatically bubbles up to the next layer in the hierarchy:
 
 ~~~text
-[ Kullanıcı Tıklaması / Klavye / Sistem Yaşam Döngüsü Olayı ]
+[ User Click / Keyboard / System Lifecycle Event ]
          │
          ▼
-1. Hedef Bileşen (HexPart: Button veya lockText=true olan Field)
-         │  (İşleyici yoksa veya "pass" edildiyse)
+1. Target Component (HexPart: Button or Field with lockText=true)
+         │  (If no handler exists or if "pass" was executed)
          ▼
-2. Aktif Kart (HexCard)
-         │  (İşleyici yoksa veya "pass" edildiyse)
+2. Active Card (HexCard)
+         │  (If no handler exists or if "pass" was executed)
          ▼
-3. Aktif Arka Plan (HexBackground)
-         │  (İşleyici yoksa veya "pass" edildiyse)
+3. Active Background (HexBackground)
+         │  (If no handler exists or if "pass" was executed)
          ▼
-4. Aktif Deste (HexStack)
-         │  (İşleyici yoksa veya "pass" edildiyse)
+4. Active Stack (HexStack)
+         │  (If no handler exists or if "pass" was executed)
          ▼
-5. HexEngine Yerleşik Çalışma Zamanı (Built-in Runtime Handlers)
+5. Built-in Runtime Handlers (HexEngine Built-in Runtime Handlers)
 ~~~
 
-### 3.1. Desteklenen Sistem Olayları
-* **Fare Etkileşimleri:** `mouseDown`, `mouseStillDown`, `mouseUp`, `mouseEnter`, `mouseWithin`, `mouseLeave`, `mouseDoubleClick`
-* **Yaşam Döngüsü (Lifecycle):** `openStack`, `closeStack`, `openBackground`, `closeBackground`, `openCard`, `closeCard`, `newCard`, `deleteCard`
-* **Veri Alanı ve Klavye:** `openField`, `closeField` (içerik değişip çıkıldığında), `exitField` (değişiklik olmadan çıkıldığında), `keyDown`, `returnInField`, `enterInField`
-* **Oyun ve Animasyon Döngüsü:** `idle` (Browse modunda aktif bir betik çalışmıyorken her 200ms'de bir tetiklenen arka plan döngüsü)
+### 3.1. Supported System Events
+* **Mouse Interactions:** `mouseDown`, `mouseStillDown`, `mouseUp`, `mouseEnter`, `mouseWithin`, `mouseLeave`, `mouseDoubleClick`
+* **Lifecycle:** `openStack`, `closeStack`, `openBackground`, `closeBackground`, `openCard`, `closeCard`, `newCard`, `deleteCard`
+* **Field & Keyboard:** `openField`, `closeField` (when content changed and exited), `exitField` (when exited without changes), `keyDown`, `returnInField`, `enterInField`
+* **Game & Animation Loop:** `idle` (Background loop triggered every 200ms when in Browse mode and no active script is executing)
 
 ---
 
-## 4. HexTalk / HexAST Deterministik Çalışma Zamanı ve AI Derleyici
+## 4. HexTalk / HexAST Deterministic Runtime & AI Compiler
 
-Güvenlik ve kararlılık için HexCard, kullanıcı betiklerini veya yapay zeka çıktılarını **asla `eval()` veya `new Function()` ile çalıştırmaz**. Tüm mantık, deterministik bir Soyut Sözdizimi Ağacı (**HexScriptAST**) üzerinde çalışan adım bütçeli (gas-limited) bir sanal makine tarafından yürütülür.
+For security and stability, HexCard **never executes user scripts or AI outputs via `eval()` or `new Function()`**. All logic is interpreted by a step-budgeted (gas-limited) virtual machine operating over a deterministic Abstract Syntax Tree (**HexScriptAST**).
 
-### 4.1. HexTalk EBNF Dilbilgisi Özeti
+### 4.1. HexTalk EBNF Grammar Summary
 
 ~~~ebnf
 Script        ::= { Handler } ;
@@ -260,11 +260,11 @@ RepeatBlock   ::= "repeat" ( "with" Identifier "=" Expression "to" Expression | 
 PassCmd       ::= "pass" Identifier ;
 ~~~
 
-### 4.2. Deterministik AST Şeması (`src/core/ast.ts`)
+### 4.2. Deterministic AST Schema (`src/core/ast.ts`)
 
 ~~~typescript
 export interface HexScriptAST {
-  handlers: Record<string, HexHandlerNode>; // Örn: { "mouseup": HexHandlerNode, "opencard": HexHandlerNode }
+  handlers: Record<string, HexHandlerNode>; // e.g.: { "mouseup": HexHandlerNode, "opencard": HexHandlerNode }
 }
 
 export interface HexHandlerNode {
@@ -285,9 +285,9 @@ export type HexStatementNode =
   | { kind: "MathMutation"; op: "add" | "subtract" | "multiply" | "divide"; amount: HexExprNode; destination: HexContainerTarget }
   | { kind: "SetProperty"; property: string; target: HexObjectTarget; value: HexExprNode }
   | { kind: "PlaySound"; voice: "harpsichord" | "boing" | "flute" | "square8bit" | "click"; tempo: number; notes: string }
-  | { kind: "ShowAnswerDialog"; prompt: HexExprNode; buttons: HexExprNode[] } // Seçilen butonu "it" değişkenine yazar
-  | { kind: "ShowAskDialog"; prompt: HexExprNode; defaultAnswer?: HexExprNode } // Girilen metni "it" değişkenine yazar
-  | { kind: "Wait"; ticks: HexExprNode } // 1 tick = 1/60 saniye (16.67ms)
+  | { kind: "ShowAnswerDialog"; prompt: HexExprNode; buttons: HexExprNode[] } // Writes chosen button to variable "it"
+  | { kind: "ShowAskDialog"; prompt: HexExprNode; defaultAnswer?: HexExprNode } // Writes entered text to variable "it"
+  | { kind: "Wait"; ticks: HexExprNode } // 1 tick = 1/60th second (16.67ms)
   | { kind: "FetchJson"; url: HexExprNode; jsonPath?: string; destination: HexContainerTarget }
   | { kind: "IfCondition"; condition: HexExprNode; thenBranch: HexStatementNode[]; elseBranch?: HexStatementNode[] }
   | {
@@ -302,7 +302,7 @@ export type HexStatementNode =
   | { kind: "PassEvent"; eventName: string };
 
 export type HexContainerTarget =
-  | { scope: "variable"; name: string } // "it" yerel değişkeni dahil
+  | { scope: "variable"; name: string } // Includes local variable "it"
   | { scope: "field"; layer: "card" | "background"; identifier: string | number };
 
 export type HexObjectTarget =
@@ -323,17 +323,17 @@ export type HexExprNode =
   | { kind: "UnaryOp"; op: "not" | "-"; operand: HexExprNode };
 ~~~
 
-### 4.3. Sanal Makine Güvenlik Kuralları (Sandbox Guardrails)
-* **Adım Bütçesi (Instruction Gas Limit):** Her olay tetiklemesi maksimum `10.000` AST düğümü yürütebilir. Limit aşılırsa sanal makine işlemi durdurur, mevcut yığın durumunu korur ve klasik System 7 bomba ikonlu hata penceresini (*"Sorry, a script error occurred: Loop exceeded 10,000 steps"*) gösterir.
-* **Özel `"it"` Değişkeni:** HyperCard geleneğine uygun olarak `ask`, `answer`, `get` ve `fetch` komutları sonuçlarını her zaman aktif işleyicinin yerel `it` değişkenine yazar.
-* **Çift Yönlü Senkronizasyon (NL <-> HexTalk <-> HexAST):** Kullanıcı doğal dilde bir komut girdiğinde LLM hem `HexScriptAST` JSON çıktısını hem de insan tarafından okunabilir `HexTalk` kodunu üretir; kullanıcı `HexTalk` kodunu elle düzenlediğinde yerleşik ayrıştırıcı (`parser.ts`) AST'yi anında günceller.
+### 4.3. Virtual Machine Sandbox Guardrails
+* **Instruction Gas Limit:** Each event trigger can evaluate at most `10,000` AST nodes. If the limit is exceeded, the virtual machine terminates execution, preserves current stack state, and displays the classic System 7 bomb error dialog (*"Sorry, a script error occurred: Loop exceeded 10,000 steps"*).
+* **Special `"it"` Variable:** True to HyperCard convention, commands such as `ask`, `answer`, `get`, and `fetch` always write their output into the local `it` variable of the active handler.
+* **Bi-directional Synchronization (NL <-> HexTalk <-> HexAST):** When the user enters a natural language prompt, the LLM outputs both the `HexScriptAST` JSON structure and human-readable `HexTalk` code; when the user manually edits `HexTalk` code, the built-in parser (`parser.ts`) immediately updates the AST.
 
 ---
 
-## 5. Görsel Motor: 1-Bit Estetik, Atkinson Dithering ve Geçiş Algoritmaları
+## 5. Visual Engine: 1-Bit Aesthetics, Atkinson Dithering & Transition Algorithms
 
-### 5.1. Bill Atkinson Dithering Algoritması (`src/engine/graphics/atkinsonDither.ts`)
-Kullanıcı renkli bir görseli sürükleyip bıraktığında veya AI ile görsel ürettiğinde, görüntü `512x342` çözünürlüğe ölçeklenir ve Bill Atkinson'ın orijinal hata yayılım matrisi ile 1-bit piksellere dönüştürülür. Floyd-Steinberg algoritmasının aksine Atkinson algoritması niceleme hatasının yalnızca **6/8'ini (%75)** komşu piksellere dağıtır; bu sayede 1-bit ekranda çamurlaşma önlenir ve yüksek kontrastlı net kenarlar elde edilir:
+### 5.1. Bill Atkinson Dithering Algorithm (`src/engine/graphics/atkinsonDither.ts`)
+When the user drags and drops a color image or generates an image using AI, the image is scaled to `512x342` resolution and converted to 1-bit pixels using Bill Atkinson's original error-diffusion matrix. Unlike the Floyd-Steinberg algorithm, Atkinson dithering diffuses only **6/8 (75%)** of the quantization error to neighbor pixels; this prevents muddy clustering on 1-bit displays, yielding high-contrast, crisp edges:
 
 ~~~text
           [ * ]   1/8    1/8
@@ -356,9 +356,9 @@ export function applyAtkinsonDithering(
       const idx = y * width + x;
       const oldPixel = lum[idx];
       const newPixel = oldPixel < threshold ? 0 : 255;
-      out[idx] = newPixel === 0 ? 2 : 1; // 2 = Siyah Bit, 1 = Beyaz Bit
+      out[idx] = newPixel === 0 ? 2 : 1; // 2 = Black Bit, 1 = White Bit
 
-      const err = (oldPixel - newPixel) / 8; // Hatanın 1/8'i
+      const err = (oldPixel - newPixel) / 8; // 1/8th of error
 
       if (x + 1 < width) lum[idx + 1] += err;
       if (x + 2 < width) lum[idx + 2] += err;
@@ -376,11 +376,11 @@ export function applyAtkinsonDithering(
 }
 ~~~
 
-### 5.2. Galois LFSR Tabanlı Gerçek `visual effect dissolve` (`src/engine/graphics/lfsrDissolve.ts`)
-1-bit ekranda gri ton veya yarı saydamlık (alpha blending) olmadığı için kartlar arası `dissolve` geçişi **18-bit Galois Doğrusal Geri Beslemeli Kaydırma Yazmacı (LFSR)** ile yapılır. Bu algoritma `512 x 342 = 175.104` pikselin tamamını hiçbir pikseli iki kez ziyaret etmeden sözde-rastgele sırayla eski karttan yeni karta kopyalar:
+### 5.2. Authentic `visual effect dissolve` Based on Galois LFSR (`src/engine/graphics/lfsrDissolve.ts`)
+Because 1-bit displays lack grayscales or alpha blending, card-to-card `dissolve` transitions are performed using an **18-bit Galois Linear Feedback Shift Register (LFSR)**. This algorithm visits every single pixel in the `512 x 342 = 175,104` frame in a pseudo-random order without visiting any pixel twice, copying pixels from the old card to the new card:
 
 ~~~typescript
-// 18-bit maksimal periyotlu (2^18 - 1 = 262.143) Galois LFSR polinom maskesi: 0x20400
+// 18-bit maximal-period (2^18 - 1 = 262,143) Galois LFSR polynomial mask: 0x20400
 export function stepDissolveFrame(
   currentFrameBuffer: Uint32Array,
   targetFrameBuffer: Uint32Array,
@@ -404,7 +404,7 @@ export function stepDissolveFrame(
     if (state === 1) {
       currentFrameBuffer[0] = targetFrameBuffer[0];
       lfsrStateRef.state = 1;
-      return true; // Geçiş tamamlandı
+      return true; // Transition complete
     }
   }
   lfsrStateRef.state = state;
@@ -412,46 +412,46 @@ export function stepDissolveFrame(
 }
 ~~~
 
-### 5.3. Dünya Uzayına Kilitli 8x8 Bit Desenleri (`src/engine/graphics/patterns.ts`)
-Boya kovası ve fırça araçları her biri 8 baytlık (`Uint8Array(8)`) bit maskesiyle tanımlanan 38 klasik Macintosh desenini kullanır. Desen biti `const bit = (pattern[y & 7] >> (7 - (x & 7))) & 1;` formülüyle doğrudan tuval koordinatlarına kilitlenir; böylece üst üste binen fırça darbelerinde desen kayması yaşanmaz.
+### 5.3. World-Space Locked 8x8 Bit Patterns (`src/engine/graphics/patterns.ts`)
+The paint bucket and brush tools utilize 38 classic Macintosh patterns, each defined by an 8-byte (`Uint8Array(8)`) bitmask. A pattern bit is locked directly to canvas world coordinates using the formula `const bit = (pattern[y & 7] >> (7 - (x & 7))) & 1;`, preventing pattern drift or misalignment across overlapping brush strokes.
 
 ---
 
-## 6. WebAudio Prosedürel Ses Sentezleyici (`src/engine/audio/synth.ts`)
+## 6. WebAudio Procedural Sound Synthesizer (`src/engine/audio/synth.ts`)
 
-Harici MP3/WAV dosyalarına ihtiyaç duymadan tamamen `AudioContext` üzerinde çalışan prosedürel ses motoru:
-1. **`harpsichord`:** Karplus-Strong telli çalgı fiziksel modelleme algoritması (kısa gürültü patlaması + alçak geçiren geri beslemeli gecikme hattı) ile otantik 1987 klavsen tınısı üretir.
-2. **`boing`:** Sinüs osilatörü üzerinde üstel perde kaydırma (pitch envelope) ve düşük frekanslı modülasyon (LFO) uygular.
-3. **`flute` & `square8bit`:** ADSR zarflı üçgen ve darbe genişlik modülasyonlu (PWM) kare dalga sentezleyicileri.
-4. **Nota Dizisi Çözümleyici:** `play "harpsichord" tempo 140 "c4q e4q g4h c5w"` formatındaki dizileri milisaniye hassasiyetinde zamanlayarak çalar (`w`=birlik, `h`=ikilik, `q`=dörtlük, `e`=sekizlik, `s`=onaltılık, `.`=noktalı uzatma).
-
----
-
-## 7. Kullanıcı Arayüzü (System 7 GUI) ve Çift Modlu Yazarlık Mimarisi
-
-1. **Üst Menü Çubuğu:** `Hex`, `File`, `Edit`, `Go`, `Tools`, `Objects`, `Paint` ve `AI Conjure` menülerini barındırır.
-2. **Koparılabilir Araç Paleti (Tear-Off Floating Tools Palette):** Kullanıcı `Tools` menüsünü aşağı doğru sürüklediğinde menü koparak ekranda taşınabilir 12 araçlık sabit bir palet penceresine dönüşür.
-3. **Arka Plan Düzenleme Modu (`Edit Background` / `Cmd+B`):** Aktif edildiğinde menü çubuğunun çevresinde klasik **kalın diyagonal şeritler (hash marks)** belirir. Bu modda yapılan tüm çizimler ve eklenen tüm bileşenler doğrudan aktif `HexBackground` katmanına kaydedilir.
-4. **Bileşen Denetçisi (Object Inspector) ve HexAI Spellcaster:** Bir butona veya alana çift tıklandığında açılan modal pencerede bileşenin görsel özellikleri, **HexTalk** kod editörü ve doğal dilden AST üreten **HexAI Spellcaster** istem kutusu yer alır.
-5. **Görsel Deste Haritası (Stack Graph Modal):** Destedeki tüm kartları minyatür 1-bit önizlemeleriyle ve aralarındaki `GoToCard` oklarıyla birlikte etkileşimli bir düğüm grafiği olarak çizer.
+A procedural sound engine running entirely on `AudioContext` without requiring external MP3/WAV files:
+1. **`harpsichord`:** Uses the Karplus-Strong physical modeling plucked-string algorithm (short noise burst + low-pass feedback delay line) to synthesize authentic 1987 harpsichord timbre.
+2. **`boing`:** Applies exponential pitch envelope sliding and low-frequency modulation (LFO) across a sine oscillator.
+3. **`flute` & `square8bit`:** Triangle-wave synthesizer with ADSR envelope and pulse-width modulated (PWM) 8-bit square-wave synthesizer.
+4. **Note Sequence Parser:** Parses and plays note sequences in the format `play "harpsichord" tempo 140 "c4q e4q g4h c5w"` with millisecond-accurate scheduling (`w`=whole note, `h`=half note, `q`=quarter note, `e`=eighth note, `s`=sixteenth note, `.`=dotted duration extension).
 
 ---
 
-## 8. Kiro IDE Entegrasyon Spesifikasyonu (`.kiro/` Dizin Yapısı)
+## 7. User Interface (System 7 GUI) & Dual-Mode Authoring Architecture
 
-Kiroween değerlendirme kriterlerine tam uyum sağlamak için proje kök dizininde aşağıdaki `.kiro` mimarisi kullanılır:
+1. **Top Menu Bar:** Hosts `Hex`, `File`, `Edit`, `Go`, `Tools`, `Objects`, `Paint`, and `AI Conjure` menus.
+2. **Tear-Off Floating Tools Palette:** When the user drags downward from the `Tools` menu header, the menu tears off into a draggable, floating 12-tool palette window.
+3. **Background Editing Mode (`Edit Background` / `Cmd+B`):** When active, classic **thick diagonal hash marks (stripes)** appear around the menu bar border. In this mode, all drawing actions and newly created components are committed directly to the active `HexBackground` layer.
+4. **Object Inspector & HexAI Spellcaster:** Double-clicking any button or field opens a modal dialog exposing visual component properties, the **HexTalk** script editor, and the **HexAI Spellcaster** natural-language-to-AST prompt input.
+5. **Interactive Stack Graph Modal:** Renders all cards in the stack as an interactive node graph with miniature 1-bit previews and directional `GoToCard` transition arrows.
+
+---
+
+## 8. Kiro IDE Integration Specification (`.kiro/` Directory Structure)
+
+To ensure full compliance with Kiroween evaluation criteria, the following `.kiro` architecture is maintained at the project root:
 
 ~~~text
 .kiro/
 ├── steering/
-│   ├── product.md               # Ürün vizyonu, 5 katmanlı HyperCard kuralları ve terimler sözlüğü
-│   ├── tech.md                  # Teknoloji yığını, 1-bit render kısıtları, eval() yasağı
-│   └── structure.md             # Modül sınırları ve katmanlı mimari kuralları
+│   ├── product.md               # Product vision, 5-layer HyperCard rules, and terminology glossary
+│   ├── tech.md                  # Technology stack, 1-bit rendering constraints, eval() prohibition
+│   └── structure.md             # Module boundaries and layered architecture rules
 ├── specs/
 │   ├── 01-core-stack-engine/
-│   │   ├── requirements.md      # EARS notasyonlu kabul kriterleri
-│   │   ├── design.md            # Veri yapıları ve mesaj iletim diyagramları
-│   │   └── tasks.md             # İzlenebilir alt görev listesi
+│   │   ├── requirements.md      # Acceptance criteria in EARS notation
+│   │   ├── design.md            # Data structures and message passing diagrams
+│   │   └── tasks.md             # Traceable subtask list
 │   ├── 02-hextalk-ast-vm/
 │   │   ├── requirements.md
 │   │   ├── design.md
@@ -461,91 +461,91 @@ Kiroween değerlendirme kriterlerine tam uyum sağlamak için proje kök dizinin
 │       ├── design.md
 │       └── tasks.md
 └── hooks/
-    ├── validate-ast-safety.json # src/core/** değiştiğinde eval() yasağını ve VM adım limitini denetler
-    └── enforce-1bit-ui.json     # src/ui/** değiştiğinde bulanık gölge/gradyan kullanımını engeller
+    ├── validate-ast-safety.json # Validates eval() ban and VM step limit when src/core/** changes
+    └── enforce-1bit-ui.json     # Blocks blurry shadows and gradients when src/ui/** changes
 ~~~
 
-### 8.1. EARS Notasyonlu Gereksinim Şablonu (`.kiro/specs/01-core-stack-engine/requirements.md`)
+### 8.1. EARS-Notation Requirements Template (`.kiro/specs/01-core-stack-engine/requirements.md`)
 
 ~~~markdown
 # Requirements: Core Stack & Message Passing Engine
 
 ## REQ-1: Background Layer Inheritance & SharedText Semantics
-- **User Story:** Bir deste tasarımcısı olarak, birden fazla kartın ortak bir arka plan şablonunu paylaşmasını ancak veri alanlarının karta özel metin tutabilmesini istiyorum.
+- **User Story:** As a stack designer, I want multiple cards to share a common background template while allowing data fields to hold card-specific text.
 - **Acceptance Criteria (EARS):**
   1. WHEN a `HexCard` is rendered, THE SYSTEM SHALL composite the linked `HexBackground` bitmap and background parts underneath the card's own bitmap and card parts.
   2. WHERE a background `HexFieldPart` has `sharedText` set to `false`, WHEN the user or a script modifies the field's text on a specific card, THE SYSTEM SHALL store and retrieve the text from `HexCard.bgFieldContents[fieldId]` without mutating other cards sharing that background.
   3. WHERE a background `HexFieldPart` has `sharedText` set to `true`, WHEN the field's text is modified on any card, THE SYSTEM SHALL update `HexFieldPart.content` on the `HexBackground` so all cards sharing that background reflect the change immediately.
 
 ## REQ-2: Deterministic Message Passing Hierarchy
-- **User Story:** Bir uygulama geliştiricisi olarak, bir bileşende işlenmeyen olayların otomatik olarak Kart, Arka Plan ve Deste katmanlarına iletilmesini istiyorum.
+- **User Story:** As an application developer, I want unhandled events on a component to propagate automatically up to Card, Background, and Stack layers.
 - **Acceptance Criteria (EARS):**
   1. WHEN an interaction event (e.g., `mouseUp`) is triggered on a `HexPart` while the active tool is `browse`, THE SYSTEM SHALL execute the matching handler in `HexPart.compiledAst` if defined.
   2. IF the target `HexPart` does not define a handler for the event OR executes a `PassEvent` statement, THEN THE SYSTEM SHALL propagate the event up the hierarchy in the exact order: `HexCard` -> `HexBackground` -> `HexStack` -> `HexRuntimeBuiltIns`.
 
 ## REQ-3: Step-Budgeted Sandboxed Execution
-- **User Story:** Bir platform kullanıcısı olarak, hatalı veya sonsuz döngü içeren kart betiklerinin tarayıcıyı dondurmamasını istiyorum.
+- **User Story:** As a platform user, I want card scripts containing bugs or infinite loops to not freeze the browser.
 - **Acceptance Criteria (EARS):**
   1. WHILE the HexAST Virtual Machine is executing an event handler chain, THE SYSTEM SHALL increment an instruction counter for every evaluated AST node.
   2. IF the instruction counter exceeds `10,000` steps within a single event dispatch, THEN THE SYSTEM SHALL halt execution immediately, preserve current stack state, and display a retro System 7 script error modal pointing to the offending handler.
 ~~~
 
-### 8.2. Kiro Agent Hook Tanımı (`.kiro/hooks/validate-ast-safety.json`)
+### 8.2. Kiro Agent Hook Definition (`.kiro/hooks/validate-ast-safety.json`)
 
 ~~~json
 {
   "name": "Validate HexAST Sandbox & Schema Integrity",
-  "description": "Çekirdek VM ve AST dosyaları güncellendiğinde dinamik kod yürütme (eval/Function) olmadığını ve birim testlerinin geçtiğini doğrular.",
+  "description": "Verifies no dynamic code execution (eval/Function) is introduced and unit tests pass when core VM and AST files are updated.",
   "trigger": {
     "type": "file_save",
     "patterns": ["src/core/**/*.ts", "src/ai/**/*.ts"]
   },
   "action": {
     "type": "agent_prompt",
-    "prompt": "İlgili dosyayı incele: 1) Hiçbir koşulda eval(), new Function() veya güvensiz DOM enjeksiyonu kullanılmadığını doğrula. 2) Yeni eklenen AST düğümlerinin src/core/vm.ts içerisindeki instruction gas-limit sayacını artırdığından emin ol. 3) Uyumsuzluk varsa düzelt."
+    "prompt": "Inspect the modified file: 1) Verify that under no circumstances eval(), new Function(), or unsafe DOM injections are used. 2) Ensure that any newly added AST nodes increment the instruction gas-limit counter in src/core/vm.ts. 3) Fix any discrepancies if found."
   }
 }
 ~~~
 
 ---
 
-## 9. Uygulama Dizin Yapısı ve Jüri Vitrin Desteleri (Showcase Stacks)
+## 9. Application Directory Structure & Jury Showcase Stacks
 
 ~~~text
 hexcard/
-├── .kiro/                         # Kiro Spec, Steering ve Hook dosyaları
+├── .kiro/                         # Kiro Spec, Steering, and Hook files
 ├── src/
 │   ├── core/
-│   │   ├── schema.ts              # Stack, Background, Card, Part veri modelleri
-│   │   ├── ast.ts                 # HexScriptAST düğüm tipleri
-│   │   ├── vm.ts                  # Adım bütçeli (gas-limited) asenkron AST yorumlayıcısı
-│   │   ├── parser.ts              # HexTalk <-> HexScriptAST çift yönlü dönüştürücü
-│   │   ├── messageBus.ts          # Part -> Card -> Background -> Stack olay kabarcıklanması
-│   │   └── history.ts             # 50 adımlı Undo/Redo Command Pattern halka tamponu
+│   │   ├── schema.ts              # Stack, Background, Card, Part data models
+│   │   ├── ast.ts                 # HexScriptAST node types
+│   │   ├── vm.ts                  # Step-budgeted (gas-limited) async AST interpreter
+│   │   ├── parser.ts              # Bi-directional HexTalk <-> HexScriptAST converter
+│   │   ├── messageBus.ts          # Part -> Card -> Background -> Stack event bubbling
+│   │   └── history.ts             # 50-step Undo/Redo Command Pattern ring buffer
 │   ├── engine/
 │   │   ├── graphics/
-│   │   │   ├── bitmapCanvas.ts    # 512x342 1-bit çift katmanlı (Background + Card) birleştirici
-│   │   │   ├── atkinsonDither.ts  # Görsel içe aktarma için Bill Atkinson hata yayılım motoru
-│   │   │   ├── patterns.ts        # 38 adet 8x8 klasik Mac bit maskesi ve flood-fill
+│   │   │   ├── bitmapCanvas.ts    # 512x342 1-bit dual-layer (Background + Card) compositor
+│   │   │   ├── atkinsonDither.ts  # Bill Atkinson error diffusion engine for image import
+│   │   │   ├── patterns.ts        # 38 8x8 classic Mac bitmasks and flood-fill
 │   │   │   └── lfsrDissolve.ts    # Galois LFSR Dissolve, Venetian Blinds, Iris, Checkerboard
 │   │   └── audio/
-│   │       └── synth.ts           # WebAudio Karplus-Strong Harpsichord & 8-bit ses sentezleyici
+│   │       └── synth.ts           # WebAudio Karplus-Strong Harpsichord & 8-bit sound synth
 │   ├── ai/
-│   │   ├── spellcaster.ts         # Doğal dil promptlarını deterministik HexScriptAST'ye derleyen servis
-│   │   └── stackGenerator.ts      # Tek prompt ile tam bir çok kartlı mikro uygulama/oyun üreteci
+│   │   ├── spellcaster.ts         # Service compiling natural language prompts into deterministic HexScriptAST
+│   │   └── stackGenerator.ts      # Multi-card micro-app/game generator from a single prompt
 │   ├── storage/
-│   │   ├── indexedDb.ts           # Yerel otomatik kayıt
-│   │   ├── urlCodec.ts            # Sıkıştırılmış URL Hash üzerinden sunucusuz paylaşım
-│   │   └── htmlExporter.ts        # Desteyi tek başına çalışan bağımsız .html dosyasına paketleyici
+│   │   ├── indexedDb.ts           # Local automatic persistence
+│   │   ├── urlCodec.ts            # Serverless sharing via compressed URL Hash
+│   │   └── htmlExporter.ts        # Bundler packaging stack into a standalone runnable .html file
 │   ├── presets/
-│   │   ├── hauntedMansion.ts      # 1) "The Haunted Stack of 1987": 1-bit korku/bulmaca macera oyunu
-│   │   ├── retroSynthDeck.ts      # 2) "HexSynth Sequencer": Klavsen ve 8-bit müzik sıralayıcı
-│   │   └── apiWeatherOracle.ts    # 3) "MacOracle 1987": Canlı veri çeken retro masaüstü paneli
+│   │   ├── hauntedMansion.ts      # 1) "The Haunted Stack of 1987": 1-bit horror/puzzle adventure game
+│   │   ├── retroSynthDeck.ts      # 2) "HexSynth Sequencer": Harpsichord and 8-bit music sequencer
+│   │   └── apiWeatherOracle.ts    # 3) "MacOracle 1987": Live API data-fetching retro desktop dashboard
 │   └── ui/
-│       ├── System7Shell.tsx       # Menü çubuğu, pencere çerçevesi ve CRT/Klasik tema değiştirici
-│       ├── FloatingTools.tsx      # Koparılabilir 12 araçlı klasik HyperCard paleti
-│       ├── CardViewport.tsx       # Canvas + Etkileşimli Part katmanı
-│       ├── ObjectInspector.tsx    # Özellik düzenleyici + HexAI Spellcaster arayüzü
-│       └── StackGraphModal.tsx    # Kartlar arası görsel düğüm haritası
+│       ├── System7Shell.tsx       # Menu bar, window chrome, and CRT/Classic theme switcher
+│       ├── FloatingTools.tsx      # Tear-off classic 12-tool HyperCard palette
+│       ├── CardViewport.tsx       # Canvas + Interactive Part layer
+│       ├── ObjectInspector.tsx    # Property inspector + HexAI Spellcaster interface
+│       └── StackGraphModal.tsx    # Visual interactive node graph of stack cards
 └── package.json
 ~~~
