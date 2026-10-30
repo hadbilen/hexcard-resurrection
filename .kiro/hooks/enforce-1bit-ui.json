@@ -1,0 +1,16 @@
+{
+    "name": "Enforce Authentic 1-Bit System 7 Aesthetics",
+    "description": "Checks UI and graphics components on save to ensure crisp 1-bit rendering without blurry shadows or modern gradients.",
+    "trigger": {
+        "type": "file_save",
+        "patterns": [
+            "src/ui/**/*.tsx",
+            "src/engine/graphics/**/*.ts",
+            "src/**/*.css"
+        ]
+    },
+    "action": {
+        "type": "agent_prompt",
+        "prompt": "Review the saved UI or graphics file against .kiro/steering/tech.md: Ensure canvas elements enforce pixelated rendering, disallow blurry CSS box-shadows or gradients, and verify that visual transitions use the pixel buffer engine (Galois LFSR dissolve) rather than CSS opacity transitions."
+    }
+}

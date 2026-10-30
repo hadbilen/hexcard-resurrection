@@ -1,0 +1,15 @@
+{
+    "name": "Validate HexAST Sandbox & Gas Limit Safety",
+    "description": "Automatically audits core VM, AST, and AI compiler changes on save to guarantee zero eval() usage and strict 10,000-step gas metering.",
+    "trigger": {
+        "type": "file_save",
+        "patterns": [
+            "src/core/**/*.ts",
+            "src/ai/**/*.ts"
+        ]
+    },
+    "action": {
+        "type": "agent_prompt",
+        "prompt": "Audit the saved file against .kiro/steering/tech.md: 1) Verify that eval(), new Function(), or dynamic script tags are NEVER used. 2) Ensure every statement and expression evaluation path in src/core/vm.ts increments the instruction step counter and halts at 10,000 steps. 3) Verify that sharedText semantics on HexFieldPart read/write to HexCard.bgFieldContents[fieldId] when sharedText is false."
+    }
+}
