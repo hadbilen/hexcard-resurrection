@@ -328,6 +328,18 @@ export type HexExprNode =
 * **Special `"it"` Variable:** True to HyperCard convention, commands such as `ask`, `answer`, `get`, and `fetch` always write their output into the local `it` variable of the active handler.
 * **Bi-directional Synchronization (NL <-> HexTalk <-> HexAST):** When the user enters a natural language prompt, the LLM outputs both the `HexScriptAST` JSON structure and human-readable `HexTalk` code; when the user manually edits `HexTalk` code, the built-in parser (`parser.ts`) immediately updates the AST.
 
+### 4.4. HexAI Spellcaster: Tri-Tier Zero-Config Architecture (`src/ai/spellcaster.ts`)
+
+To guarantee that hackathon judges can test natural-language-to-AST compilation immediately with **zero configuration (no API key setup required)** while keeping the public repository 100% free of exposed secrets, HexAI Spellcaster implements a deterministic **Tri-Tier Hybrid Compiler**:
+
+1. **Tier 1 — Zero-Config Local Semantic AST Compiler & Grimoire (Default / Offline-First):**
+   - **Built-in Spell Grimoire:** The Object Inspector includes a 1-click *Grimoire Preset Library* containing 24 curated natural language prompts (e.g., *"Dissolve to next card and play a harpsichord fanfare"*, *"Ask for player name, store in field 'HeroName', and add 50 to Score"*, *"Shake button on click with boing sound"*).
+   - **Local Heuristic NL-to-AST Engine:** A deterministic intent-and-slot parser that tokenizes freeform English prompts (extracting target cards, `VisualEffectType`, `PlaySound` notes/voices, container mutations, and `IfCondition` branches) and compiles them directly into valid `HexScriptAST` + formatted `HexTalk` code in `< 5ms` with zero network calls.
+2. **Tier 2 — Stateless Rate-Limited Edge Proxy (Optional Cloud Endpoint):**
+   - If `import.meta.env.VITE_HEXAI_PROXY_URL` is configured, complex multi-card prompts are routed to a lightweight Cloudflare Worker proxy enforcing strict JSON Schema output (`HexScriptAST`) and IP-based rate limiting. If the proxy is unreachable or unconfigured, execution transparently falls back to Tier 1.
+3. **Tier 3 — Bring-Your-Own-Key (BYOK) Studio Mode:**
+   - Users can optionally open `AI Conjure -> Oracle Settings...` in the System 7 menu bar to input a session-only API key (stored strictly in memory, never persisted to exported stacks or URLs) for unconstrained multi-card generation.
+
 ---
 
 ## 5. Visual Engine: 1-Bit Aesthetics, Atkinson Dithering & Transition Algorithms
@@ -414,6 +426,96 @@ export function stepDissolveFrame(
 
 ### 5.3. World-Space Locked 8x8 Bit Patterns (`src/engine/graphics/patterns.ts`)
 The paint bucket and brush tools utilize 38 classic Macintosh patterns, each defined by an 8-byte (`Uint8Array(8)`) bitmask. A pattern bit is locked directly to canvas world coordinates using the formula `const bit = (pattern[y & 7] >> (7 - (x & 7))) & 1;`, preventing pattern drift or misalignment across overlapping brush strokes.
+
+### 5.4. 3-State RLE Bitmap Compression Protocol (`src/engine/graphics/rleCodec.ts`)
+
+Every `HexBitmapLayer` (`512 x 342 = 175,104` pixels) uses a deterministic 3-state pixel model:
+- `0` = **Transparent** (Used on Card layers to let the underlying `HexBackground` show through)
+- `1` = **White / Opaque Light Bit**
+- `2` = **Black / Opaque Dark Bit**
+
+To prevent incompatible serialization formats across modules, `rleData` is encoded using a canonical **2-Bit State + Run-Length Byte Stream** converted to Base64:
+- **Short Run (1 to 63 pixels):** A single byte `(state << 6) | runLength`, where bits `7..6` store the pixel state (`0`, `1`, or `2`) and bits `5..0` store the count (`1..63`).
+- **Extended Run (64 to 65,535 pixels):** A 3-byte sequence where byte 0 is `(state << 6) | 0` (runLength bits set to `0`), followed by a 16-bit unsigned big-endian integer (`(runLength >> 8) & 0xFF`, `runLength & 0xFF`).
+- **Efficiency:** A blank `512x342` card (`175,104` transparent pixels) compresses into just **9 bytes** (12 Base64 characters).
+
+~~~typescript
+export const BITMAP_WIDTH = 512;
+export const BITMAP_HEIGHT = 342;
+export const TOTAL_PIXELS = BITMAP_WIDTH * BITMAP_HEIGHT; // 175,104
+
+export function encodeBitmapRLE(pixels: Uint8Array): string {
+  if (pixels.length !== TOTAL_PIXELS) {
+    throw new Error(`Invalid bitmap buffer length: expected ${TOTAL_PIXELS}, got ${pixels.length}`);
+  }
+  const bytes: number[] = [];
+  let i = 0;
+
+  while (i < TOTAL_PIXELS) {
+    const state = pixels[i] & 0x03;
+    let run = 1;
+    while (i + run < TOTAL_PIXELS && pixels[i + run] === state && run < 65535) {
+      run++;
+    }
+    if (run <= 63) {
+      bytes.push((state << 6) | run);
+    } else {
+      bytes.push(state << 6); // 0 in lower 6 bits signals 16-bit big-endian length
+      bytes.push((run >> 8) & 0xff);
+      bytes.push(run & 0xff);
+    }
+    i += run;
+  }
+
+  let binary = "";
+  for (let j = 0; j < bytes.length; j++) {
+    binary += String.fromCharCode(bytes[j]);
+  }
+  return btoa(binary);
+}
+
+export function decodeBitmapRLE(rleData: string, defaultFill: 0 | 1 | 2 = 0): Uint8Array {
+  const out = new Uint8Array(TOTAL_PIXELS);
+  if (!rleData) {
+    out.fill(defaultFill);
+    return out;
+  }
+
+  const binary = atob(rleData);
+  let writeIdx = 0;
+  let readIdx = 0;
+
+  while (readIdx < binary.length && writeIdx < TOTAL_PIXELS) {
+    const header = binary.charCodeAt(readIdx++);
+    const state = (header >> 6) & 0x03;
+    let run = header & 0x3f;
+
+    if (run === 0) {
+      const hi = binary.charCodeAt(readIdx++);
+      const lo = binary.charCodeAt(readIdx++);
+      run = (hi << 8) | lo;
+    }
+
+    const end = Math.min(writeIdx + run, TOTAL_PIXELS);
+    out.fill(state, writeIdx, end);
+    writeIdx = end;
+  }
+
+  return out;
+}
+~~~
+
+---
+
+### 5.5. Authentic 1-Bit Typography & Zero Anti-Aliasing Pipeline
+
+Modern browsers automatically apply subpixel grayscale anti-aliasing to text and canvas paths, which breaks authentic 1-bit aesthetics. HexCard enforces strict binary pixel rendering across both DOM and Canvas layers:
+
+1. **Global CSS Enforcement:**
+   - All viewports and canvases enforce `image-rendering: pixelated; image-rendering: crisp-edges; -webkit-font-smoothing: none; font-smooth: never;`.
+   - Zero CSS `blur()`, `box-shadow` with blur radius (`> 0px`), `linear-gradient()`, or semi-transparent `rgba()` colors are permitted anywhere in the UI. Drop shadows must be solid `1px` or `2px` offset `#000000` or `8x8` dithered checkerboard patterns.
+2. **Canvas 1-Bit Alpha Thresholding (`renderCrisp1BitText`):**
+   - Whenever text is rasterized onto the `512x342` bitmap canvas, it is first drawn to an offscreen scratch buffer where every pixel's alpha channel is hard-thresholded (`alpha >= 128 ? 2 : 0`), completely stripping browser grayscale anti-aliasing fringes before committing to the `Uint8Array` bitmap layer.
 
 ---
 
