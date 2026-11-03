@@ -1,16 +1,14 @@
 {
-    "name": "Enforce Authentic 1-Bit System 7 Aesthetics",
-    "description": "Checks UI and graphics components on save to ensure crisp 1-bit rendering without blurry shadows or modern gradients.",
-    "trigger": {
-        "type": "file_save",
-        "patterns": [
-            "src/ui/**/*.tsx",
-            "src/engine/graphics/**/*.ts",
-            "src/**/*.css"
-        ]
-    },
-    "action": {
-        "type": "agent_prompt",
-        "prompt": "Review the saved UI or graphics file against .kiro/steering/tech.md: Ensure canvas elements enforce pixelated rendering, disallow blurry CSS box-shadows or gradients, and verify that visual transitions use the pixel buffer engine (Galois LFSR dissolve) rather than CSS opacity transitions."
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Enforce 1-bit System 7 rendering rules",
+      "trigger": "PostFileSave",
+      "matcher": "(^|/)src/(ui/.*\\.tsx|engine/graphics/.*\\.ts|.*\\.css)$",
+      "action": {
+        "type": "agent",
+        "prompt": "Audit only the file that was just saved against the 1-Bit Fidelity Rules and Security Guardrails in .kiro/steering/tech.md. Check: 1) No box-shadow with a blur radius, no linear-gradient, radial-gradient, backdrop-filter or filter: blur(), and no opacity between 0.01 and 0.99. 2) Every <canvas> uses image-rendering: pixelated. 3) Card transitions run on composed pixel frames (LFSR dissolve and the other effects), never CSS transitions or opacity. 4) Card text (field text, button titles) is rasterized with renderCrisp1BitText, not rendered as DOM text; the only DOM over the card canvas is the hidden textarea and authoring selection handles. 5) No innerHTML, outerHTML, insertAdjacentHTML, document.write or dangerouslySetInnerHTML. 6) No Apple font files (Chicago, Geneva, Monaco, New York) are referenced. Report each violation with its line number. Edit the file only if a violation exists, and change nothing else."
+      }
     }
+  ]
 }

@@ -1,15 +1,14 @@
 {
-    "name": "Validate HexAST Sandbox & Gas Limit Safety",
-    "description": "Automatically audits core VM, AST, and AI compiler changes on save to guarantee zero eval() usage and strict 10,000-step gas metering.",
-    "trigger": {
-        "type": "file_save",
-        "patterns": [
-            "src/core/**/*.ts",
-            "src/ai/**/*.ts"
-        ]
-    },
-    "action": {
-        "type": "agent_prompt",
-        "prompt": "Audit the saved file against .kiro/steering/tech.md: 1) Verify that eval(), new Function(), or dynamic script tags are NEVER used. 2) Ensure every statement and expression evaluation path in src/core/vm.ts increments the instruction step counter and halts at 10,000 steps. 3) Verify that sharedText semantics on HexFieldPart read/write to HexCard.bgFieldContents[fieldId] when sharedText is false."
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Validate HexAST sandbox, gas limit and data contracts",
+      "trigger": "PostFileSave",
+      "matcher": "(^|/)src/(core|ai|storage)/.*\\.ts$",
+      "action": {
+        "type": "agent",
+        "prompt": "Audit only the file that was just saved against .kiro/steering/tech.md and hexcard_design_spec.md. Check: 1) No eval(), new Function(), setTimeout/setInterval with a string, or dynamically created <script> elements. 2) If the file is src/core/vm.ts: every statement and expression evaluation path calls ctx.tick(), the budget is 10,000 steps per top-level dispatch shared with nested dispatches, and control flow does not bypass gas accounting. 3) Background field reads/writes use HexCard.bgFieldContents[fieldId] when sharedText is false and HexFieldPart.content when it is true. 4) No AST is written to persisted or exported data; only scriptSource is persisted. 5) AI output is accepted only after astValidator, print, re-parse and deep-equal checks. 6) fetch follows the section 4.3 policy (https only, GET, credentials omit, no custom headers, 8 s timeout, 256 KB cap). Report each violation with its line number. Edit the file only if a violation exists, and change nothing else."
+      }
     }
+  ]
 }

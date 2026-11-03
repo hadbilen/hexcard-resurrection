@@ -1,0 +1,91 @@
+# Technical Design Document: Core Stack Engine
+
+## 1. Scope & Shared Contracts
+Modules: `schema.ts`, `stackValidator.ts`, `store.ts`, `history.ts`, `messageBus.ts`. Pure TypeScript, no React, no DOM (DOM-dependent pieces such as `document.visibilityState` are injected).
+
+Canonical contracts this spec implements without restating them:
+- Persisted types and `THEME_PALETTES`: `hexcard_design_spec.md` §2.1
+- Message path, handled rule, `pass`: §3
+- Concurrency model (queue, `idle`, nested dispatch, abort): §3.2
+
+## 2. Architecture
+
+~~~text
+ React UI (spec 04) ── useSyncExternalStore ──► store.getSnapshot()
+     │ user events                                    ▲
+     ▼                                                │ new snapshot
+ messageBus ── dispatch ──► vm (spec 02) ── applyRuntime(mutation) ──┤
+     ▲                          │                                    │
+     │ nested lifecycle msgs    │ host calls (dialogs, sound, render)│
+     └──────────────────────────┘                                    │
+ authoring tools (spec 03/04) ── history.execute(command) ───────────┘
+~~~
+
+## 3. Store (`store.ts`)
+
+~~~typescript
+export interface HexRuntimeState {
+  stack: HexStack;                 // immutable snapshot; replaced on every change
+  currentCardId: HexID;
+  editLayer: "card" | "background"; // Edit Background mode
+  tool: AuthoringTool;
+}
+
+export type RuntimeMutation =
+  | { type: "setFieldText"; cardId: HexID; layer: "card" | "background"; partId: HexID; text: string }
+  | { type: "setPartProperty"; partId: HexID; property: HexPropertyName; value: string | number | boolean }
+  | { type: "setCardProperty"; cardId: HexID; property: "name" | "marked"; value: string | boolean }
+  | { type: "goToCard"; cardId: HexID };
+
+export interface HexStore {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): HexRuntimeState;
+  applyRuntime(m: RuntimeMutation): void;           // not undoable, schedules auto-save
+  replaceStack(stack: HexStack): void;              // after validation only; recompiles ScriptCache
+  getCompiled(objectId: HexID): { ast: HexScriptAST; errors: HexCompileError[] };
+}
+~~~
+
+- Snapshots are produced with structural sharing (copy the changed path only).
+- `setFieldText` implements Requirement 1.2/1.3: for background fields it writes `bgFieldContents` or `content` depending on `sharedText`.
+- `ScriptCache` is a `Map<HexID, { ast, errors }>`, rebuilt by calling `parseHexTalk` (spec 02) for every object on `replaceStack`, and for one object whenever its `scriptSource` changes.
+- Auto-save is debounced (500 ms) and delegated to `src/storage/indexedDb.ts` through an injected callback, keeping core free of storage code.
+
+## 4. History (`history.ts`)
+
+~~~typescript
+export interface HexCommand {
+  label: string;                           // shown in Edit > Undo <label>
+  apply(stack: HexStack): HexStack;
+  revert(stack: HexStack): HexStack;
+}
+~~~
+
+- Ring buffer of 50 commands; `execute` clears the redo list.
+- `PaintStrokeCommand` stores `{ layer, layerOwnerId, rect, before: Uint8Array, after: Uint8Array }` for the stroke's bounding rectangle and re-encodes the layer with the spec-03 codec on apply/revert.
+
+## 5. Message Bus (`messageBus.ts`)
+
+~~~typescript
+export interface HexMessage { name: string; params: (string | number)[]; targetId: HexID }
+
+export interface MessageBus {
+  post(msg: HexMessage): void;             // from UI: enqueue (with coalescing rules)
+  sendNested(msg: HexMessage, ctx: DispatchContext): Promise<void>; // from VM during go
+  abort(): void;                           // Cmd/Ctrl+. or tool switch
+}
+~~~
+
+- `buildPath(targetId)` returns `[part?, card, background, stack]` from the current snapshot.
+- The dispatch loop takes one message, walks the path, asks the VM to run the first matching handler, and treats a `PassEvent` result as "continue with next object".
+- `DispatchContext` carries `{ stepCount, depth, abortSignal, pendingVisualEffect }` and is shared with nested dispatches.
+- The `idle` timer is a 200 ms interval that posts `idle` only when the §3.2 conditions hold; visibility and modal state are injected predicates.
+- Built-in handler: unhandled `keyDown` with `ArrowLeft`/`ArrowRight` -> go prev/next.
+
+## 6. Stack Validator (`stackValidator.ts`)
+A Zod schema mirroring §2.1 plus cross-reference checks (Requirement 6.3). `validateStack(unknown) -> { ok: true, stack } | { ok: false, error }`.
+
+## 7. Testing
+- Store: sharedText read/write matrix, snapshot immutability, `applyRuntime` never touches history.
+- History: 60 commands keep only the last 50; undo/redo restores deep-equal stacks.
+- Message bus: path order, `pass` continuation, queue overflow, coalescing, `idle` gating, nested lifecycle order on background change, recursion limit, abort.
