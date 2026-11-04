@@ -21,7 +21,7 @@
   - Geometric `hitTest`
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 4.2_
 
-- [ ] 5. Implement Atkinson image import
+- [x] 5. Implement Atkinson image import
   - Scale-to-fit, luminance conversion and the §5.1 dithering function
   - _Requirements: 5.1_
 
