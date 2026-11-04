@@ -30,7 +30,7 @@
   - Remaining effects in `transitions.ts` operating on full composed frames
   - _Requirements: 6.1, 6.2, 6.3_
 
-- [ ] 7. Implement paint tools and patterns
+- [x] 7. Implement paint tools and patterns
   - 38 patterns, world-aligned pattern bits, Bresenham line, rect, spray, eraser rules, flood fill, select, lasso
   - Emit one `PaintStrokeCommand` per stroke to the spec-01 history
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
