@@ -4,7 +4,7 @@
   - `src/engine/audio/synth.ts` with the five voices, note parser (including rests and dotted notes) and autoplay unlock
   - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 2. Build the System 7 shell and tools palette
+- [x] 2. Build the System 7 shell and tools palette
   - `System7Shell.tsx` menus, Edit Background stripes, four themes, modal manager
   - `FloatingTools.tsx` tear-off palette with 12 tools and pattern selector
   - _Requirements: 2.2, 2.3, 2.4_

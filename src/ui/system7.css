@@ -1,0 +1,308 @@
+/*
+ * System 7 shell styles. 1-bit rules (steering tech.md): only hard-offset shadows, no gradients,
+ * no blur, no opacity fades. Colours come from --dark-bit / --light-bit set by the shell.
+ */
+.s7-shell {
+  --dark-bit: #000000;
+  --light-bit: #ffffff;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--light-bit);
+  color: var(--dark-bit);
+  font: 16px/16px "HexCard PixelOperator Bold", monospace;
+  user-select: none;
+}
+
+.s7-shell button {
+  font: inherit;
+  color: inherit;
+  background: var(--light-bit);
+  border: 0;
+  padding: 0;
+  cursor: default;
+  border-radius: 0;
+}
+
+.s7-shell button:focus-visible,
+.s7-shell input:focus-visible {
+  outline: 2px solid var(--dark-bit);
+  outline-offset: -4px;
+}
+
+/* Menu bar */
+.s7-menubar {
+  position: relative;
+  z-index: 20;
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  height: 24px;
+  box-sizing: border-box;
+  border-bottom: 2px solid var(--dark-bit);
+  background: var(--light-bit);
+}
+
+.s7-menu {
+  position: relative;
+}
+
+.s7-menu-title {
+  height: 22px;
+  padding: 0 10px;
+}
+
+.s7-menu-title-open,
+.s7-menu-title:hover {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-dropdown {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  min-width: 160px;
+  border: 2px solid var(--dark-bit);
+  background: var(--light-bit);
+  box-shadow: 2px 2px 0px var(--dark-bit);
+  padding: 2px 0;
+}
+
+.s7-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 20px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.s7-menu-item:hover:not(:disabled) {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-menu-item:disabled {
+  color: var(--dark-bit);
+  text-decoration: line-through;
+}
+
+.s7-check {
+  flex: none;
+  width: 18px;
+  text-align: center;
+}
+
+.s7-menu-label {
+  flex: 1;
+  padding-right: 16px;
+}
+
+.s7-shortcut {
+  padding-right: 8px;
+}
+
+.s7-separator {
+  height: 0;
+  margin: 2px 0;
+  border-top: 1px solid var(--dark-bit);
+}
+
+.s7-tear-strip {
+  height: 0;
+  margin: 2px 4px 4px;
+  border-top: 2px dashed var(--dark-bit);
+}
+
+/* Edit Background: diagonal hash stripes along the menu bar border (Requirement 2.2). */
+.s7-stripes {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  width: 100%;
+  height: 8px;
+  pointer-events: none;
+}
+
+.s7-desktop {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Tools palette (Requirement 2.3) */
+.s7-palette {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  border: 2px solid var(--dark-bit);
+  background: var(--light-bit);
+  box-shadow: 2px 2px 0px var(--dark-bit);
+}
+
+.s7-palette-title {
+  position: relative;
+  height: 16px;
+  border-bottom: 2px solid var(--dark-bit);
+  background: var(--dark-bit);
+  color: var(--light-bit);
+  text-align: center;
+  cursor: move;
+}
+
+.s7-palette-title-text {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.s7-close-box {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--light-bit);
+  background: var(--dark-bit);
+}
+
+.s7-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 24px);
+  grid-auto-rows: 24px;
+  border-bottom: 2px solid var(--dark-bit);
+}
+
+.s7-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--dark-bit);
+  margin: 0 -1px -1px 0;
+}
+
+.s7-tool[aria-pressed="true"],
+.s7-pattern[aria-checked="true"] {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-pattern-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 12px);
+  grid-auto-rows: 12px;
+}
+
+.s7-pattern {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--dark-bit);
+  margin: 0 -1px -1px 0;
+  color: var(--dark-bit);
+}
+
+.s7-pattern[aria-checked="true"] {
+  /* Selected pattern: keep the pattern visible by inverting the frame only. */
+  background: var(--light-bit);
+  outline: 2px solid var(--dark-bit);
+  outline-offset: -3px;
+}
+
+.s7-icon,
+.s7-pattern svg {
+  display: block;
+  image-rendering: pixelated;
+  shape-rendering: crispEdges;
+}
+
+/* Modal dialogs (transparent blocker, no dimming) */
+.s7-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.s7-dialog {
+  display: flex;
+  gap: 12px;
+  box-sizing: border-box;
+  min-width: 280px;
+  max-width: 440px;
+  padding: 14px;
+  border: 2px solid var(--dark-bit);
+  background: var(--light-bit);
+  box-shadow: 2px 2px 0px var(--dark-bit);
+  user-select: text;
+}
+
+.s7-dialog-body {
+  flex: 1;
+}
+
+.s7-dialog-message,
+.s7-dialog-detail {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+
+.s7-dialog-detail {
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-dialog-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  height: 24px;
+  margin-bottom: 8px;
+  padding: 0 4px;
+  border: 2px solid var(--dark-bit);
+  background: var(--light-bit);
+  color: var(--dark-bit);
+  font: inherit;
+  border-radius: 0;
+}
+
+.s7-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.s7-button {
+  min-width: 64px;
+  height: 22px;
+  padding: 0 12px;
+  border: 1px solid var(--dark-bit);
+  border-radius: 8px;
+}
+
+.s7-button:active {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-button-default {
+  outline: 2px solid var(--dark-bit);
+  outline-offset: 2px;
+}
+
+/* Canvases are always drawn pixel-exact. */
+.s7-shell canvas {
+  image-rendering: pixelated;
+}
