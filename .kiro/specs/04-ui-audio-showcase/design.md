@@ -7,6 +7,10 @@
 - **`src/ui/ObjectInspector.tsx`:** tabbed modal (`Properties`, `HexTalk Script`, `HexAI Spellcaster`); the script editor shows parser errors inline.
 - **`src/ui/StackGraphModal.tsx`:** node-link view; edges come from `GoToCard` nodes whose target is a literal (relative targets link to neighbours).
 - All components read state with `useSyncExternalStore(store.subscribe, store.getSnapshot)` and never write to the stack object directly (structure.md rules).
+- **Composition root (`src/main.tsx`):** creates the store with a built-in starter stack (one background, one card with a "Welcome to HexCard" field and one button), the history, the message bus, the VM host and the paint controller, and passes the narrowed store view to the UI. The starter stack must pass `validateStack`. The loader (task 6) and the showcase stacks (task 8) later replace the starter stack through `store.replaceStack`.
+- **UI store view (Requirement 2.6):** components receive the store typed as `Omit<HexStore, "applyAuthoring" | "replaceStack">`. Only `createHistory(store)` gets `applyAuthoring`, and only the stack loader (§5) gets `replaceStack`.
+- **Font loading (Requirement 2.7):** `src/main.tsx` and `src/player/main.ts` both `await loadBundledFonts()` (spec 03 `textRaster.ts`) before the first `composeFrame`, so the first frame never uses fallback metrics.
+- **Paint routing (Requirement 2.8):** `CardViewport.tsx` holds one `createPaintController({ store, history, getSettings })` (spec 03 `paintTools.ts`). While a paint tool is selected, card pointer events go to that controller instead of the message bus or part selection.
 
 ## 2. VM Host Implementation (`src/ui/vmHost.ts`)
 Implements the spec-02 `HexHost` interface: dialogs via the modal manager, `goToCard` via the store plus spec-03 `playEffect`, `playSound` via the synth, `fetchJson` via `src/core/fetchPolicy.ts`.
@@ -29,6 +33,7 @@ export async function conjureScript(prompt: string, context: SpellContext):
 - `indexedDb.ts`: one object store `stacks`, key = stack id, value = stack JSON (no ASTs); injected into the spec-01 store as the auto-save callback.
 - `stackFile.ts` / `urlCodec.ts`: `JSON.stringify -> CompressionStream("deflate-raw") -> Base64URL` and the reverse, then `validateStack`.
 - `htmlExporter.ts`: see §6.
+- **Stack loader (Requirement 5.5):** IndexedDB, file, URL hash and preset loads share one path: `validateStack`, then `decodeBitmapRLE` on every card and background layer. Any throw, including invalid Base64, rejects the whole stack with a single "This stack is damaged" alert and leaves the current stack untouched. On success the loader calls `history.clear()` and `clearDecodedLayerCache()`, then `store.replaceStack()`.
 
 ## 6. Player Build & Standalone HTML Export
 - `src/player/main.ts` is a browse-only entry: it reads the embedded stack, validates it, and mounts a minimal viewport using spec-01, spec-02 and spec-03 modules plus the synth. No authoring tools, no AI, no React shell.

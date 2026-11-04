@@ -12,7 +12,8 @@
 - [ ] 3. Build the card viewport and VM host
   - `CardViewport.tsx` canvas presentation, pointer mapping, Browse event forwarding, hidden-textarea editing, selection handles
   - `src/ui/vmHost.ts` implementing the spec-02 `HexHost`
-  - _Requirements: 2.1, 2.5_
+  - `src/main.tsx` is the composition root: it creates the store with a built-in starter stack (one background, one card with a "Welcome to HexCard" field and one button), the history, the message bus, the VM host and the paint controller, and passes the narrowed store view to the UI. The starter stack must pass `validateStack`. The loader (task 6) and the showcase stacks (task 8) later replace the starter stack through `store.replaceStack`
+  - _Requirements: 2.1, 2.5, 2.6, 2.7, 2.8_
 
 - [ ] 4. Build the Object Inspector, error dialogs and Stack Graph
   - `ObjectInspector.tsx` with inline compile errors; bomb dialog and script-error alert with **Script** button
@@ -26,11 +27,11 @@
 
 - [ ] 6. Implement persistence and sharing
   - `indexedDb.ts` auto-save, `stackFile.ts`, `urlCodec.ts` with the 32,000-character warning, validation on every load
-  - _Requirements: 5.1, 5.2, 5.3, 5.4_
+  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
 - [ ] 7. Implement the player build and standalone HTML export
   - `src/player/main.ts`, `vite.player.config.ts`, build-order script, `htmlExporter.ts` with `<` escaping
-  - _Requirements: 6.1, 6.2, 6.3_
+  - _Requirements: 2.7, 6.1, 6.2, 6.3_
 
 - [ ] 8. Create the three showcase stacks
   - Author scripts in HexTalk; draw/import art in HexCard and export canonical `rleData`; offline data for MacOracle

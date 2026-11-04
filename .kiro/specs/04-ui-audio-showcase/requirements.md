@@ -22,6 +22,9 @@ This spec covers everything the user touches directly: the React System 7 shell,
 3. WHEN the user drags the Tools menu below the menu bar, THE SYSTEM SHALL detach it as a draggable floating palette with the 12 tools of design spec §2.1 and an 8x8 pattern selector.
 4. THE SYSTEM SHALL offer the four themes `ClassicPaper`, `AmberCRT`, `GreenPhosphor`, `MidnightHex` with the colours of `THEME_PALETTES` (design spec §2.1).
 5. WHILE an unlocked field is edited in Browse mode, THE SYSTEM SHALL route text input through the hidden textarea defined in spec 03 Requirement 4.2 and write changes with `store.applyRuntime`.
+6. THE SYSTEM SHALL give UI components a store view without `applyAuthoring` and `replaceStack`, so authoring changes can only go through the history and loading only through the loader.
+7. WHEN the studio or the exported player starts, THE SYSTEM SHALL await `loadBundledFonts()` before composing the first frame.
+8. WHILE a paint tool is active, THE SYSTEM SHALL route pointer events on the card to the spec 03 paint controller, created with the store and history.
 
 ### Requirement 3: Object Inspector, Script Editor & Error Dialogs
 **User Story:** As a stack author, I want to edit properties and scripts with immediate feedback, and see clear errors when scripts fail.
@@ -51,6 +54,7 @@ This spec covers everything the user touches directly: the React System 7 shell,
 2. WHEN the user chooses `File -> Save Stack File` or `Open Stack File`, THE SYSTEM SHALL write or read a `.hexstack` file containing the stack JSON compressed with `deflate-raw` and encoded as Base64URL.
 3. WHEN the user chooses `File -> Copy Share Link`, THE SYSTEM SHALL put the same compressed encoding in the URL hash; IF the link exceeds 32,000 characters, THEN THE SYSTEM SHALL warn and offer the `.hexstack` file instead.
 4. WHEN a stack is opened from IndexedDB, a file or a URL hash, THE SYSTEM SHALL pass it through the spec-01 stack validator before loading.
+5. WHEN any stack is loaded (IndexedDB, file, URL hash, preset), THE SYSTEM SHALL validate it, then decode every bitmap layer with `decodeBitmapRLE`; IF validation or any decode throws (including invalid Base64), THEN THE SYSTEM SHALL reject the whole stack with one "This stack is damaged" alert. On success it SHALL call `history.clear()` and `clearDecodedLayerCache()` before `store.replaceStack()`.
 
 ### Requirement 6: Standalone HTML Export
 **User Story:** As a user, I want to export a stack as a single HTML file that runs anywhere without HexCard.

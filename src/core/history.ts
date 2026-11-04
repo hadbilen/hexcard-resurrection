@@ -34,7 +34,10 @@ export interface HexHistory {
   /** Label of the command Undo would revert, for the Edit menu. */
   undoLabel(): string | undefined;
   redoLabel(): string | undefined;
-  /** Drops all commands; call after `store.replaceStack` so commands never cross stacks. */
+  /**
+   * Drops all commands so commands never cross stacks. The stack loader calls it together with
+   * `clearDecodedLayerCache()` before `store.replaceStack` (spec 04 Requirement 5.5).
+   */
   clear(): void;
 }
 
