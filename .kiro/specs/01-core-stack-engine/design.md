@@ -44,6 +44,7 @@ export interface HexStore {
   getSnapshot(): HexRuntimeState;
   applyRuntime(m: RuntimeMutation): void;           // not undoable, schedules auto-save
   replaceStack(stack: HexStack): void;              // after validation only; recompiles ScriptCache
+  applyAuthoring(next: HexStack): void;             // authoring result; incremental recompile; never touches history
   getCompiled(objectId: HexID): { ast: HexScriptAST; errors: HexCompileError[] };
 }
 ~~~
@@ -51,6 +52,7 @@ export interface HexStore {
 - Snapshots are produced with structural sharing (copy the changed path only).
 - `setFieldText` implements Requirement 1.2/1.3: for background fields it writes `bgFieldContents` or `content` depending on `sharedText`.
 - `ScriptCache` is a `Map<HexID, { ast, errors }>`, rebuilt by calling `parseHexTalk` (spec 02) for every object on `replaceStack`, and for one object whenever its `scriptSource` changes.
+- `applyAuthoring(next)` replaces the stack with an authoring result and recompiles only the objects whose `scriptSource` changed, compared by id: added objects are compiled and removed objects are dropped from the `ScriptCache`. It then notifies listeners and schedules auto-save. It never touches history.
 - Auto-save is debounced (500 ms) and delegated to `src/storage/indexedDb.ts` through an injected callback, keeping core free of storage code.
 
 ## 4. History (`history.ts`)
@@ -63,6 +65,8 @@ export interface HexCommand {
 }
 ~~~
 
+- History is created with the store: `createHistory(store)`.
+- `execute`, `undo` and `redo` compute the next stack with `command.apply`/`command.revert` on `store.getSnapshot().stack` and hand it to `store.applyAuthoring`.
 - Ring buffer of 50 commands; `execute` clears the redo list.
 - `PaintStrokeCommand` stores `{ layer, layerOwnerId, rect, before: Uint8Array, after: Uint8Array }` for the stroke's bounding rectangle. It re-encodes the layer on apply/revert through an injected codec `{ encode(pixels): string; decode(rleData, emptyFill): Uint8Array }`, so `src/core/` never imports `src/engine/`. Production wiring passes `encodeBitmapRLE`/`decodeBitmapRLE` (spec 03); core tests pass a fake codec.
 

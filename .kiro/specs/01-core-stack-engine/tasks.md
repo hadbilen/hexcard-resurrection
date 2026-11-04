@@ -20,7 +20,8 @@
 - [ ] 4. Implement the 50-step undo history
   - Implement `src/core/history.ts` ring buffer and `HexCommand`
   - Implement `PaintStrokeCommand` (bounding-rect before/after pixels)
-  - _Requirements: 4.2, 5.1, 5.2, 5.3_
+  - Add `store.applyAuthoring(next)` to `src/core/store.ts` with incremental ScriptCache recompilation (design §3), and wire `createHistory(store)` to it (design §4)
+  - _Requirements: 4.2, 4.4, 5.1, 5.2, 5.3_
 
 - [ ] 5. Implement the message bus
   - Implement path building, handled rule, `pass` continuation and the arrow-key built-in
