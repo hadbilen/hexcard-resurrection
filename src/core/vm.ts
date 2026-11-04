@@ -351,15 +351,22 @@ function describeValue(value: HexValue): string {
   return typeof value === "string" ? `"${value}"` : String(value);
 }
 
-/** Finite numbers and numeric-looking strings (surrounding whitespace allowed). Booleans and "" are not numeric. */
+/**
+ * Finite numbers and numeric-looking strings (surrounding whitespace allowed). Booleans and "" are
+ * not numeric, so comparisons with empty stay text-based and selectors never read "" as a position.
+ */
 export function isNumeric(value: HexValue): boolean {
   if (typeof value === "number") return Number.isFinite(value);
   if (typeof value === "string") return NUMERIC_TEXT.test(value.trim());
   return false;
 }
 
-/** Arithmetic conversion: numeric values become numbers, anything else is a script error. */
+/**
+ * Arithmetic conversion: numeric values become numbers and the exact empty string "" (an unset
+ * variable or an empty field) becomes 0, as in HyperCard. Anything else is a script error.
+ */
 export function toNumber(value: HexValue): number {
+  if (value === "") return 0;
   if (!isNumeric(value)) throw new HexScriptError(`Expected a number but found ${describeValue(value)}`);
   return typeof value === "number" ? value : Number((value as string).trim());
 }
@@ -736,7 +743,7 @@ function evalExpr(frame: Frame, expr: HexExprNode): HexValue {
     }
     case "UnaryOp": {
       const operand = evalExpr(frame, expr.operand);
-      return expr.op === "not" ? !toBoolean(operand) : -toNumber(operand);
+      return expr.op === "not" ? !toBoolean(operand) : 0 - toNumber(operand); // 0 - x avoids -0
     }
     default: {
       const unknown: never = expr;

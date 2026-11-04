@@ -35,7 +35,7 @@ This spec covers the HexTalk parser and printer, the AST schema validator that g
 
 #### Acceptance Criteria
 1. THE SYSTEM SHALL execute scripts only by interpreting `HexScriptAST` nodes in `src/core/vm.ts` and SHALL NOT use `eval()`, `new Function()`, string timers or dynamic script elements.
-2. WHILE a dispatch runs, THE SYSTEM SHALL add 1 to the shared step counter for every evaluated statement node and expression node, including nested dispatches.
+2. WHILE a dispatch runs, THE SYSTEM SHALL add 1 to the shared step counter for every evaluated statement node and expression node, plus 1 step per loop iteration, including nested dispatches.
 3. IF the step counter exceeds `10,000`, THEN THE SYSTEM SHALL throw `HexVmGasLimitError`, stop the whole dispatch, keep the mutations already applied, and report the object, handler and line.
 4. IF a runtime type error, missing part or invalid property/object combination occurs, THEN THE SYSTEM SHALL throw `HexScriptError` with object, handler, line and message, and stop the dispatch.
 5. WHEN the abort signal of the dispatch fires, THE SYSTEM SHALL stop at the next statement boundary or suspension point.

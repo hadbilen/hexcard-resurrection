@@ -281,6 +281,8 @@ describe("value rules", () => {
     ['true and "TRUE" coerces strings in conditions', bin("and", lit(true), lit("TRUE")), true],
     ['not "false"', { kind: "UnaryOp", op: "not", operand: lit("false") }, true],
     ['-"4"', { kind: "UnaryOp", op: "-", operand: lit("4") }, -4],
+    ["empty + 1 treats empty as 0", bin("+", { kind: "Constant", name: "empty" }, lit(1)), 1],
+    ["-empty is 0", { kind: "UnaryOp", op: "-", operand: { kind: "Constant", name: "empty" } }, 0],
     ["round(2.5)", call("round", lit(2.5)), 3],
     ["round(-2.5)", call("round", lit(-2.5)), -3],
     ["trunc(-1.7)", call("trunc", lit(-1.7)), -1],
@@ -313,9 +315,11 @@ describe("value rules", () => {
 
   it.each<[string, HexExprNode, RegExp]>([
     ['"abc" + 1', bin("+", lit("abc"), lit(1)), /Expected a number but found "abc"/],
-    ["empty + 1", bin("+", { kind: "Constant", name: "empty" }, lit(1)), /Expected a number/],
+    ['"5a" + 1', bin("+", lit("5a"), lit(1)), /Expected a number but found "5a"/],
     ["1 / 0", bin("/", lit(1), lit(0)), /Division by zero/],
     ["5 mod 0", bin("mod", lit(5), lit(0)), /Division by zero/],
+    ["5 / empty", bin("/", lit(5), { kind: "Constant", name: "empty" }), /Division by zero/],
+    ["5 mod empty", bin("mod", lit(5), { kind: "Constant", name: "empty" }), /Division by zero/],
     ["not 1", { kind: "UnaryOp", op: "not", operand: lit(1) }, /Expected true or false/],
     ["abs()", call("abs"), /abs expects 1 argument, got 0/],
   ])("%s is a HexScriptError", async (_label, expr, message) => {
@@ -350,6 +354,23 @@ describe("containers and properties", () => {
     expect(readFieldText(stack, "crd_1", "background", "prt_title")).toBe("new");
     expect(readFieldText(stack, "crd_1", "background", "prt_score")).toBe("7");
     expect(readFieldText(stack, "crd_2", "background", "prt_score")).toBe("2"); // unshared text untouched
+  });
+
+  it("add, subtract and multiply treat an unset variable or an empty field as 0", async () => {
+    const { host, globals, newCtx } = setup();
+    const empty: HexExprNode = { kind: "Constant", name: "empty" };
+    const notes = toField("card", "Notes");
+    const math = (op: "add" | "subtract" | "multiply", amount: number, destination: HexContainerTarget): HexStatementNode =>
+      ({ kind: "MathMutation", op, amount: lit(amount), destination });
+    const body = [
+      global("x", "added", "subtracted", "multiplied"),
+      math("add", 1, toVar("x")),
+      put(empty, notes), math("add", 5, notes), put(readField("card", "Notes"), toVar("added")),
+      put(empty, notes), math("subtract", 2, notes), put(readField("card", "Notes"), toVar("subtracted")),
+      put(empty, notes), math("multiply", 3, notes), put(readField("card", "Notes"), toVar("multiplied")),
+    ];
+    await runHandler(handler("test", body), [], "prt_btn", newCtx(), host);
+    expect(Object.fromEntries(globals)).toEqual({ x: 1, added: "5", subtracted: "-2", multiplied: "0" });
   });
 
   it("resolves field references against the current card at evaluation time; me stays bound", async () => {
