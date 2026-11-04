@@ -19,6 +19,8 @@
 - [ ] 4. Implement the VM core
   - `runHandler`, `evalStatement`, `evalExpr`, `DispatchContext.tick()` with gas, abort and error types
   - Locals, `it`, globals, value coercion, property validity, control-flow sentinels
+  - Define and export `DispatchContext` (`stepCount`, `depth`, `abortSignal`, `pendingVisualEffect`, `tick()`) in `src/core/vm.ts`; the spec 01 message bus imports it from there
+  - Reuse the store's property conversion helpers (e.g. the `location` centre rule `x + floor(width/2)`) instead of reimplementing them
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
 
 - [ ] 5. Implement suspending commands through the host interface
