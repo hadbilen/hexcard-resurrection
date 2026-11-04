@@ -63,3 +63,7 @@ This spec covers the persisted data model, the runtime store and its two write p
 1. WHEN a stack is loaded from IndexedDB, a `.hexstack` file, a URL hash or a preset, THE SYSTEM SHALL validate it with the Zod schema in `src/core/stackValidator.ts` before it reaches the store.
 2. IF validation fails, THEN THE SYSTEM SHALL reject the whole stack, keep the current stack unchanged and report the first validation error in a System 7 alert.
 3. THE SYSTEM SHALL reject stacks whose `schemaVersion` is not `"2.0.0"`, whose cards reference a missing `backgroundId`, or whose part `layerScope` does not match the layer that contains it.
+4. THE SYSTEM SHALL reject stacks that have no cards or no backgrounds.
+5. THE SYSTEM SHALL reject stacks in which any `id` (stack, background, card or part) appears more than once anywhere in the stack.
+6. THE SYSTEM SHALL reject stacks whose `dimensions` or any `HexBitmapLayer` `width`/`height` differ from `512` x `342` (the only size supported in schema 2.0.0).
+7. THE SYSTEM SHALL reject stacks whose `themePalette` colours are not `#RRGGBB` hex strings, and parts whose `rect` has non-integer values or a negative `width`/`height`.

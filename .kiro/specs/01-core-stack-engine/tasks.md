@@ -5,10 +5,11 @@
   - Implement `src/core/schema.ts` exactly as `hexcard_design_spec.md` §2.1 (including `THEME_PALETTES`)
   - _Requirements: 1.5, 4.5_
 
-- [ ] 2. Implement stack validation
+- [x] 2. Implement stack validation
   - Implement `src/core/stackValidator.ts` (Zod) with schema-version, background-reference and layerScope checks
+  - Reject empty stacks, duplicate ids, sizes other than 512x342, non-hex palette colours and non-integer/negative part rects
   - Unit-test valid stacks, each rejection reason, and that rejection leaves the current stack unchanged
-  - _Requirements: 6.1, 6.2, 6.3_
+  - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
 
 - [ ] 3. Implement the runtime store
   - Implement `src/core/store.ts` with `subscribe`, `getSnapshot`, `applyRuntime`, `replaceStack`, `getCompiled`
@@ -29,4 +30,4 @@
 
 - [ ] 6. Core test suite
   - Cover every acceptance criterion above with Vitest tests in `src/core/__tests__/`
-  - _Requirements: 1.1–6.3_
+  - _Requirements: 1.1–6.7_

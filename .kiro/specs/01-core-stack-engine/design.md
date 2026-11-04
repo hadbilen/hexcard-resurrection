@@ -85,7 +85,7 @@ export interface MessageBus {
 - Built-in handler: unhandled `keyDown` with `ArrowLeft`/`ArrowRight` -> go prev/next.
 
 ## 6. Stack Validator (`stackValidator.ts`)
-A Zod schema mirroring §2.1 plus cross-reference checks (Requirement 6.3). `validateStack(unknown) -> { ok: true, stack } | { ok: false, error }`.
+A strict Zod schema mirroring §2.1 (unknown keys rejected) plus the structural checks of Requirements 6.3–6.7: layer references and scopes, at least one card and one background, globally unique ids, fixed 512x342 sizes, `#RRGGBB` palette colours and integer part rects. `validateStack(unknown) -> { ok: true, stack } | { ok: false, error }`.
 
 ## 7. Testing
 - Store: sharedText read/write matrix, snapshot immutability, `applyRuntime` never touches history.
