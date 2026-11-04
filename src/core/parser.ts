@@ -13,6 +13,10 @@
  * - Errors: `parseHexTalk` never throws. An error inside a handler is recorded, the parser skips to
  *   the line `end <handlerName>` and continues with the next handler. Only handlers without errors
  *   are returned.
+ * - Nesting: every parse method receives the depth of the node it builds (convention in `ast.ts`),
+ *   and "script is nested too deeply" is reported at the first token that proves a node beyond
+ *   `HEX_MAX_DEPTH`. That also bounds the parser's recursion, so the limit never depends on the
+ *   size of the JS call stack.
  *
  * Every AST returned without errors passes `validateAst`: identifiers are checked against
  * `HEX_RESERVED_WORDS`, and the parser also reports what the validator would reject (a tempo outside
@@ -41,6 +45,7 @@ import type {
   HexStatementNode,
   HexVoice,
 } from "./ast.ts";
+import { HEX_MAX_DEPTH } from "./ast.ts";
 import { HEX_RESERVED_WORDS, MAX_ANSWER_BUTTONS, MAX_TEMPO, MIN_TEMPO } from "./astValidator.ts";
 import type { VisualEffectSpeed, VisualEffectType } from "./schema.ts";
 
@@ -232,6 +237,8 @@ const WORD_OPERATORS: ReadonlyMap<string, HexBinaryOp> = new Map<string, HexBina
 // Parser
 // ---------------------------------------------------------------------------------------------
 
+const NESTED_TOO_DEEPLY = "script is nested too deeply";
+
 /** Internal: aborts the current handler. Never escapes `parseHexTalk`. */
 class CompileFailure extends Error {
   readonly line: number;
@@ -273,6 +280,13 @@ class Parser {
   /** The handler being parsed: lowercase key and original spelling. */
   private handlerKey = "";
   private handlerName = "";
+  /**
+   * Deepest node entered since the innermost running `parseBinary` started. Wrapping that call's
+   * left operand in a new BinaryOp pushes all of these nodes one level deeper.
+   */
+  private deepest = 0;
+  /** Token index where the content of the last opened parenthesis group starts. */
+  private groupContentStart = -1;
 
   constructor(source: string) {
     this.tokens = tokenize(source);
@@ -374,6 +388,12 @@ class Parser {
       : this.unexpected(t, what);
   }
 
+  /** Starts a node of depth `depth` at token `t` (see `HEX_MAX_DEPTH`). */
+  private enter(t: Token, depth: number): void {
+    if (depth > HEX_MAX_DEPTH) throw this.fail(t, NESTED_TOO_DEEPLY);
+    if (depth > this.deepest) this.deepest = depth;
+  }
+
   private report(failure: CompileFailure): void {
     this.errors.push({ line: failure.line, column: failure.column, message: failure.message });
   }
@@ -431,13 +451,15 @@ class Parser {
       this.declared.add(this.handlerKey);
       const params = this.parseParams();
       this.expectEndOfLine();
-      const body = this.parseStatementList();
+      this.deepest = 0;
+      const body = this.parseStatementList(1); // the handler is depth 0
       this.parseHandlerEnd(onToken);
       this.handlers[this.handlerKey] = { eventName: nameToken.text, params, body, loc: at(onToken) };
     } catch (error) {
       let failure: CompileFailure;
       if (error instanceof CompileFailure) failure = error;
-      else if (error instanceof RangeError) failure = this.fail(this.peek(), "script is nested too deeply");
+      // Backstop only: the depth checks bound the recursion well below the engine's stack size.
+      else if (error instanceof RangeError) failure = this.fail(this.peek(), NESTED_TOO_DEEPLY);
       else throw error;
       this.report(failure);
       this.skipPastHandlerEnd(failure.line);
@@ -471,37 +493,39 @@ class Parser {
   // ----- statements --------------------------------------------------------------------------
 
   // StatementList ::= { Statement Newline }
-  private parseStatementList(): HexStatementNode[] {
+  // `depth` is the depth of the statements in the list (convention in `ast.ts`).
+  private parseStatementList(depth: number): HexStatementNode[] {
     const statements: HexStatementNode[] = [];
     for (;;) {
       const t = this.peek();
       if (t.type === "eof" || isWord(t, "end") || isWord(t, "else")) return statements;
-      statements.push(this.parseStatement());
+      statements.push(this.parseStatement(depth));
       this.expectEndOfLine();
     }
   }
 
-  private parseStatement(): HexStatementNode {
+  private parseStatement(depth: number): HexStatementNode {
     const t = this.peek();
+    this.enter(t, depth);
     if (t.type === "word") {
       switch (t.value) {
-        case "go": return this.parseGo();
+        case "go": return this.parseGo(depth);
         case "visual": return this.parseVisual();
-        case "put": return this.parsePut();
-        case "get": return this.parseGet();
+        case "put": return this.parsePut(depth);
+        case "get": return this.parseGet(depth);
         case "add":
         case "subtract":
         case "multiply":
-        case "divide": return this.parseMath();
-        case "set": return this.parseSet();
+        case "divide": return this.parseMath(depth);
+        case "set": return this.parseSet(depth);
         case "play": return this.parsePlay();
-        case "answer": return this.parseAnswer();
-        case "ask": return this.parseAsk();
-        case "wait": return this.parseWait();
-        case "fetch": return this.parseFetch();
+        case "answer": return this.parseAnswer(depth);
+        case "ask": return this.parseAsk(depth);
+        case "wait": return this.parseWait(depth);
+        case "fetch": return this.parseFetch(depth);
         case "global": return this.parseGlobal();
-        case "if": return this.parseIf();
-        case "repeat": return this.parseRepeat();
+        case "if": return this.parseIf(depth);
+        case "repeat": return this.parseRepeat(depth);
         case "pass": return this.parsePass();
         case "exit": return this.parseExit();
         case "next": return this.parseNextRepeat();
@@ -514,7 +538,7 @@ class Parser {
 
   // GoCmd ::= "go" [ "to" ] ( ( "next" | "prev" | "previous" | "first" | "last" ) [ "card" ]
   //                        | "back" | "card" "id" Primary | "card" Primary )
-  private parseGo(): HexStatementNode {
+  private parseGo(depth: number): HexStatementNode {
     const loc = at(this.advance());
     this.acceptWord("to");
     const t = this.peek();
@@ -530,8 +554,8 @@ class Parser {
     } else if (isWord(t, "card")) {
       this.advance();
       target = this.acceptWord("id")
-        ? { type: "id", value: this.parsePrimary() }
-        : { type: "auto", value: this.parsePrimary() };
+        ? { type: "id", value: this.parsePrimary(depth + 1) }
+        : { type: "auto", value: this.parsePrimary(depth + 1) };
     } else {
       throw this.unexpected(t, '"next", "prev", "first", "last", "back" or "card"');
     }
@@ -589,47 +613,47 @@ class Parser {
   }
 
   // PutCmd ::= "put" Expression ( "into" | "after" | "before" ) Container
-  private parsePut(): HexStatementNode {
+  private parsePut(depth: number): HexStatementNode {
     const loc = at(this.advance());
-    const value = this.parseExpression();
+    const value = this.parseExpression(depth + 1);
     const mode = this.expectFrom(PUT_MODES, '"into", "after" or "before"');
-    const destination = this.parseContainer();
+    const destination = this.parseContainer(depth + 1);
     return { kind: "PutValue", mode, value, destination, loc };
   }
 
   // GetCmd ::= "get" Expression
-  private parseGet(): HexStatementNode {
+  private parseGet(depth: number): HexStatementNode {
     const loc = at(this.advance());
-    return { kind: "GetValue", value: this.parseExpression(), loc };
+    return { kind: "GetValue", value: this.parseExpression(depth + 1), loc };
   }
 
   // MathCmd ::= "add" Expression "to" Container | "subtract" Expression "from" Container
   //           | "multiply" Container "by" Expression | "divide" Container "by" Expression
-  private parseMath(): HexStatementNode {
+  private parseMath(depth: number): HexStatementNode {
     const t = this.advance();
     const loc = at(t);
     if (t.value === "add" || t.value === "subtract") {
-      const amount = this.parseExpression();
+      const amount = this.parseExpression(depth + 1);
       this.expectWord(t.value === "add" ? "to" : "from");
-      const destination = this.parseContainer();
+      const destination = this.parseContainer(depth + 1);
       return { kind: "MathMutation", op: t.value, amount, destination, loc };
     }
     const op = t.value === "multiply" ? "multiply" : "divide";
-    const destination = this.parseContainer();
+    const destination = this.parseContainer(depth + 1);
     this.expectWord("by");
-    const amount = this.parseExpression();
+    const amount = this.parseExpression(depth + 1);
     return { kind: "MathMutation", op, amount, destination, loc };
   }
 
   // SetCmd ::= "set" [ "the" ] PropertyName "of" ObjectRef "to" Expression
-  private parseSet(): HexStatementNode {
+  private parseSet(depth: number): HexStatementNode {
     const loc = at(this.advance());
     this.acceptWord("the");
     const property = this.expectFrom(PROPERTY_NAMES, "a property name");
     this.expectWord("of");
-    const target = this.parseObjectRef();
+    const target = this.parseObjectRef(depth + 1);
     this.expectWord("to");
-    const value = this.parseExpression();
+    const value = this.parseExpression(depth + 1);
     return { kind: "SetProperty", property, target, value, loc };
   }
 
@@ -662,35 +686,35 @@ class Parser {
 
   // AnswerCmd ::= "answer" Expression [ "with" ConcatExpr [ "or" ConcatExpr [ "or" ConcatExpr ] ] ]
   // Buttons are parsed at ConcatExpr level so that "or" separates them (Requirement 1.5).
-  private parseAnswer(): HexStatementNode {
+  private parseAnswer(depth: number): HexStatementNode {
     const loc = at(this.advance());
-    const prompt = this.parseExpression();
+    const prompt = this.parseExpression(depth + 1);
     const buttons: HexExprNode[] = [];
     if (this.acceptWord("with")) {
-      buttons.push(this.parseBinary(PREC_CONCAT));
+      buttons.push(this.parseBinary(PREC_CONCAT, depth + 1));
       while (isWord(this.peek(), "or")) {
         if (buttons.length === MAX_ANSWER_BUTTONS) {
           throw this.fail(this.peek(), `answer accepts at most ${MAX_ANSWER_BUTTONS} buttons`);
         }
         this.advance();
-        buttons.push(this.parseBinary(PREC_CONCAT));
+        buttons.push(this.parseBinary(PREC_CONCAT, depth + 1));
       }
     }
     return { kind: "ShowAnswerDialog", prompt, buttons, loc };
   }
 
   // AskCmd ::= "ask" Expression [ "with" Expression ]
-  private parseAsk(): HexStatementNode {
+  private parseAsk(depth: number): HexStatementNode {
     const loc = at(this.advance());
-    const prompt = this.parseExpression();
+    const prompt = this.parseExpression(depth + 1);
     if (!this.acceptWord("with")) return { kind: "ShowAskDialog", prompt, loc };
-    return { kind: "ShowAskDialog", prompt, defaultAnswer: this.parseExpression(), loc };
+    return { kind: "ShowAskDialog", prompt, defaultAnswer: this.parseExpression(depth + 1), loc };
   }
 
   // WaitCmd ::= "wait" Expression [ "tick" | "ticks" | "second" | "seconds" ]   (default: ticks)
-  private parseWait(): HexStatementNode {
+  private parseWait(depth: number): HexStatementNode {
     const loc = at(this.advance());
-    const amount = this.parseExpression();
+    const amount = this.parseExpression(depth + 1);
     const t = this.peek();
     const unit = t.type === "word" ? WAIT_UNITS.get(t.value) : undefined;
     if (unit !== undefined) this.advance();
@@ -698,9 +722,9 @@ class Parser {
   }
 
   // FetchCmd ::= "fetch" Expression [ "at" StringLiteral ] "into" Container
-  private parseFetch(): HexStatementNode {
+  private parseFetch(depth: number): HexStatementNode {
     const loc = at(this.advance());
-    const url = this.parseExpression();
+    const url = this.parseExpression(depth + 1);
     let jsonPath: string | undefined;
     if (this.acceptWord("at")) {
       const path = this.peek();
@@ -709,7 +733,7 @@ class Parser {
       jsonPath = path.value;
     }
     this.expectWord("into");
-    const destination = this.parseContainer();
+    const destination = this.parseContainer(depth + 1);
     return jsonPath === undefined
       ? { kind: "FetchJson", url, destination, loc }
       : { kind: "FetchJson", url, jsonPath, destination, loc };
@@ -725,23 +749,23 @@ class Parser {
 
   // IfStmt ::= "if" Expression "then" ( Statement
   //          | Newline StatementList [ "else" Newline StatementList ] "end" "if" )
-  private parseIf(): HexStatementNode {
+  private parseIf(depth: number): HexStatementNode {
     const ifToken = this.advance();
     const loc = at(ifToken);
-    const condition = this.parseExpression();
+    const condition = this.parseExpression(depth + 1);
     this.expectWord("then");
     if (!this.atEndOfLine()) {
-      return { kind: "IfCondition", condition, thenBranch: [this.parseStatement()], loc };
+      return { kind: "IfCondition", condition, thenBranch: [this.parseStatement(depth + 1)], loc };
     }
     this.expectEndOfLine();
-    const thenBranch = this.parseStatementList();
+    const thenBranch = this.parseStatementList(depth + 1);
     let elseBranch: HexStatementNode[] | undefined;
     if (this.acceptWord("else")) {
       if (!this.atEndOfLine()) {
         throw this.fail(this.peek(), '"else" must be followed by a new line (a statement on the same line is not supported)');
       }
       this.expectEndOfLine();
-      elseBranch = this.parseStatementList();
+      elseBranch = this.parseStatementList(depth + 1);
     }
     this.expectBlockEnd("if", ifToken);
     return elseBranch === undefined
@@ -750,26 +774,27 @@ class Parser {
   }
 
   // RepeatBlock ::= "repeat" [ RepeatHead ] Newline StatementList "end" "repeat"
-  private parseRepeat(): HexStatementNode {
+  private parseRepeat(depth: number): HexStatementNode {
     const repeatToken = this.advance();
-    const head = this.parseRepeatHead();
+    const head = this.parseRepeatHead(depth + 1);
     this.expectEndOfLine();
-    const body = this.parseStatementList();
+    const body = this.parseStatementList(depth + 1);
     this.expectBlockEnd("repeat", repeatToken);
     return { kind: "RepeatLoop", head, body, loc: at(repeatToken) };
   }
 
   // RepeatHead ::= "with" Identifier "=" Expression ( "to" | "down" "to" ) Expression
   //              | "while" Expression | "until" Expression | "forever" | [ "for" ] Expression [ "times" ]
-  private parseRepeatHead(): HexRepeatHead {
+  // The head is not a node: `depth` is the depth of its expressions.
+  private parseRepeatHead(depth: number): HexRepeatHead {
     if (this.atEndOfLine()) return { type: "forever" }; // bare "repeat"
     if (this.acceptWord("forever")) return { type: "forever" };
-    if (this.acceptWord("while")) return { type: "while", condition: this.parseExpression() };
-    if (this.acceptWord("until")) return { type: "until", condition: this.parseExpression() };
+    if (this.acceptWord("while")) return { type: "while", condition: this.parseExpression(depth) };
+    if (this.acceptWord("until")) return { type: "until", condition: this.parseExpression(depth) };
     if (this.acceptWord("with")) {
       const varName = this.expectIdentifier("a loop variable name").value;
       this.expectOp("=");
-      const start = this.parseExpression();
+      const start = this.parseExpression(depth);
       let direction: "up" | "down";
       if (this.acceptWord("to")) {
         direction = "up";
@@ -779,11 +804,11 @@ class Parser {
       } else {
         throw this.unexpected(this.peek(), '"to" or "down to"');
       }
-      const end = this.parseExpression();
+      const end = this.parseExpression(depth);
       return { type: "range", varName, start, end, direction };
     }
     this.acceptWord("for");
-    const times = this.parseExpression();
+    const times = this.parseExpression(depth);
     this.acceptWord("times");
     return { type: "count", times };
   }
@@ -832,13 +857,15 @@ class Parser {
   // ----- containers and object references ----------------------------------------------------
 
   // Container ::= Identifier | FieldRef
-  private parseContainer(): HexContainerTarget {
+  // Containers, part references, selectors and object references are not nodes: in these methods
+  // `depth` is the depth of the selector expression they hold.
+  private parseContainer(depth: number): HexContainerTarget {
     const t = this.peek();
     if (isIdentifier(t)) {
       this.advance();
       return { scope: "variable", name: t.value };
     }
-    if (this.atPartRef(false)) return this.parseFieldRef();
+    if (this.atPartRef(false)) return this.parseFieldRef(depth);
     throw this.unexpected(t, "a variable or a field");
   }
 
@@ -852,7 +879,7 @@ class Parser {
 
   // FieldRef  ::= [ CardWord | BgWord ] ( "field" | "fld" ) PartSelector    (default layer: background)
   // ButtonRef ::= [ CardWord | BgWord ] ( "button" | "btn" ) PartSelector   (default layer: card)
-  private parsePartRef(): PartTarget {
+  private parsePartRef(depth: number): PartTarget {
     let layer: Layer | undefined;
     if (isWordIn(this.peek(), CARD_WORDS)) {
       this.advance();
@@ -867,26 +894,26 @@ class Parser {
     else if (isWordIn(t, BUTTON_WORDS)) objectType = "button";
     else throw this.unexpected(t, '"field" or "button"');
     this.advance();
-    const selector = this.parsePartSelector();
+    const selector = this.parsePartSelector(depth);
     return { objectType, layer: layer ?? (objectType === "field" ? "background" : "card"), selector };
   }
 
   /** Called only where `atPartRef(false)` holds, so the reference is a field. */
-  private parseFieldRef(): FieldTarget {
-    const { layer, selector } = this.parsePartRef();
+  private parseFieldRef(depth: number): FieldTarget {
+    const { layer, selector } = this.parsePartRef(depth);
     return { scope: "field", layer, selector };
   }
 
   // PartSelector ::= "id" Primary | Primary
-  private parsePartSelector(): HexPartSelector {
-    if (this.acceptWord("id")) return { by: "id", value: this.parsePrimary() };
-    return { by: "auto", value: this.parsePrimary() };
+  private parsePartSelector(depth: number): HexPartSelector {
+    if (this.acceptWord("id")) return { by: "id", value: this.parsePrimary(depth) };
+    return { by: "auto", value: this.parsePrimary(depth) };
   }
 
   // ObjectRef ::= "me" | ButtonRef | FieldRef | "this" "card" | "card" PartSelector
   //             | "this" ( "background" | "bg" ) | "this" "stack"
   // "card field ..." / "card button ..." is the card-layer part, not a card selected by a field.
-  private parseObjectRef(): HexObjectTarget {
+  private parseObjectRef(depth: number): HexObjectTarget {
     const t = this.peek();
     if (this.acceptWord("me")) return { objectType: "me" };
     if (this.acceptWord("this")) {
@@ -895,32 +922,48 @@ class Parser {
       if (this.acceptWord("stack")) return { objectType: "stack" };
       throw this.unexpected(this.peek(), '"card", "background", "bg" or "stack"');
     }
-    if (this.atPartRef(true)) return this.parsePartRef();
-    if (this.acceptWord("card")) return { objectType: "card", selector: this.parsePartSelector() };
+    if (this.atPartRef(true)) return this.parsePartRef(depth);
+    if (this.acceptWord("card")) return { objectType: "card", selector: this.parsePartSelector(depth) };
     throw this.unexpected(t, "an object (me, a button, a field, a card, this card, this background or this stack)");
   }
 
   // ----- expressions ---------------------------------------------------------------------------
 
   // Expression ::= AndExpr { "or" AndExpr }
-  private parseExpression(): HexExprNode {
-    return this.parseBinary(PREC_OR);
+  // In the expression methods `depth` is the depth of the node they return.
+  private parseExpression(depth: number): HexExprNode {
+    return this.parseBinary(PREC_OR, depth);
   }
 
   /**
    * Precedence climbing over the binary levels of §4.1. All levels are left-associative except
    * comparison, where a second comparison operator is a syntax error.
+   *
+   * The left operand is parsed as if it stood at `depth`; each operator of the loop wraps
+   * everything parsed so far in a new BinaryOp at `depth`, one level deeper. For a left-deep chain
+   * such as `1 + 1 + ... + 1`, the operator whose wrap would push a node beyond `HEX_MAX_DEPTH` is
+   * the first token beyond the limit. A left operand that is a nested group was already parsed one
+   * level deeper (`parseGroup`), so the first wrap adds no level.
    */
-  private parseBinary(minPrecedence: number): HexExprNode {
-    let left = this.parseUnary();
+  private parseBinary(minPrecedence: number, depth: number): HexExprNode {
+    const outerDeepest = this.deepest;
+    this.deepest = 0;
+    let leftCounted = this.atNestedGroup();
+    let left = this.parseUnary(depth);
     for (;;) {
       const operator = this.peekBinaryOperator();
-      if (operator === null) return left;
+      if (operator === null) break;
       const precedence = PRECEDENCE[operator.op];
-      if (precedence < minPrecedence) return left;
+      if (precedence < minPrecedence) break;
       const opToken = this.peek();
+      if (leftCounted) {
+        leftCounted = false;
+      } else {
+        if (this.deepest + 1 > HEX_MAX_DEPTH) throw this.fail(opToken, NESTED_TOO_DEEPLY);
+        this.deepest += 1;
+      }
       this.pos += operator.width;
-      const right = this.parseBinary(precedence + 1);
+      const right = this.parseBinary(precedence + 1, depth + 1);
       left = { kind: "BinaryOp", op: operator.op, left, right, loc: at(opToken) };
       if (precedence === PREC_COMPARE) {
         const next = this.peekBinaryOperator();
@@ -929,6 +972,8 @@ class Parser {
         }
       }
     }
+    this.deepest = Math.max(outerDeepest, this.deepest);
+    return left;
   }
 
   /** `is not` and `is` are recognised with one token of look-ahead. */
@@ -946,19 +991,48 @@ class Parser {
   }
 
   // UnaryExpr ::= ( "not" | "-" ) UnaryExpr | Primary
-  private parseUnary(): HexExprNode {
+  private parseUnary(depth: number): HexExprNode {
     const t = this.peek();
     if (isWord(t, "not") || isOp(t, "-")) {
+      this.enter(t, depth);
       this.advance();
-      return { kind: "UnaryOp", op: t.type === "op" ? "-" : "not", operand: this.parseUnary(), loc: at(t) };
+      return { kind: "UnaryOp", op: t.type === "op" ? "-" : "not", operand: this.parseUnary(depth + 1), loc: at(t) };
     }
-    return this.parsePrimary();
+    return this.parsePrimary(depth);
+  }
+
+  /** True at a `(` that is the first token of the last opened group's content, as in `((`. */
+  private atNestedGroup(): boolean {
+    return this.pos === this.groupContentStart && isOp(this.peek(), "(");
+  }
+
+  /**
+   * `"(" Expression ")"`. Parentheses create no node, so the content normally keeps `depth`.
+   *
+   * A group directly inside another group (`((`) is parsed one level deeper. Either an operator
+   * follows it, and it is the left operand of a BinaryOp in the outer group, so that level is real
+   * (`parseBinary` then adds none for its first wrap); or the outer pair wraps exactly this group,
+   * and the redundant pair counts as one extra level. The printer only parenthesises a BinaryOp or
+   * UnaryOp, so it never prints a redundant pair and its parentheses never add a level; the rule
+   * only bounds the recursion of sources such as `((((1))))`.
+   */
+  private parseGroup(depth: number): HexExprNode {
+    const open = this.peek();
+    const contentDepth = this.atNestedGroup() ? depth + 1 : depth;
+    if (contentDepth > HEX_MAX_DEPTH) throw this.fail(open, NESTED_TOO_DEEPLY);
+    this.advance();
+    this.groupContentStart = this.pos;
+    const inner = this.parseExpression(contentDepth);
+    this.expectOp(")");
+    return inner;
   }
 
   // Primary ::= NumberLiteral | StringLiteral | Constant | "(" Expression ")"
   //           | FunctionName "(" [ Expression { "," Expression } ] ")" | "the" ... | FieldRef | Identifier
-  private parsePrimary(): HexExprNode {
+  private parsePrimary(depth: number): HexExprNode {
     const t = this.peek();
+    if (isOp(t, "(")) return this.parseGroup(depth);
+    this.enter(t, depth);
     const loc = at(t);
     switch (t.type) {
       case "number": {
@@ -970,14 +1044,6 @@ class Parser {
       case "string":
         this.advance();
         return { kind: "Literal", value: t.value, loc };
-      case "op":
-        if (t.value === "(") {
-          this.advance();
-          const inner = this.parseExpression();
-          this.expectOp(")");
-          return inner;
-        }
-        break;
       case "word": {
         if (t.value === "true" || t.value === "false") {
           this.advance();
@@ -991,10 +1057,10 @@ class Parser {
         const fn = FUNCTION_NAMES.get(t.value);
         if (fn !== undefined) {
           this.advance();
-          return { kind: "FunctionCall", name: fn, args: this.parseArguments(), loc };
+          return { kind: "FunctionCall", name: fn, args: this.parseArguments(depth + 1), loc };
         }
-        if (t.value === "the") return this.parseTheExpr();
-        if (this.atPartRef(false)) return { kind: "ReadContainer", source: this.parseFieldRef(), loc };
+        if (t.value === "the") return this.parseTheExpr(depth);
+        if (this.atPartRef(false)) return { kind: "ReadContainer", source: this.parseFieldRef(depth + 1), loc };
         if (isIdentifier(t)) {
           this.advance();
           return { kind: "Variable", name: t.value, loc };
@@ -1007,17 +1073,19 @@ class Parser {
     throw this.unexpected(t, "an expression");
   }
 
-  private parseArguments(): HexExprNode[] {
+  /** A call's argument list; `depth` is the depth of the arguments. */
+  private parseArguments(depth: number): HexExprNode[] {
     this.expectOp("(");
     const args: HexExprNode[] = [];
     if (this.acceptOp(")")) return args;
-    do args.push(this.parseExpression()); while (this.acceptOp(","));
+    do args.push(this.parseExpression(depth)); while (this.acceptOp(","));
     this.expectOp(")");
     return args;
   }
 
   // "the" FunctionName "of" Primary | "the" BuiltInName | "the" PropertyName "of" ObjectRef
-  private parseTheExpr(): HexExprNode {
+  // Called by parsePrimary, which has already entered the node at "the".
+  private parseTheExpr(depth: number): HexExprNode {
     const loc = at(this.advance());
     const t = this.peek();
     if (t.type === "word") {
@@ -1025,7 +1093,7 @@ class Parser {
       if (fn !== undefined) {
         this.advance();
         this.expectWord("of");
-        return { kind: "FunctionCall", name: fn, args: [this.parsePrimary()], loc };
+        return { kind: "FunctionCall", name: fn, args: [this.parsePrimary(depth + 1)], loc };
       }
       const builtIn = BUILT_INS.get(t.value);
       if (builtIn !== undefined) {
@@ -1046,7 +1114,7 @@ class Parser {
       if (property !== undefined) {
         this.advance();
         this.expectWord("of");
-        return { kind: "ReadProperty", property, target: this.parseObjectRef(), loc };
+        return { kind: "ReadProperty", property, target: this.parseObjectRef(depth + 1), loc };
       }
     }
     throw this.unexpected(t, 'a function, built-in or property name after "the"');

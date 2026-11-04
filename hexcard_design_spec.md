@@ -468,6 +468,8 @@ export type HexExprNode = (
 - **Round-trip guarantee 1:** for every AST `A` accepted by the AST schema validator, `parse(print(A))` deep-equals `A` (ignoring `loc`).
 - **Round-trip guarantee 2:** for every source `S` that parses without errors, `print(parse(S))` is a canonical form `S'` with `parse(S')` deep-equal to `parse(S)`. The printer normalises synonyms (`is` → `=`, `is not` → `<>`, `previous` → `prev`, `bkgnd`/`background` → `bg`, `fld` → `field`, `btn` → `button`), always prints the block form of `if`, always prints explicit layer words, indents with 2 spaces and adds only the parentheses that precedence requires.
 - The AST schema validator rejects string literals containing `"` or a newline (they cannot be printed as a single HexTalk literal), unknown property/voice/effect names, `pass` with a foreign event name, and `PlaySound.tempo` outside `20..400`.
+- `ast.ts` exports `HEX_MAX_DEPTH = 256`, the maximum nesting depth of AST nodes (statement blocks and expressions counted together along any path from a handler). `validateAst` rejects deeper ASTs and `parseHexTalk` reports a compile error 'script is nested too deeply' at the first token beyond the limit, so both round-trip guarantees hold at every accepted depth.
+- A parenthesised expression directly inside another pair of parentheses counts as one extra level, so redundant nested parentheses cannot bypass the limit; the printer never emits such pairs.
 - Both guarantees are enforced by property-based tests (fast-check) in `src/core/__tests__/parser.roundtrip.test.ts`.
 
 ### 4.3. Virtual Machine Semantics & Sandbox Guardrails (`src/core/vm.ts`)

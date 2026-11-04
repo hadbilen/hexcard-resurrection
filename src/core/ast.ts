@@ -8,6 +8,28 @@
  */
 import type { VisualEffectType, VisualEffectSpeed } from "./schema.ts";
 
+/**
+ * Maximum nesting depth of AST nodes (§4.2 parser/printer contract), shared by `validateAst` and
+ * `parseHexTalk` so that both round-trip guarantees hold at every accepted depth.
+ *
+ * Counting convention: every `HexStatementNode` and every `HexExprNode` is one level, and nothing
+ * else is. A handler is depth 0, so its top-level statements are depth 1. The statements of an
+ * `if`/`repeat` block, and every expression a statement holds directly (condition, value, amount,
+ * prompt, button, url, repeat-head expression, card-target or part-selector value), are one level
+ * deeper than that statement; the operands, arguments and selector values of an expression are one
+ * level deeper than that expression. Objects that are not nodes (statement lists, part selectors,
+ * container, object and card targets, repeat heads) add no level. An AST is accepted when no node
+ * is deeper than `HEX_MAX_DEPTH`.
+ *
+ * In source text, parentheses add no level, with one exception the printer never produces: a pair
+ * that directly wraps another pair around the same expression, as in `((x))`, counts as one extra
+ * level (see `parseGroup` in parser.ts).
+ *
+ * Example: in `on h / if x then / get -1 / end if / end h`, `if` is depth 1, `x` and `get` are 2,
+ * the `-` node is 3 and the literal `1` is 4.
+ */
+export const HEX_MAX_DEPTH = 256;
+
 /** A compile error reported by `parseHexTalk`; stored per object in the store's ScriptCache. */
 export interface HexCompileError {
   line: number;   // 1-based

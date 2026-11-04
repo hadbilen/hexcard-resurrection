@@ -9,11 +9,13 @@
  * Because §4.2 promises `parse(print(A))` deep-equals `A` for every accepted AST, the gate also
  * rejects values HexTalk cannot spell: identifiers that are malformed, not lowercase or reserved,
  * handler keys that differ from the lowercased `eventName`, number literals that are not
- * `Digit { Digit } [ "." Digit { Digit } ]`, and more than 3 answer buttons.
+ * `Digit { Digit } [ "." Digit { Digit } ]`, and more than 3 answer buttons. It also rejects ASTs
+ * nested deeper than `HEX_MAX_DEPTH`, the limit `parseHexTalk` enforces.
  *
  * Objects are strict: unknown keys are rejected.
  */
 import { z } from "zod";
+import { HEX_MAX_DEPTH } from "./ast.ts";
 import type {
   HexExprNode,
   HexHandlerNode,
@@ -333,6 +335,105 @@ function checkPass(
   return null;
 }
 
+// ----- nesting depth (HEX_MAX_DEPTH) ---------------------------------------------------------
+
+/** Positions the depth walk visits: nodes, and the non-node wrappers between them. */
+type DepthRole = "statement" | "expr" | "selector" | "container" | "object" | "cardTarget" | "repeatHead";
+
+interface DepthChild {
+  readonly key: string;
+  readonly role: DepthRole;
+  readonly list: boolean;
+}
+
+const one = (key: string, role: DepthRole): DepthChild => ({ key, role, list: false });
+const many = (key: string, role: DepthRole): DepthChild => ({ key, role, list: true });
+
+/**
+ * Every key through which `scriptSchema` reaches another node, per node kind. A value with an
+ * unknown kind has no entry: the schema rejects it without looking inside.
+ */
+const STATEMENT_CHILDREN: ReadonlyMap<string, readonly DepthChild[]> = new Map([
+  ["GoToCard", [one("target", "cardTarget")]],
+  ["QueueVisualEffect", []],
+  ["PutValue", [one("value", "expr"), one("destination", "container")]],
+  ["GetValue", [one("value", "expr")]],
+  ["MathMutation", [one("amount", "expr"), one("destination", "container")]],
+  ["SetProperty", [one("target", "object"), one("value", "expr")]],
+  ["PlaySound", []],
+  ["ShowAnswerDialog", [one("prompt", "expr"), many("buttons", "expr")]],
+  ["ShowAskDialog", [one("prompt", "expr"), one("defaultAnswer", "expr")]],
+  ["Wait", [one("amount", "expr")]],
+  ["FetchJson", [one("url", "expr"), one("destination", "container")]],
+  ["DeclareGlobal", []],
+  ["IfCondition", [one("condition", "expr"), many("thenBranch", "statement"), many("elseBranch", "statement")]],
+  ["RepeatLoop", [one("head", "repeatHead"), many("body", "statement")]],
+  ["PassEvent", []],
+  ["ExitHandler", []],
+  ["ExitRepeat", []],
+  ["NextRepeat", []],
+]);
+
+const EXPR_CHILDREN: ReadonlyMap<string, readonly DepthChild[]> = new Map([
+  ["Literal", []],
+  ["Constant", []],
+  ["Variable", []],
+  ["BuiltIn", []],
+  ["FunctionCall", [many("args", "expr")]],
+  ["ReadContainer", [one("source", "container")]],
+  ["ReadProperty", [one("target", "object")]],
+  ["BinaryOp", [one("left", "expr"), one("right", "expr")]],
+  ["UnaryOp", [one("operand", "expr")]],
+]);
+
+/**
+ * Wrappers add no level. Their children are followed whatever the discriminator says, which
+ * visits at least every value the schema parses.
+ */
+const WRAPPER_CHILDREN: Readonly<Record<Exclude<DepthRole, "statement" | "expr">, readonly DepthChild[]>> = {
+  selector: [one("value", "expr")],
+  container: [one("selector", "selector")],
+  object: [one("selector", "selector")],
+  cardTarget: [one("value", "expr")],
+  repeatHead: [one("times", "expr"), one("condition", "expr"), one("start", "expr"), one("end", "expr")],
+};
+
+/**
+ * True if a handler body holds a node deeper than `HEX_MAX_DEPTH` (counting convention in
+ * `ast.ts`). Iterative, and it stops at the first node beyond the limit, so neither deep nor
+ * cyclic input can overflow the call stack. Because it visits every value the schema would recurse
+ * into, a body it accepts is at most `HEX_MAX_DEPTH` nodes deep for Zod as well.
+ */
+function exceedsMaxDepth(body: unknown): boolean {
+  const pending: { value: unknown; role: DepthRole; depth: number }[] = [];
+  const pushChildren = (value: object, children: readonly DepthChild[], depth: number): void => {
+    for (const { key, role, list } of children) {
+      const child: unknown = (value as Record<string, unknown>)[key];
+      if (!list) pending.push({ value: child, role, depth });
+      else if (Array.isArray(child)) for (const item of child as unknown[]) pending.push({ value: item, role, depth });
+    }
+  };
+
+  if (!Array.isArray(body)) return false;
+  for (const statement of body as unknown[]) pending.push({ value: statement, role: "statement", depth: 1 });
+  for (let entry = pending.pop(); entry !== undefined; entry = pending.pop()) {
+    const { value, role, depth } = entry;
+    if (typeof value !== "object" || value === null) continue;
+    if (role === "statement" || role === "expr") {
+      const kind: unknown = (value as { kind?: unknown }).kind;
+      const children = typeof kind === "string"
+        ? (role === "statement" ? STATEMENT_CHILDREN : EXPR_CHILDREN).get(kind)
+        : undefined;
+      if (children === undefined) continue; // not a node
+      if (depth > HEX_MAX_DEPTH) return true;
+      pushChildren(value, children, depth + 1);
+    } else {
+      pushChildren(value, WRAPPER_CHILDREN[role], depth);
+    }
+  }
+  return false;
+}
+
 /**
  * Validates an untrusted value (for example AI output) as a HexScriptAST.
  * On success returns a freshly parsed AST that shares no objects with the input.
@@ -342,14 +443,24 @@ export function validateAst(input: unknown): ValidateAstResult {
   const handlers: unknown = typeof input === "object" && input !== null
     ? (input as Record<string, unknown>).handlers
     : undefined;
-  if (typeof handlers === "object" && handlers !== null && Object.hasOwn(handlers, "__proto__")) {
-    return fail(["handlers", "__proto__"], "handler key must be a lowercase identifier");
+  if (typeof handlers === "object" && handlers !== null) {
+    if (Object.hasOwn(handlers, "__proto__")) {
+      return fail(["handlers", "__proto__"], "handler key must be a lowercase identifier");
+    }
+    // Before the schema, so that Zod never recurses into input deeper than the limit.
+    for (const key of Object.keys(handlers)) {
+      const handler: unknown = (handlers as Record<string, unknown>)[key];
+      if (typeof handler === "object" && handler !== null && exceedsMaxDepth((handler as { body?: unknown }).body)) {
+        return fail(["handlers", key], `AST is nested too deeply (the maximum depth is ${HEX_MAX_DEPTH})`);
+      }
+    }
   }
 
   let parsed: ReturnType<typeof scriptSchema.safeParse>;
   try {
     parsed = scriptSchema.safeParse(input);
   } catch (error) {
+    // Backstop only: the depth check above already bounds the schema's recursion.
     if (error instanceof RangeError) return fail([], "AST is nested too deeply");
     throw error;
   }
