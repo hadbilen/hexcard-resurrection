@@ -29,6 +29,6 @@
   - End-to-end test through the spec 01 message bus: a parsed script's `go` sends closeCard/(closeBackground/openBackground)/openCard in order, shares the dispatch gas, and plays the pending visual effect
   - _Requirements: 5.1, 5.7_
 
-- [ ] 6. Implement the sandboxed fetch
+- [x] 6. Implement the sandboxed fetch
   - `src/core/fetchPolicy.ts` with URL policy, timeout, size cap, JSON path, error reasons
   - _Requirements: 6.1, 6.2, 6.3_
