@@ -1,0 +1,454 @@
+import { describe, expect, it } from "vitest";
+import type { HexStatementNode } from "../ast.ts";
+import {
+  buildMessagePath,
+  createMessageBus,
+  isAbortShortcut,
+  resolveBrowseClick,
+  resolveRelativeCard,
+  type HandlerRunner,
+  type HexMessage,
+  type MessageBus,
+} from "../messageBus.ts";
+import type { HexButtonPart, HexCard, HexFieldPart, HexStack } from "../schema.ts";
+import { createHexStore, readFieldText, type CompiledScript } from "../store.ts";
+import { resolveObjectTarget, runHandler, type DispatchContext, type HexHost } from "../vm.ts";
+
+// ---------------------------------------------------------------------------------------------
+// Fixture: crd_1 and crd_2 use bkg_1, crd_3 uses bkg_2.
+// Scripts are stored as JSON `{ handlerName: statements[] }` and compiled by `compile` below.
+// ---------------------------------------------------------------------------------------------
+
+type Scripts = Record<string, HexStatementNode[]>;
+
+const script = (handlers: Scripts): string => JSON.stringify(handlers);
+
+function compile(source: string): CompiledScript {
+  if (source === "") return { ast: { handlers: {} }, errors: [] };
+  const parsed = JSON.parse(source) as Scripts;
+  const handlers = Object.fromEntries(
+    Object.entries(parsed).map(([eventName, body]) => [eventName.toLowerCase(), { eventName, params: [], body }]),
+  );
+  return { ast: { handlers }, errors: [] };
+}
+
+const emptyBitmap = { width: 512, height: 342, rleData: "" };
+
+function field(overrides: Partial<HexFieldPart> & Pick<HexFieldPart, "id" | "name">): HexFieldPart {
+  return {
+    type: "field", layerScope: "background", rect: { x: 10, y: 40, width: 200, height: 100 },
+    visible: true, enabled: true, scriptSource: "", style: "rectangle", content: "", sharedText: false,
+    lockText: false, dontWrap: false, showLines: false, textAlign: "left", textFont: "System",
+    textSize: 12, textStyle: [], ...overrides,
+  };
+}
+
+function button(scriptSource = ""): HexButtonPart {
+  return {
+    id: "prt_btn", name: "Go", type: "button", layerScope: "card", rect: { x: 10, y: 10, width: 80, height: 20 },
+    visible: true, enabled: true, scriptSource, style: "roundRect", title: "Go", showName: true,
+    autoHilite: true, hilite: false,
+  };
+}
+
+function card(id: string, backgroundId: string, scriptSource = "", parts: HexCard["parts"] = []): HexCard {
+  return {
+    id, name: id, backgroundId, bitmap: emptyBitmap, parts, bgFieldContents: {}, marked: false,
+    cantDelete: false, dontSearch: false, scriptSource,
+  };
+}
+
+interface ScriptSet {
+  stack?: Scripts;
+  bkg_1?: Scripts;
+  bkg_2?: Scripts;
+  crd_1?: Scripts;
+  crd_2?: Scripts;
+  crd_3?: Scripts;
+  prt_btn?: Scripts;
+}
+
+function makeStack(scripts: ScriptSet): HexStack {
+  const src = (handlers?: Scripts): string => (handlers ? script(handlers) : "");
+  return {
+    id: "stk_1", schemaVersion: "2.0.0", name: "Stack", author: "Tester",
+    createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+    dimensions: { width: 512, height: 342 },
+    themePalette: { name: "ClassicPaper", darkBitHex: "#000000", lightBitHex: "#FFFFFF" },
+    backgrounds: [
+      {
+        id: "bkg_1", name: "Main", bitmap: emptyBitmap, scriptSource: src(scripts.bkg_1), cantDelete: false,
+        parts: [field({ id: "prt_in", name: "Input" }), field({ id: "prt_lbl", name: "Label", lockText: true })],
+      },
+      { id: "bkg_2", name: "Other", bitmap: emptyBitmap, scriptSource: src(scripts.bkg_2), cantDelete: false, parts: [] },
+    ],
+    cards: [
+      card("crd_1", "bkg_1", src(scripts.crd_1), [button(src(scripts.prt_btn))]),
+      card("crd_2", "bkg_1", src(scripts.crd_2)),
+      card("crd_3", "bkg_2", src(scripts.crd_3)),
+    ],
+    customIcons: {}, scriptSource: src(scripts.stack),
+  };
+}
+
+// AST builders
+const answer: HexStatementNode = { kind: "ShowAnswerDialog", prompt: { kind: "Literal", value: "wait" }, buttons: [] };
+const pass = (eventName: string): HexStatementNode => ({ kind: "PassEvent", eventName });
+const goNext: HexStatementNode = { kind: "GoToCard", target: { type: "relative", dir: "next" } };
+
+interface SetupOptions {
+  visible?: boolean;
+  modal?: boolean;
+}
+
+/**
+ * Real store and VM. The injected handler runner logs every handler call and executes `go`
+ * through `host.goToCard` (the VM's `go` belongs to spec 02 task 5); all other statements run in
+ * the real VM. `answer` suspends until `releaseAnswers()`.
+ */
+function setup(scripts: ScriptSet, options: SetupOptions = {}) {
+  const store = createHexStore({ stack: makeStack(scripts), compile });
+  const log: string[] = [];
+  const depths: number[] = [];
+  const contexts = new Set<DispatchContext>();
+  const errors: unknown[] = [];
+  const warnings: string[] = [];
+  const pendingAnswers: ((value: string) => void)[] = [];
+  const env = { visible: options.visible ?? true, modal: options.modal ?? false };
+  let idleTick: (() => void) | undefined;
+  let bus: MessageBus | undefined;
+
+  const host: HexHost = {
+    readField: (ref) => readFieldText(store.getSnapshot().stack, ref.cardId, ref.layer, ref.partId),
+    applyRuntime: (m) => store.applyRuntime(m),
+    resolveObject: (t, me) => resolveObjectTarget(store.getSnapshot(), t, me),
+    goToCard: (target, _effect, ctx) => {
+      if (target.type !== "relative" || target.dir === "back") throw new Error("unsupported in this test");
+      return bus!.changeCard(resolveRelativeCard(store.getSnapshot(), target.dir), ctx);
+    },
+    playSound: () => undefined,
+    showAnswer: () => new Promise<string>((resolve) => pendingAnswers.push(resolve)),
+    showAsk: (_prompt, defaultAnswer) => Promise.resolve(defaultAnswer),
+    fetchJson: () => Promise.resolve({ ok: false, reason: "blocked url" }),
+    now: () => ({ date: "1/1/26", time: "12:00 PM", ticks: 0, seconds: 0, mouseH: 0, mouseV: 0 }),
+  };
+
+  const runner: HandlerRunner = async (handler, params, me, ctx, h) => {
+    log.push(params.length > 0 ? `${me}.${handler.eventName}(${params.join(",")})` : `${me}.${handler.eventName}`);
+    depths.push(ctx.depth);
+    contexts.add(ctx);
+    if (handler.body[0]?.kind === "GoToCard") {
+      await h.goToCard(handler.body[0].target as { type: "relative"; dir: "next" }, null, ctx);
+      return "handled";
+    }
+    return runHandler(handler, params, me, ctx, h);
+  };
+
+  bus = createMessageBus({
+    store,
+    host,
+    runHandler: runner,
+    isPageVisible: () => env.visible,
+    isModalOpen: () => env.modal,
+    scheduleInterval: (callback) => {
+      idleTick = callback;
+      return () => {
+        idleTick = undefined;
+      };
+    },
+    onError: (error) => errors.push(error),
+    warn: (message) => warnings.push(message),
+  });
+
+  const releaseAnswers = async (): Promise<void> => {
+    while (pendingAnswers.length > 0) {
+      pendingAnswers.shift()!("OK");
+      await settle();
+    }
+  };
+
+  return {
+    store, bus, log, depths, contexts, errors, warnings, env, pendingAnswers, releaseAnswers,
+    tickIdle: () => idleTick?.(),
+  };
+}
+
+/** Lets every pending promise chain run to completion. */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+const msg = (name: string, targetId: string, ...params: (string | number)[]): HexMessage => ({ name, params, targetId });
+
+// ---------------------------------------------------------------------------------------------
+// Message path (Requirements 2.1-2.3)
+// ---------------------------------------------------------------------------------------------
+
+describe("message path", () => {
+  it("builds part -> card -> background -> stack paths from the current snapshot", () => {
+    const { store, bus } = setup({});
+    const state = store.getSnapshot();
+    expect(bus.buildPath("prt_btn")).toEqual(["prt_btn", "crd_1", "bkg_1", "stk_1"]);
+    expect(buildMessagePath(state, "prt_lbl")).toEqual(["prt_lbl", "crd_1", "bkg_1", "stk_1"]);
+    expect(buildMessagePath(state, "crd_3")).toEqual(["crd_3", "bkg_2", "stk_1"]);
+    expect(buildMessagePath(state, "bkg_1")).toEqual(["bkg_1", "stk_1"]);
+    expect(buildMessagePath(state, "stk_1")).toEqual(["stk_1"]);
+    expect(buildMessagePath(state, "prt_missing")).toEqual([]);
+  });
+
+  it("runs only the first matching handler, matching names case-insensitively", async () => {
+    const { bus, log } = setup({ crd_1: { MOUSEUP: [] }, bkg_1: { mouseUp: [] }, stack: { mouseUp: [] } });
+    bus.post(msg("mouseup", "prt_btn"));
+    await settle();
+    expect(log).toEqual(["crd_1.MOUSEUP"]);
+  });
+
+  it("continues after pass at the next object with the same parameters", async () => {
+    const { bus, log } = setup({
+      prt_btn: { mouseUp: [pass("mouseUp")] },
+      crd_1: { mouseUp: [pass("mouseUp")] },
+      stack: { mouseUp: [] },
+    });
+    bus.post(msg("mouseUp", "prt_btn", "a", 1));
+    await settle();
+    expect(log).toEqual(["prt_btn.mouseUp(a,1)", "crd_1.mouseUp(a,1)", "stk_1.mouseUp(a,1)"]);
+  });
+
+  it("ignores messages nobody handles", async () => {
+    const { bus, log, errors } = setup({});
+    bus.post(msg("mouseUp", "prt_btn"));
+    bus.post(msg("constructor", "crd_1")); // must not resolve to Object.prototype members
+    await settle();
+    expect(log).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});
+
+describe("arrow-key built-in (Requirement 2.5)", () => {
+  it("goes to the next and previous card, wrapping at the ends", async () => {
+    const { bus, store } = setup({});
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+    bus.post(msg("keyDown", "crd_2", "ArrowLeft"));
+    bus.post(msg("keyDown", "crd_1", "ArrowLeft"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_3");
+  });
+
+  it("does nothing when a handler takes keyDown, or for other keys", async () => {
+    const { bus, store } = setup({ crd_1: { keyDown: [] } });
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    bus.post(msg("keyDown", "bkg_1", "x"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+  });
+
+  it("navigates when the handler passes keyDown", async () => {
+    const { bus, store } = setup({ crd_1: { keyDown: [pass("keyDown")] } });
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+  });
+});
+
+describe("Browse clicks in unlocked fields (Requirement 2.6)", () => {
+  it("places the caret in unlocked fields and targets locked fields, parts or the card", () => {
+    const { store } = setup({});
+    const state = store.getSnapshot();
+    expect(resolveBrowseClick(state, "prt_in")).toEqual({ action: "editField", partId: "prt_in", layer: "background" });
+    expect(resolveBrowseClick(state, "prt_lbl")).toEqual({ action: "send", targetId: "prt_lbl" });
+    expect(resolveBrowseClick(state, "prt_btn")).toEqual({ action: "send", targetId: "prt_btn" });
+    expect(resolveBrowseClick(state, null)).toEqual({ action: "send", targetId: "crd_1" });
+  });
+
+  it("never sends mouse click messages targeting an unlocked field", async () => {
+    const { bus, log } = setup({ crd_1: { mouseUp: [], mouseDown: [] } });
+    bus.post(msg("mouseDown", "prt_in"));
+    bus.post(msg("mouseUp", "prt_in"));
+    bus.post(msg("mouseUp", "prt_lbl"));
+    await settle();
+    expect(log).toEqual(["crd_1.mouseUp"]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Nested lifecycle dispatch (Requirements 2.4, 3.6)
+// ---------------------------------------------------------------------------------------------
+
+describe("nested lifecycle messages", () => {
+  const lifecycle: Scripts = { closeCard: [], closeBackground: [], openBackground: [], openCard: [] };
+
+  it("orders closeCard, closeBackground, openBackground, openCard when the background changes", async () => {
+    const { bus, store, log, depths, contexts } = setup({ crd_2: lifecycle, crd_3: lifecycle });
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    const seen: string[] = [];
+    store.subscribe(() => seen.push(store.getSnapshot().currentCardId));
+    bus.post(msg("keyDown", "crd_2", "ArrowRight"));
+    await settle();
+    expect(log).toEqual(["crd_2.closeCard", "crd_2.closeBackground", "crd_3.openBackground", "crd_3.openCard"]);
+    expect(depths).toEqual([1, 1, 1, 1]);
+    expect(contexts.size).toBe(1); // one shared DispatchContext (shared gas budget)
+    expect(seen).toEqual(["crd_3"]); // the card changes once, between the close and open messages
+  });
+
+  it("sends only closeCard and openCard when the background stays the same", async () => {
+    const { bus, log } = setup({ crd_1: lifecycle, crd_2: lifecycle });
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    await settle();
+    expect(log).toEqual(["crd_1.closeCard", "crd_2.openCard"]);
+  });
+
+  it("delivers lifecycle messages inside the dispatch that ran go, sharing its context", async () => {
+    const { bus, log, depths, contexts } = setup({ prt_btn: { mouseUp: [goNext] }, crd_1: lifecycle, crd_2: lifecycle });
+    bus.post(msg("mouseUp", "prt_btn"));
+    await settle();
+    expect(log).toEqual(["prt_btn.mouseUp", "crd_1.closeCard", "crd_2.openCard"]);
+    expect(depths).toEqual([0, 1, 1]);
+    expect(contexts.size).toBe(1);
+  });
+
+  it("aborts with 'Too much recursion' when nesting exceeds 16 levels", async () => {
+    const { bus, log, errors, store } = setup({ prt_btn: { mouseUp: [goNext] }, stack: { openCard: [goNext] } });
+    bus.post(msg("mouseUp", "prt_btn"));
+    await settle();
+    expect(log.filter((entry) => entry === "stk_1.openCard")).toHaveLength(16);
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as Error).name).toBe("HexScriptError");
+    expect((errors[0] as Error).message).toBe("Too much recursion");
+    expect(bus.isRunning()).toBe(false);
+
+    // The bus keeps working after the failed dispatch.
+    const before = store.getSnapshot().currentCardId;
+    bus.post(msg("keyDown", before, "x"));
+    await settle();
+    expect(bus.isRunning()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Queue (Requirements 3.1-3.4)
+// ---------------------------------------------------------------------------------------------
+
+describe("dispatch queue", () => {
+  it("runs one dispatch at a time and keeps a suspended dispatch running", async () => {
+    const { bus, log, releaseAnswers } = setup({ crd_1: { mouseUp: [answer], mouseDown: [], keyDown: [] } });
+    bus.post(msg("mouseUp", "crd_1"));
+    bus.post(msg("keyDown", "crd_1", "a"));
+    bus.post(msg("mouseDown", "crd_1"));
+    await settle();
+    expect(log).toEqual(["crd_1.mouseUp"]);
+    expect(bus.isRunning()).toBe(true);
+    expect(bus.pendingCount()).toBe(2);
+
+    await releaseAnswers();
+    expect(log).toEqual(["crd_1.mouseUp", "crd_1.keyDown(a)", "crd_1.mouseDown"]);
+    expect(bus.isRunning()).toBe(false);
+  });
+
+  it("keeps at most 32 entries, dropping the oldest with a warning", async () => {
+    const { bus, log, warnings, releaseAnswers } = setup({ crd_1: { mouseUp: [answer], mouseDown: [] } });
+    bus.post(msg("mouseUp", "crd_1"));
+    for (let i = 0; i < 40; i += 1) bus.post(msg("mouseDown", "crd_1", i));
+    expect(bus.pendingCount()).toBe(32);
+    expect(warnings).toHaveLength(8);
+
+    await releaseAnswers();
+    const expected = Array.from({ length: 32 }, (_, k) => `crd_1.mouseDown(${k + 8})`);
+    expect(log).toEqual(["crd_1.mouseUp", ...expected]);
+  });
+
+  it("coalesces continuous messages to one pending entry per kind", async () => {
+    const { bus, log, releaseAnswers } = setup({
+      crd_1: { mouseUp: [answer], mouseWithin: [], idle: [], mouseStillDown: [], keyDown: [] },
+    });
+    bus.post(msg("mouseUp", "crd_1"));
+    bus.post(msg("mouseWithin", "crd_1", 1));
+    bus.post(msg("idle", "crd_1"));
+    bus.post(msg("mouseWithin", "crd_1", 2));
+    bus.post(msg("keyDown", "crd_1", "a"));
+    bus.post(msg("idle", "crd_1"));
+    bus.post(msg("mouseStillDown", "crd_1"));
+    bus.post(msg("mouseStillDown", "crd_1"));
+    bus.post(msg("keyDown", "crd_1", "a"));
+    expect(bus.pendingCount()).toBe(5);
+
+    await releaseAnswers();
+    expect(log).toEqual([
+      "crd_1.mouseUp", "crd_1.mouseWithin(2)", "crd_1.idle", "crd_1.keyDown(a)", "crd_1.mouseStillDown", "crd_1.keyDown(a)",
+    ]);
+  });
+});
+
+describe("idle timer (Requirement 3.5)", () => {
+  it("posts idle to the current card only while every condition holds", async () => {
+    const { bus, store, log, env, tickIdle, releaseAnswers } = setup({ crd_1: { idle: [], mouseUp: [answer] } });
+    tickIdle();
+    await settle();
+    expect(log).toEqual(["crd_1.idle"]);
+
+    env.modal = true;
+    tickIdle();
+    env.modal = false;
+    env.visible = false;
+    tickIdle();
+    env.visible = true;
+    store.setTool("button");
+    tickIdle();
+    store.setTool("browse");
+    await settle();
+    expect(log).toEqual(["crd_1.idle"]);
+
+    bus.post(msg("mouseUp", "crd_1")); // a running dispatch blocks idle
+    tickIdle();
+    expect(bus.pendingCount()).toBe(0);
+    await releaseAnswers();
+    expect(log).toEqual(["crd_1.idle", "crd_1.mouseUp"]);
+  });
+
+  it("stops the idle timer on dispose", async () => {
+    const { bus, log, tickIdle } = setup({ crd_1: { idle: [] } });
+    bus.dispose();
+    tickIdle();
+    await settle();
+    expect(log).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Abort (Requirement 3.7)
+// ---------------------------------------------------------------------------------------------
+
+describe("abort", () => {
+  it("aborts the running dispatch and clears the queue without reporting an error", async () => {
+    const { bus, log, errors } = setup({ crd_1: { mouseUp: [answer], keyDown: [] } });
+    bus.post(msg("mouseUp", "crd_1"));
+    bus.post(msg("keyDown", "crd_1", "a"));
+    bus.abort();
+    await settle();
+    expect(bus.isRunning()).toBe(false);
+    expect(bus.pendingCount()).toBe(0);
+    expect(log).toEqual(["crd_1.mouseUp"]);
+    expect(errors).toEqual([]);
+
+    bus.post(msg("keyDown", "crd_1", "b"));
+    await settle();
+    expect(log).toEqual(["crd_1.mouseUp", "crd_1.keyDown(b)"]);
+  });
+
+  it("aborts when switching from Browse to an authoring tool", async () => {
+    const { bus, store, log } = setup({ crd_1: { mouseUp: [answer], keyDown: [] } });
+    bus.post(msg("mouseUp", "crd_1"));
+    bus.post(msg("keyDown", "crd_1", "a"));
+    store.setTool("pencil");
+    await settle();
+    expect(bus.isRunning()).toBe(false);
+    expect(bus.pendingCount()).toBe(0);
+    expect(log).toEqual(["crd_1.mouseUp"]);
+  });
+
+  it("recognises Cmd+. and Ctrl+. as the abort shortcut", () => {
+    expect(isAbortShortcut({ key: ".", metaKey: true, ctrlKey: false })).toBe(true);
+    expect(isAbortShortcut({ key: ".", metaKey: false, ctrlKey: true })).toBe(true);
+    expect(isAbortShortcut({ key: ".", metaKey: false, ctrlKey: false })).toBe(false);
+    expect(isAbortShortcut({ key: "a", metaKey: true, ctrlKey: false })).toBe(false);
+  });
+});

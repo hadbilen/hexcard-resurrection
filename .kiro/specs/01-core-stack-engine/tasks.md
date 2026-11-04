@@ -23,7 +23,7 @@
   - Add `store.applyAuthoring(next)` to `src/core/store.ts` with incremental ScriptCache recompilation (design §3), and wire `createHistory(store)` to it (design §4)
   - _Requirements: 4.2, 4.4, 5.1, 5.2, 5.3_
 
-- [ ] 5. Implement the message bus
+- [x] 5. Implement the message bus
   - Implement path building, handled rule, `pass` continuation and the arrow-key built-in
   - Implement the FIFO queue (32 entries, overflow warning), continuous-message coalescing and the gated 200 ms `idle` timer
   - Implement nested lifecycle dispatch for `go` (card and background changes) with shared `DispatchContext`, depth limit 16, and abort
