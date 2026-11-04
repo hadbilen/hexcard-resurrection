@@ -37,8 +37,22 @@ export interface HexMessage {
   targetId: HexID;
 }
 
+/**
+ * Target of `go back`: the most recent back-history entry that still exists and is not the
+ * current card (Requirement 2.7).
+ */
+export interface BackTarget {
+  type: "relative";
+  dir: "back";
+}
+
+/** A card id, or `go back`. */
+export type CardChangeTarget = HexID | BackTarget;
+
 /** Most pending entries the queue holds; the oldest entry is dropped on overflow (§3.2 rule 3). */
 export const MAX_QUEUE_LENGTH = 32;
+/** Most entries the back history holds; the oldest entry is dropped on overflow (Requirement 2.7). */
+export const MAX_BACK_HISTORY = 64;
 /** Interval of the `idle` timer (§3.2 rule 4). */
 export const IDLE_INTERVAL_MS = 200;
 
@@ -63,7 +77,8 @@ export interface MessageBusOptions {
   store: HexStore;
   /**
    * Host passed to every handler. Its `goToCard` is expected to resolve the target, then call
-   * `bus.changeCard`, so the lifecycle messages are nested in the running dispatch. A host that
+   * `bus.changeCard`, so the lifecycle messages are nested in the running dispatch; `go back` is
+   * passed to `changeCard` unresolved, because the bus owns the back history. A host that
    * needs the bus can reference it lazily (the bus is created before any message is dispatched).
    */
   host: HexHost;
@@ -91,8 +106,11 @@ export interface MessageBus {
    * Changes the current card inside the running dispatch (used by `go` and the arrow-key
    * built-in): `closeCard`, [`closeBackground`], card change, `transition`, [`openBackground`],
    * `openCard`. The optional `transition` (visual effect playback) is a suspension point.
+   * `{ type: "relative", dir: "back" }` takes the most recent entry that still exists and is not
+   * the current card off the back history, dropping the skipped entries above it (Requirement
+   * 2.7), and does nothing at all when there is none.
    */
-  changeCard(cardId: HexID, ctx: DispatchContext, transition?: () => Promise<void>): Promise<void>;
+  changeCard(target: CardChangeTarget, ctx: DispatchContext, transition?: () => Promise<void>): Promise<void>;
   /** Cmd/Ctrl+. or a tool switch: aborts the running dispatch and clears the queue. */
   abort(): void;
   /** `[part?, card, background, stack]` for a target in the current snapshot; empty if it is gone. */
@@ -101,6 +119,8 @@ export interface MessageBus {
   isRunning(): boolean;
   /** Number of queued messages. */
   pendingCount(): number;
+  /** Copy of the back history, oldest first (the last entry is what `go back` tries first). */
+  backHistory(): readonly HexID[];
   /** Stops the idle timer, unsubscribes from the store and aborts. */
   dispose(): void;
 }
@@ -217,6 +237,29 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
   let running = false;
   let controller: AbortController | null = null;
 
+  /** Requirement 2.7: departing card ids, oldest first, at most MAX_BACK_HISTORY entries. */
+  const backHistory: HexID[] = [];
+  /** True while `go back` changes the card, so that change is not pushed. */
+  let goingBack = false;
+
+  function pushBack(cardId: HexID): void {
+    backHistory.push(cardId);
+    if (backHistory.length > MAX_BACK_HISTORY) backHistory.shift();
+  }
+
+  /**
+   * Pops entries until one names a card of the current stack other than the current card.
+   * Entries for deleted cards and for the current card are dropped; returns undefined (and
+   * leaves the history empty) when no entry qualifies.
+   */
+  function popBack(): HexID | undefined {
+    const { stack, currentCardId } = store.getSnapshot();
+    for (let cardId = backHistory.pop(); cardId !== undefined; cardId = backHistory.pop()) {
+      if (cardId !== currentCardId && stack.cards.some((card) => card.id === cardId)) return cardId;
+    }
+    return undefined;
+  }
+
   /** Walks the path; the first handler that does not `pass` handles the message. */
   async function deliver(msg: HexMessage, ctx: DispatchContext): Promise<void> {
     const path = buildMessagePath(store.getSnapshot(), msg.targetId);
@@ -305,7 +348,10 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
       }
     },
 
-    async changeCard(cardId, ctx, transition) {
+    async changeCard(target, ctx, transition) {
+      const isBack = typeof target !== "string";
+      const cardId = isBack ? popBack() : target;
+      if (cardId === undefined) return; // empty back history: go back does nothing
       const before = store.getSnapshot();
       const from = before.stack.cards.find((card) => card.id === before.currentCardId);
       const to = before.stack.cards.find((card) => card.id === cardId);
@@ -318,7 +364,12 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
         if (backgroundChanges) await bus.sendNested({ name: "closeBackground", params: [], targetId: from.id }, ctx);
       }
       if (ctx.abortSignal.aborted) throw new HexAbortError();
-      store.applyRuntime({ type: "goToCard", cardId: to.id });
+      goingBack = isBack;
+      try {
+        store.applyRuntime({ type: "goToCard", cardId: to.id }); // the store listener below pushes `from`
+      } finally {
+        goingBack = false;
+      }
       if (transition) await suspend(ctx, transition());
       if (backgroundChanges) await bus.sendNested({ name: "openBackground", params: [], targetId: to.id }, ctx);
       await bus.sendNested({ name: "openCard", params: [], targetId: to.id }, ctx);
@@ -335,19 +386,36 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
 
     pendingCount: () => queue.length,
 
+    backHistory: () => backHistory.slice(),
+
     dispose() {
       stopIdle();
       unsubscribe();
+      unsubscribeReplace();
       bus.abort();
     },
   };
 
-  // Requirement 3.7: switching from Browse to an authoring tool aborts like Cmd/Ctrl+.
   let lastTool = store.getSnapshot().tool;
+  let lastCardId = store.getSnapshot().currentCardId;
   const unsubscribe = store.subscribe(() => {
-    const { tool } = store.getSnapshot();
+    const { tool, currentCardId } = store.getSnapshot();
+    // Requirement 3.7: switching from Browse to an authoring tool aborts like Cmd/Ctrl+.
     if (lastTool === "browse" && tool !== "browse") bus.abort();
     lastTool = tool;
+    // Requirement 2.7: every card change except go back pushes the departing card. The store only
+    // publishes a new current card when it differs, so a no-op go never pushes.
+    if (currentCardId !== lastCardId) {
+      if (!goingBack) pushBack(lastCardId);
+      lastCardId = currentCardId;
+    }
+  });
+
+  // Requirement 2.7: a replaced stack starts with an empty back history. This runs before the
+  // subscriber above, so the switch to the new stack's first card is not pushed either.
+  const unsubscribeReplace = store.onReplaceStack(() => {
+    backHistory.length = 0;
+    lastCardId = store.getSnapshot().currentCardId;
   });
 
   const stopIdle = scheduleInterval(() => {

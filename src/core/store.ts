@@ -63,6 +63,11 @@ export interface HexStore {
   applyRuntime(m: RuntimeMutation): void;           // not undoable, schedules auto-save
   replaceStack(stack: HexStack): void;              // after validation only; recompiles ScriptCache
   /**
+   * Called by every `replaceStack`, after the new snapshot is in place and before `subscribe`
+   * listeners are notified. Used by the message bus to clear its back history (Requirement 2.7).
+   */
+  onReplaceStack(listener: () => void): () => void;
+  /**
    * Authoring write path, called only by history.ts (Requirement 4.2). Replaces the stack with an
    * authoring result, recompiles only scripts that changed, notifies listeners and schedules
    * auto-save. Never touches the undo history.
@@ -582,6 +587,7 @@ export function createHexStore(options: HexStoreOptions): HexStore {
   const autoSaveDelayMs = options.autoSaveDelayMs ?? AUTO_SAVE_DELAY_MS;
   const cache = createScriptCache(options.compile);
   const listeners = new Set<() => void>();
+  const replaceListeners = new Set<() => void>();
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   const initialStack = adoptStack(options.stack);
@@ -593,8 +599,9 @@ export function createHexStore(options: HexStoreOptions): HexStore {
     tool: "browse",
   });
 
-  function publish(next: HexRuntimeState): void {
+  function publish(next: HexRuntimeState, replaced = false): void {
     state = freeze(next);
+    if (replaced) for (const listener of [...replaceListeners]) listener();
     for (const listener of [...listeners]) listener();
   }
 
@@ -647,7 +654,14 @@ export function createHexStore(options: HexStoreOptions): HexStore {
       const next = adoptStack(stack);
       flushAutoSave();
       cache.rebuild(next);
-      publish({ stack: next, currentCardId: next.cards[0].id, editLayer: "card", tool: state.tool });
+      publish({ stack: next, currentCardId: next.cards[0].id, editLayer: "card", tool: state.tool }, true);
+    },
+
+    onReplaceStack(listener) {
+      replaceListeners.add(listener);
+      return () => {
+        replaceListeners.delete(listener);
+      };
     },
 
     applyAuthoring(next) {

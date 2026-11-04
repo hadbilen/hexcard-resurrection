@@ -44,6 +44,7 @@ export interface HexStore {
   getSnapshot(): HexRuntimeState;
   applyRuntime(m: RuntimeMutation): void;           // not undoable, schedules auto-save
   replaceStack(stack: HexStack): void;              // after validation only; recompiles ScriptCache
+  onReplaceStack(listener: () => void): () => void; // called by replaceStack before subscribers; message bus clears its back history
   applyAuthoring(next: HexStack): void;             // authoring result; incremental recompile; never touches history
   getCompiled(objectId: HexID): { ast: HexScriptAST; errors: HexCompileError[] };
 }
@@ -78,6 +79,8 @@ export interface HexMessage { name: string; params: (string | number)[]; targetI
 export interface MessageBus {
   post(msg: HexMessage): void;             // from UI: enqueue (with coalescing rules)
   sendNested(msg: HexMessage, ctx: DispatchContext): Promise<void>; // from VM during go
+  changeCard(target: HexID | { type: "relative"; dir: "back" }, ctx: DispatchContext,
+             transition?: () => Promise<void>): Promise<void>; // go / arrow keys: nested lifecycle msgs
   abort(): void;                           // Cmd/Ctrl+. or tool switch
 }
 ~~~
@@ -87,6 +90,7 @@ export interface MessageBus {
 - `DispatchContext` carries `{ stepCount, depth, abortSignal, pendingVisualEffect }` and is shared with nested dispatches.
 - The `idle` timer is a 200 ms interval that posts `idle` only when the §3.2 conditions hold; visibility and modal state are injected predicates.
 - Built-in handler: unhandled `keyDown` with `ArrowLeft`/`ArrowRight` -> go prev/next.
+- The back history of Requirement 2.7 lives in `messageBus.ts`; `changeCard` uses it for the target `{ type: "relative", dir: "back" }`.
 
 ## 6. Stack Validator (`stackValidator.ts`)
 A strict Zod schema mirroring §2.1 (unknown keys rejected) plus the structural checks of Requirements 6.3–6.7: layer references and scopes, at least one card and one background, globally unique ids, fixed 512x342 sizes, `#RRGGBB` palette colours and integer part rects. `validateStack(unknown) -> { ok: true, stack } | { ok: false, error }`.

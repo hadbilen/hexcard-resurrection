@@ -6,6 +6,7 @@ import {
   createMessageBus,
   IDLE_INTERVAL_MS,
   isAbortShortcut,
+  MAX_BACK_HISTORY,
   MAX_QUEUE_LENGTH,
   resolveBrowseClick,
   resolveRelativeCard,
@@ -15,7 +16,14 @@ import {
 } from "../messageBus.ts";
 import type { HexButtonPart, HexCard, HexFieldPart, HexStack } from "../schema.ts";
 import { createHexStore, readFieldText, type CompiledScript } from "../store.ts";
-import { resolveObjectTarget, runHandler, suspend, type DispatchContext, type HexHost } from "../vm.ts";
+import {
+  createDispatchContext,
+  resolveObjectTarget,
+  runHandler,
+  suspend,
+  type DispatchContext,
+  type HexHost,
+} from "../vm.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Fixture: crd_1 and crd_2 use bkg_1, crd_3 uses bkg_2.
@@ -98,6 +106,7 @@ function makeStack(scripts: ScriptSet): HexStack {
 const answer: HexStatementNode = { kind: "ShowAnswerDialog", prompt: { kind: "Literal", value: "wait" }, buttons: [] };
 const pass = (eventName: string): HexStatementNode => ({ kind: "PassEvent", eventName });
 const goNext: HexStatementNode = { kind: "GoToCard", target: { type: "relative", dir: "next" } };
+const goBack: HexStatementNode = { kind: "GoToCard", target: { type: "relative", dir: "back" } };
 const ask: HexStatementNode = { kind: "ShowAskDialog", prompt: { kind: "Literal", value: "Name?" } };
 const fetchJson: HexStatementNode = {
   kind: "FetchJson", url: { kind: "Literal", value: "https://example.com" }, destination: { scope: "variable", name: "x" },
@@ -115,8 +124,10 @@ interface SetupOptions {
 
 /**
  * Real store and VM. The injected handler runner logs every handler call and executes `go` and
- * `wait` itself (the VM's `go` and `wait` belong to spec 02 task 5); all other statements run in
- * the real VM. `answer`, `ask`, `fetch`, `wait` and transitions suspend until `releaseAnswers()`.
+ * `wait` itself, so the test controls when they suspend and resume (the VM's own `go` and `wait`
+ * are implemented in vm.ts and covered by vm.test.ts and vm.goEndToEnd.test.ts); all other
+ * statements run in the real VM. `answer`, `ask`, `fetch`, `wait` and transitions suspend until
+ * `releaseAnswers()`.
  */
 function setup(scripts: ScriptSet, options: SetupOptions = {}) {
   const store = createHexStore({ stack: makeStack(scripts), compile });
@@ -138,8 +149,9 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
     applyRuntime: (m) => store.applyRuntime(m),
     resolveObject: (t, me) => resolveObjectTarget(store.getSnapshot(), t, me),
     goToCard: (target, _effect, ctx) => {
-      if (target.type !== "relative" || target.dir === "back") throw new Error("unsupported in this test");
+      if (target.type !== "relative") throw new Error("unsupported in this test");
       const transition = options.transition ? () => hold<void>(undefined) : undefined;
+      if (target.dir === "back") return bus!.changeCard({ type: "relative", dir: "back" }, ctx, transition);
       return bus!.changeCard(resolveRelativeCard(store.getSnapshot(), target.dir), ctx, transition);
     },
     playSound: () => undefined,
@@ -154,7 +166,7 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
     depths.push(ctx.depth);
     contexts.add(ctx);
     if (handler.body[0]?.kind === "GoToCard") {
-      await h.goToCard(handler.body[0].target as { type: "relative"; dir: "next" }, null, ctx);
+      await h.goToCard(handler.body[0].target as { type: "relative"; dir: "next" | "back" }, null, ctx);
       return "handled";
     }
     if (handler.body[0]?.kind === "Wait") {
@@ -361,6 +373,162 @@ describe("nested lifecycle messages", () => {
     bus.post(msg("keyDown", before, "x"));
     await settle();
     expect(bus.isRunning()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Back history (Requirement 2.7)
+// ---------------------------------------------------------------------------------------------
+
+describe("go back history", () => {
+  const lifecycle: Scripts = { closeCard: [], closeBackground: [], openBackground: [], openCard: [] };
+  /** The stack script runs `go back` for a `goBack` message sent to any card. */
+  const withGoBack = (scripts: ScriptSet = {}): ScriptSet => ({ ...scripts, stack: { goBack: [goBack] } });
+  const newCtx = (): DispatchContext => createDispatchContext({ abortSignal: new AbortController().signal, globals: new Map() });
+
+  it("pushes the departing card on every change except a no-op change to the current card", async () => {
+    const { bus, store } = setup({ crd_2: { mouseUp: [goNext] } });
+    bus.post(msg("keyDown", "crd_1", "ArrowRight")); // arrow-key built-in
+    await settle();
+    bus.post(msg("mouseUp", "crd_2")); // go next
+    await settle();
+    expect(bus.backHistory()).toEqual(["crd_1", "crd_2"]);
+
+    await bus.changeCard("crd_1", newCtx()); // go by id
+    await bus.changeCard("crd_1", newCtx()); // already there: no push
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(bus.backHistory()).toEqual(["crd_1", "crd_2", "crd_3"]);
+  });
+
+  it(`keeps at most ${MAX_BACK_HISTORY} entries, dropping the oldest`, () => {
+    const { bus, store } = setup({});
+    const order = ["crd_2", "crd_3", "crd_1"];
+    const departed: string[] = [];
+    for (let i = 0; i < MAX_BACK_HISTORY + 6; i += 1) {
+      departed.push(store.getSnapshot().currentCardId);
+      store.applyRuntime({ type: "goToCard", cardId: order[i % order.length] });
+    }
+    expect(bus.backHistory()).toEqual(departed.slice(-MAX_BACK_HISTORY));
+  });
+
+  it("goes to the most recent entry without pushing, then does nothing once the history is empty", async () => {
+    const { bus, store, log, errors } = setup(withGoBack());
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    await settle();
+    expect(bus.backHistory()).toEqual(["crd_1"]);
+
+    bus.post(msg("goBack", "crd_2"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(bus.backHistory()).toEqual([]); // go back itself pushed nothing
+
+    bus.post(msg("goBack", "crd_1"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(log).toEqual(["stk_1.goBack", "stk_1.goBack"]);
+    expect(errors).toEqual([]);
+  });
+
+  it("sends no lifecycle messages and plays no transition when the history is empty", async () => {
+    const { bus, log, errors, pendingAnswers } = setup(withGoBack({ crd_1: lifecycle }), { transition: true });
+    bus.post(msg("goBack", "crd_1"));
+    await settle();
+    expect(log).toEqual(["stk_1.goBack"]);
+    expect(pendingAnswers).toHaveLength(0);
+    expect(errors).toEqual([]);
+    expect(bus.isRunning()).toBe(false);
+  });
+
+  it("skips and removes entries whose card was deleted", async () => {
+    const { bus, store } = setup(withGoBack());
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    bus.post(msg("keyDown", "crd_2", "ArrowRight"));
+    await settle();
+    expect(bus.backHistory()).toEqual(["crd_1", "crd_2"]);
+
+    const { stack } = store.getSnapshot();
+    store.applyAuthoring({ ...stack, cards: stack.cards.filter((c) => c.id !== "crd_2") });
+    bus.post(msg("goBack", "crd_3"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(bus.backHistory()).toEqual([]);
+  });
+
+  it("skips and removes entries equal to the current card, and does nothing when only such entries remain", async () => {
+    const { bus, store, log, errors, pendingAnswers, releaseAnswers } = setup(
+      withGoBack({ crd_1: lifecycle, crd_2: lifecycle }),
+      { transition: true },
+    );
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    bus.post(msg("keyDown", "crd_2", "ArrowRight"));
+    await settle();
+    expect(bus.backHistory()).toEqual(["crd_1", "crd_2"]);
+
+    // Deleting the current card crd_3 moves the store to crd_2, which is already in the history.
+    let { stack } = store.getSnapshot();
+    store.applyAuthoring({ ...stack, cards: stack.cards.filter((c) => c.id !== "crd_3") });
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+    expect(bus.backHistory()).toEqual(["crd_1", "crd_2", "crd_3"]);
+
+    // crd_3 (deleted) and crd_2 (current) are skipped; go back reaches crd_1.
+    log.length = 0;
+    bus.post(msg("goBack", "crd_2"));
+    await settle();
+    await releaseAnswers(); // the transition
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(log).toEqual(["stk_1.goBack", "crd_2.closeCard", "crd_1.openCard"]);
+    expect(bus.backHistory()).toEqual([]);
+
+    // Only a deleted card (crd_2) and the current card (crd_1) remain: go back does nothing.
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    await settle();
+    ({ stack } = store.getSnapshot());
+    store.applyAuthoring({ ...stack, cards: stack.cards.filter((c) => c.id !== "crd_2") });
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(bus.backHistory()).toEqual(["crd_1", "crd_2"]);
+
+    log.length = 0;
+    bus.post(msg("goBack", "crd_1"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(log).toEqual(["stk_1.goBack"]);
+    expect(pendingAnswers).toHaveLength(0);
+    expect(bus.backHistory()).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(bus.isRunning()).toBe(false);
+  });
+
+  it("clears the history when the stack is replaced", async () => {
+    const { bus, store, log } = setup(withGoBack());
+    bus.post(msg("keyDown", "crd_1", "ArrowRight"));
+    bus.post(msg("keyDown", "crd_2", "ArrowRight"));
+    await settle();
+    expect(bus.backHistory()).toHaveLength(2);
+
+    store.replaceStack(makeStack(withGoBack()));
+    expect(bus.backHistory()).toEqual([]); // the switch to the new stack's first card is not pushed
+    bus.post(msg("goBack", "crd_1"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(log).toEqual(["stk_1.goBack"]);
+  });
+
+  it("sends the lifecycle messages in order when go back changes the background", async () => {
+    const { bus, store, log, depths } = setup(withGoBack({ crd_2: lifecycle, crd_3: lifecycle }));
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    bus.post(msg("keyDown", "crd_2", "ArrowRight"));
+    await settle();
+    log.length = 0;
+    depths.length = 0;
+
+    bus.post(msg("goBack", "crd_3"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+    expect(log).toEqual([
+      "stk_1.goBack", "crd_3.closeCard", "crd_3.closeBackground", "crd_2.openBackground", "crd_2.openCard",
+    ]);
+    expect(depths).toEqual([0, 1, 1, 1, 1]);
+    expect(bus.backHistory()).toEqual(["crd_1"]);
   });
 });
 

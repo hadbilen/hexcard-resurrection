@@ -87,20 +87,22 @@ function setup(scripts: Scripts) {
       effects.push(effect);
       const state = store.getSnapshot();
       let cardId: string;
-      if (target.type === "relative") {
-        if (target.dir === "back") throw new HexScriptError("go back is not used in this test");
-        cardId = resolveRelativeCard(state, target.dir);
-      } else {
-        const found = resolveObjectTarget(state, { objectType: "card", selector: { by: target.type, value: target.value } }, state.currentCardId);
-        if (found.kind !== "card") throw new HexScriptError("not a card");
-        cardId = found.card.id;
-      }
       const transition = effect
         ? () => {
           appendLog(globals, `effect ${effect.effect} ${effect.speed} to ${store.getSnapshot().currentCardId}`);
           return Promise.resolve();
         }
         : undefined;
+      // `go back` is resolved by the bus, which owns the back history (spec 01 Requirement 2.7).
+      if (target.type === "relative") {
+        const { dir } = target;
+        if (dir === "back") return bus!.changeCard({ type: "relative", dir }, ctx, transition);
+        cardId = resolveRelativeCard(state, dir);
+      } else {
+        const found = resolveObjectTarget(state, { objectType: "card", selector: { by: target.type, value: target.value } }, state.currentCardId);
+        if (found.kind !== "card") throw new HexScriptError("not a card");
+        cardId = found.card.id;
+      }
       await bus!.changeCard(cardId, ctx, transition);
     },
     playSound: () => undefined,
@@ -128,7 +130,7 @@ function setup(scripts: Scripts) {
     while (bus!.isRunning() || bus!.pendingCount() > 0);
   };
 
-  return { store, globals, errors, effects, run };
+  return { store, bus, globals, errors, effects, run };
 }
 
 const click = (name = "mouseUp"): HexMessage => ({ name, params: [], targetId: "prt_btn" });
@@ -175,6 +177,46 @@ describe("go through the message bus", () => {
     expect(globals.get("log")).toBe(expected);
     expect(effects).toEqual([{ effect: "dissolve", speed: "fast" }]);
     expect(store.getSnapshot().currentCardId).toBe(destination === "Third" ? "crd_3" : "crd_2");
+  });
+
+  it("go back returns to the departed card with lifecycle messages and the effect, then does nothing", async () => {
+    const { store, bus, globals, errors, effects, run } = setup({
+      stack: LIFECYCLE_STACK_SCRIPT,
+      prt_btn: [
+        "on mouseUp",
+        '  go to card "Third"',
+        "end mouseUp",
+      ].join("\n"),
+      crd_3: [
+        "on mouseUp",
+        "  global log",
+        "  visual effect dissolve fast",
+        "  go back",
+        '  put "after back " & the number of this card & "," after log',
+        "end mouseUp",
+      ].join("\n"),
+    });
+
+    await run(click());
+    expect(bus.backHistory()).toEqual(["crd_1"]);
+    globals.set("log", "");
+
+    await run({ name: "mouseUp", params: [], targetId: "crd_3" });
+    expect(errors).toEqual([]);
+    expect(globals.get("log")).toBe(
+      "closeCard Third,closeBackground Third,effect dissolve fast to crd_1,openBackground First,openCard First,after back 1,",
+    );
+    expect(effects).toEqual([null, { effect: "dissolve", speed: "fast" }]);
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(bus.backHistory()).toEqual([]); // go back pushed nothing
+
+    // Empty history: the same handler's go back sends no lifecycle messages, plays no effect, and
+    // the script continues on card 1.
+    globals.set("log", "");
+    await run({ name: "mouseUp", params: [], targetId: "crd_3" });
+    expect(errors).toEqual([]);
+    expect(globals.get("log")).toBe("after back 1,");
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
   });
 
   it("discards a visual effect that no go consumed when its dispatch ends", async () => {
