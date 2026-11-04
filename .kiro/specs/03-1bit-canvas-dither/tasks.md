@@ -5,7 +5,7 @@
   - Port the round-trip, fuzz and corruption tests; add a fast-check round-trip property
   - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
-- [ ] 2. Implement frame composition
+- [x] 2. Implement frame composition
   - `composeFrame` with the §5.6 layer order, background `0 -> 1` rule and decoded-layer cache
   - `frameToImageData` palette mapping and integer scaling helper
   - _Requirements: 2.1, 2.2, 2.3_
