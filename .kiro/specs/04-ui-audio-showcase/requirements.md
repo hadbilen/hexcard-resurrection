@@ -25,6 +25,7 @@ This spec covers everything the user touches directly: the React System 7 shell,
 6. THE SYSTEM SHALL give UI components a store view without `applyAuthoring` and `replaceStack`, so authoring changes can only go through the history and loading only through the loader.
 7. WHEN the studio or the exported player starts, THE SYSTEM SHALL await `loadBundledFonts()` before composing the first frame.
 8. WHILE a paint tool is active, THE SYSTEM SHALL route pointer events on the card to the spec 03 paint controller, created with the store and history.
+9. WHEN a checkBox with autoHilite = true is clicked in Browse mode, THE SYSTEM SHALL toggle its hilite; WHEN a radioButton with autoHilite = true is clicked, THE SYSTEM SHALL set its hilite to true and set hilite to false on every other radioButton with the same family on the same layer of the current card. Both changes SHALL be applied with store.applyRuntime before mouseUp is delivered.
 
 ### Requirement 3: Object Inspector, Script Editor & Error Dialogs
 **User Story:** As a stack author, I want to edit properties and scripts with immediate feedback, and see clear errors when scripts fail.

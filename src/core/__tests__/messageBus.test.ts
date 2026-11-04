@@ -847,3 +847,65 @@ describe("abort", () => {
     expect(isAbortShortcut({ key: "a", metaKey: true, ctrlKey: false })).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Opening the current stack (Requirement 2.9)
+// ---------------------------------------------------------------------------------------------
+
+describe("opening the current stack", () => {
+  const openers: Scripts = { openStack: [], openBackground: [], openCard: [] };
+  const lifecycle: Scripts = { ...openers, closeCard: [], closeBackground: [] };
+
+  it("posts openStack, openBackground and openCard to the current card, in that order", async () => {
+    const { bus, store, log, contexts } = setup({ stack: { openStack: [] }, bkg_2: { openBackground: [] }, crd_3: { openCard: [] } });
+    store.applyRuntime({ type: "goToCard", cardId: "crd_3" });
+    bus.openCurrentStack();
+    await settle();
+    expect(log).toEqual(["stk_1.openStack", "bkg_2.openBackground", "crd_3.openCard"]);
+    expect(contexts.size).toBe(3); // three posted top-level dispatches
+    expect(bus.isRunning()).toBe(false);
+  });
+
+  it("aborts a suspended dispatch and drops previously queued messages", async () => {
+    const { bus, log, errors, pendingAnswers } = setup({ crd_1: { mouseUp: [answer], keyDown: [], ...openers } });
+    bus.post(msg("mouseUp", "crd_1"));
+    bus.post(msg("keyDown", "crd_1", "a"));
+    await settle();
+    expect(bus.isRunning()).toBe(true);
+    expect(bus.pendingCount()).toBe(1);
+
+    bus.openCurrentStack();
+    await settle();
+    pendingAnswers.splice(0).forEach((release) => release()); // a late answer changes nothing
+    await settle();
+    expect(log).toEqual(["crd_1.mouseUp", "crd_1.openStack", "crd_1.openBackground", "crd_1.openCard"]);
+    expect(errors).toEqual([]);
+    expect(bus.isRunning()).toBe(false);
+    expect(bus.pendingCount()).toBe(0);
+  });
+
+  it("runs automatically after store.replaceStack without closeCard/openCard for the switch", async () => {
+    const { bus, store, log, errors } = setup({ crd_1: { mouseUp: [answer], keyDown: [] } });
+    store.applyRuntime({ type: "goToCard", cardId: "crd_3" });
+    bus.post(msg("mouseUp", "crd_1"));
+    bus.post(msg("keyDown", "crd_1", "a")); // queued for the old stack: dropped
+    await settle();
+
+    store.replaceStack(makeStack({ crd_1: lifecycle, crd_3: lifecycle, bkg_1: lifecycle, stack: lifecycle }));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(log).toEqual(["crd_1.mouseUp", "crd_1.openStack", "crd_1.openBackground", "crd_1.openCard"]);
+    expect(bus.backHistory()).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(bus.isRunning()).toBe(false);
+  });
+
+  it("stops opening replaced stacks after dispose", async () => {
+    const { bus, store, log } = setup({});
+    bus.dispose();
+    store.replaceStack(makeStack({ crd_1: openers, stack: openers }));
+    await settle();
+    expect(log).toEqual([]);
+    expect(bus.pendingCount()).toBe(0);
+  });
+});

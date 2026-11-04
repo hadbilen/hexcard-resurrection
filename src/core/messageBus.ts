@@ -58,6 +58,8 @@ export const IDLE_INTERVAL_MS = 200;
 
 /** Continuous messages: at most one pending entry per kind (lowercase names). */
 const CONTINUOUS_MESSAGES: ReadonlySet<string> = new Set(["mousestilldown", "mousewithin", "idle"]);
+/** Messages `openCurrentStack` posts to the current card, in this order (Requirement 2.9). */
+const OPEN_STACK_MESSAGES = ["openStack", "openBackground", "openCard"] as const;
 /** Click messages that a Browse-tool click inside an unlocked field never sends (§3, Requirement 2.6). */
 const CLICK_MESSAGES: ReadonlySet<string> = new Set(["mousedown", "mousestilldown", "mouseup", "mousedoubleclick"]);
 /** Every mouse message of §3.1; none of them reaches a disabled part's path (Requirement 2.8). */
@@ -115,6 +117,14 @@ export interface MessageBus {
   changeCard(target: CardChangeTarget, ctx: DispatchContext, transition?: () => Promise<void>): Promise<void>;
   /** Cmd/Ctrl+. or a tool switch: aborts the running dispatch and clears the queue. */
   abort(): void;
+  /**
+   * Requirement 2.9: opens the stack in the store. Aborts the running dispatch, clears the queue
+   * (messages queued for the previous stack are never delivered), then posts `openStack`,
+   * `openBackground` and `openCard`, in that order, each targeted at the current card. The studio
+   * calls it once at start, after fonts are loaded; the bus calls it itself after every
+   * `store.replaceStack`.
+   */
+  openCurrentStack(): void;
   /** `[part?, card, background, stack]` for a target in the current snapshot; empty if it is gone. */
   buildPath(targetId: HexID): HexID[];
   /** True while a dispatch runs (including while it is suspended). */
@@ -123,7 +133,7 @@ export interface MessageBus {
   pendingCount(): number;
   /** Copy of the back history, oldest first (the last entry is what `go back` tries first). */
   backHistory(): readonly HexID[];
-  /** Stops the idle timer, unsubscribes from the store and aborts. */
+  /** Stops the idle timer, unsubscribes from the store (including `onReplaceStack`) and aborts. */
   dispose(): void;
 }
 
@@ -398,6 +408,14 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
       controller?.abort();
     },
 
+    openCurrentStack() {
+      bus.abort();
+      // An aborted dispatch keeps `running` set until its promise chain unwinds; its drain loop
+      // then takes these messages off the queue, so they still run one at a time and in order.
+      const targetId = store.getSnapshot().currentCardId;
+      for (const name of OPEN_STACK_MESSAGES) bus.post({ name, params: [], targetId });
+    },
+
     buildPath: (targetId) => buildMessagePath(store.getSnapshot(), targetId),
 
     isRunning: () => running,
@@ -431,9 +449,12 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
 
   // Requirement 2.7: a replaced stack starts with an empty back history. This runs before the
   // subscriber above, so the switch to the new stack's first card is not pushed either.
+  // Requirement 2.9: the new stack is then opened. Only `openCurrentStack` sends lifecycle
+  // messages for the switch; the subscriber above sends none, so there is no closeCard/openCard.
   const unsubscribeReplace = store.onReplaceStack(() => {
     backHistory.length = 0;
     lastCardId = store.getSnapshot().currentCardId;
+    bus.openCurrentStack();
   });
 
   const stopIdle = scheduleInterval(() => {

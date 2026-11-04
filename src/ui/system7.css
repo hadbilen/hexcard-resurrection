@@ -306,3 +306,63 @@
 .s7-shell canvas {
   image-rendering: pixelated;
 }
+
+/* Card viewport (spec 04 task 3). The only DOM over the card canvas is the hidden textarea and
+   the authoring selection marquee / handles (design spec §5.6). */
+.hc-viewport {
+  position: relative;
+  flex: none;
+  outline: 2px solid var(--dark-bit);
+}
+
+.hc-card-canvas {
+  display: block;
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+/* Spec 03 Requirement 4.2: visually hidden with clip-path, never with opacity. */
+.hc-hidden-input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  resize: none;
+  clip-path: inset(50%);
+  white-space: pre-wrap;
+  pointer-events: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.hc-part-selection,
+.hc-marquee {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.hc-part-selection {
+  border: 1px solid var(--dark-bit);
+}
+
+.hc-marquee {
+  border: 1px dashed var(--dark-bit);
+}
+
+.hc-handle {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--dark-bit);
+  border: 1px solid var(--light-bit);
+}
+
+.hc-handle-nw { left: 0; top: 0; }
+.hc-handle-ne { right: 0; top: 0; }
+.hc-handle-sw { left: 0; bottom: 0; }
+.hc-handle-se { right: 0; bottom: 0; }

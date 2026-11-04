@@ -27,6 +27,7 @@ This spec covers the persisted data model, the runtime store and its two write p
 6. WHEN the user clicks inside an unlocked field with the Browse tool, THE SYSTEM SHALL place the text caret and SHALL NOT send mouse messages.
 7. WHEN the current card changes by any means other than `go back`, THE SYSTEM SHALL push the departing card's id onto a back history of at most 64 entries (dropping the oldest); WHEN `go back` runs, THE SYSTEM SHALL go to the most recent entry that still exists and is not the current card, removing it and any skipped entries above it; IF none exists, THEN `go back` SHALL do nothing. Replacing the stack SHALL clear the history.
 8. WHEN a mouse message targets a part with `enabled = false`, THE SYSTEM SHALL NOT deliver it to that part or any object on its path; the disabled part still captures the hit.
+9. WHEN a stack becomes current (studio start after fonts are loaded, or after the loader's store.replaceStack), THE SYSTEM SHALL abort any running dispatch, clear the queue, and post openStack, openBackground and openCard to the current card, in that order.
 
 ### Requirement 3: Single-Threaded Runtime Concurrency
 **User Story:** As a stack author, I want predictable script execution when users click during waits, dialogs or network calls, so that my stacks behave the same every time.

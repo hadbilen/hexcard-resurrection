@@ -10,7 +10,8 @@
 - **Composition root (`src/main.tsx`):** creates the store with a built-in starter stack (one background, one card with a "Welcome to HexCard" field and one button), the history, the message bus, the VM host and the paint controller, and passes the narrowed store view to the UI. The starter stack must pass `validateStack`. The loader (task 6) and the showcase stacks (task 8) later replace the starter stack through `store.replaceStack`.
 - **UI store view (Requirement 2.6):** components receive the store typed as `Omit<HexStore, "applyAuthoring" | "replaceStack">`. Only `createHistory(store)` gets `applyAuthoring`, and only the stack loader (§5) gets `replaceStack`.
 - **Font loading (Requirement 2.7):** `src/main.tsx` and `src/player/main.ts` both `await loadBundledFonts()` (spec 03 `textRaster.ts`) before the first `composeFrame`, so the first frame never uses fallback metrics.
-- **Paint routing (Requirement 2.8):** `CardViewport.tsx` holds one `createPaintController({ store, history, getSettings })` (spec 03 `paintTools.ts`). While a paint tool is selected, card pointer events go to that controller instead of the message bus or part selection.
+- **Paint routing (Requirement 2.8):** `src/main.tsx` creates the one `createPaintController({ store, history, getSettings })` (spec 03 `paintTools.ts`) and passes it to `CardViewport.tsx`. While a paint tool is selected, card pointer events go to that controller instead of the message bus or part selection.
+- **Known limitations:** `keyDown`, `returnInField` and `enterInField` are not sent while a field is being edited (keys go only to the hidden textarea).
 
 ## 2. VM Host Implementation (`src/ui/vmHost.ts`)
 Implements the spec-02 `HexHost` interface: dialogs via the modal manager, `goToCard` via the store plus spec-03 `playEffect`, `playSound` via the synth, `fetchJson` via `src/core/fetchPolicy.ts`.

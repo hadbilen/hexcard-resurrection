@@ -27,7 +27,7 @@
   - Implement path building, handled rule, `pass` continuation and the arrow-key built-in
   - Implement the FIFO queue (32 entries, overflow warning), continuous-message coalescing and the gated 200 ms `idle` timer
   - Implement nested lifecycle dispatch for `go` (card and background changes) with shared `DispatchContext`, depth limit 16, and abort
-  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
 
 - [x] 6. Core test suite
   - Cover every acceptance criterion above with Vitest tests in `src/core/__tests__/`
