@@ -783,6 +783,6 @@ The canonical directory tree lives in `.kiro/steering/structure.md` (it is loade
 **Showcase stacks (`src/presets/`):**
 1. `hauntedMansion.ts` — **"The Haunted Stack of 1987"**: 1-bit horror/puzzle adventure with inventory in background fields (`sharedText: false`), LFSR dissolve transitions and harpsichord motifs.
 2. `retroSynthDeck.ts` — **"HexSynth Sequencer"**: harpsichord and 8-bit step sequencer driven by `PlaySound`.
-3. `apiWeatherOracle.ts` — **"MacOracle 1987"**: live data dashboard built on `fetch` (§4.3 policy) with offline fallback data.
+3. `apiWeatherOracle.ts` — **"HexOracle 1987"**: live data dashboard built on `fetch` (§4.3 policy) with offline fallback data.
 
 All presets are authored as HexTalk `scriptSource` and canonical `rleData`, and are validated by the same stack validator as user imports.

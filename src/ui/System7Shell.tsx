@@ -131,10 +131,23 @@ export interface AlertOptions {
   buttons?: readonly string[];
   /** Extra lines under the message, e.g. object, handler and line of a script error. */
   details?: readonly string[];
+  /** The default button (ring, focus, Return) when it is not the last one; must be one of `buttons`. */
+  defaultButton?: string;
+  /** The button Escape clicks; without one, Escape does nothing. Must be one of `buttons`. */
+  cancelButton?: string;
 }
 
 export type ModalRequest =
-  | { id: number; kind: "alert" | "bomb" | "answer"; message: string; buttons: readonly string[]; details: readonly string[]; resolve: (label: string) => void }
+  | {
+    id: number;
+    kind: "alert" | "bomb" | "answer";
+    message: string;
+    buttons: readonly string[];
+    details: readonly string[];
+    resolve: (label: string) => void;
+    defaultButton?: string;
+    cancelButton?: string;
+  }
   | { id: number; kind: "ask"; message: string; defaultAnswer: string; resolve: (text: string) => void };
 
 export interface ModalManager {
@@ -171,7 +184,13 @@ export function createModalManager(): ModalManager {
     buttons !== undefined && buttons.length > 0 ? [...buttons] : ["OK"];
   const labelled = (kind: "alert" | "bomb" | "answer") => (message: string, options: AlertOptions = {}): Promise<string> =>
     new Promise((resolve) => {
-      push({ id: nextId++, kind, message, buttons: labels(options.buttons), details: [...(options.details ?? [])], resolve });
+      const buttons = labels(options.buttons);
+      push({
+        id: nextId++, kind, message, buttons, details: [...(options.details ?? [])], resolve,
+        // Only set when they name a real button, so other dialogs keep their exact shape.
+        ...(options.defaultButton !== undefined && buttons.includes(options.defaultButton) ? { defaultButton: options.defaultButton } : {}),
+        ...(options.cancelButton !== undefined && buttons.includes(options.cancelButton) ? { cancelButton: options.cancelButton } : {}),
+      });
     });
 
   return {
@@ -405,7 +424,7 @@ function ModalDialog({ request, modals }: { request: ModalRequest; modals: Modal
     return () => window.removeEventListener("resize", snap);
   }, [k]);
 
-  const cancelValue = request.kind === "ask" ? "" : undefined;
+  const cancelValue = request.kind === "ask" ? "" : request.cancelButton;
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (event.key === "Escape" && cancelValue !== undefined) {
       event.preventDefault();
@@ -473,7 +492,9 @@ function ModalDialog({ request, modals }: { request: ModalRequest; modals: Modal
               </>
             ) : (
               request.buttons.map((label, index) => {
-                const isDefault = index === request.buttons.length - 1;
+                const isDefault = request.defaultButton !== undefined
+                  ? label === request.defaultButton
+                  : index === request.buttons.length - 1;
                 return (
                   <button
                     key={`${index}:${label}`}

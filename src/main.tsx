@@ -9,6 +9,11 @@
  * starts, a share link in the URL hash or the most recently auto-saved stack replaces the starter
  * stack through the stack loader, which is also used by File > Open Stack File.
  *
+ * Showcase stacks (spec 04 task 8): with nothing to restore, start-up opens 'The Haunted Stack
+ * of 1987' (Requirement 7.4); File > Open Showcase Stack lists all three (Requirement 7.5). Both
+ * load through the stack loader. File > Open Showcase Stack and Open Stack File first offer to
+ * save unsaved changes (Requirement 7.6).
+ *
  * Audio (spec 04 task 1): the shared synth is created at start-up, which installs its autoplay
  * unlock listeners before the first click; the VM host plays `play` statements through it.
  */
@@ -26,8 +31,9 @@ import { loadBundledFonts } from "./engine/graphics/textRaster.ts";
 import { App, createUiStoreView } from "./ui/App.tsx";
 import { createAutoSaver, openStackDatabase, type StackDatabase } from "./storage/indexedDb.ts";
 import { createStackLoader } from "./storage/stackLoader.ts";
+import { FIRST_LAUNCH_SHOWCASE, SHOWCASE_STACKS, findShowcase } from "./presets/index.ts";
 import { stripHash } from "./storage/urlCodec.ts";
-import { createBrowserFileAccess, createFileCommands, loadShareHash } from "./ui/fileCommands.ts";
+import { createBrowserFileAccess, createChangeTracker, createFileCommands, loadShareHash } from "./ui/fileCommands.ts";
 import { createStarterStack } from "./ui/starterStack.ts";
 import { openInitialStack, startStudio } from "./ui/startup.ts";
 import { createScriptErrorReporter, createStudioWindows } from "./ui/ObjectInspector.tsx";
@@ -83,7 +89,12 @@ async function main(): Promise<void> {
     loadMostRecent: async () => (await openDatabase()).loadMostRecent(),
     loader,
     onStorageError: (error) => console.error("HexCard: the auto-saved stack could not be read from IndexedDB", error),
+    // Requirement 7.4: nothing to restore opens 'The Haunted Stack of 1987'.
+    firstLaunchStack: FIRST_LAUNCH_SHOWCASE.create,
   });
+  // Requirement 7.6: changes since the last load (or file save) are offered for saving before a
+  // File command replaces the stack. Created after start-up, so the restored stack is the baseline.
+  const changes = createChangeTracker(store);
   const effects = createEffectStage();
   const mouse = createMouseTracker();
 
@@ -124,8 +135,16 @@ async function main(): Promise<void> {
     loader,
     modals,
     browser: createBrowserFileAccess(),
+    changes,
     onError: (error) => console.error("HexCard: file command failed", error),
   });
+  // Requirement 7.5: File > Open Showcase Stack loads the chosen stack through the loader,
+  // after the unsaved-changes question of Requirement 7.6.
+  const showcases = SHOWCASE_STACKS.map(({ id, name, description }) => ({ id, name, description }));
+  const openShowcase = (id: string): void => {
+    const showcase = findShowcase(id);
+    if (showcase) void fileCommands.replaceStackFrom(showcase.create);
+  };
   // A share link pasted into the address bar of an open studio changes only the hash.
   window.addEventListener("hashchange", () => {
     void loadShareHash(window.location.hash, loader).then((result) => {
@@ -158,6 +177,8 @@ async function main(): Promise<void> {
             onCommand={(command) => {
               fileCommands.run(command);
             }}
+            showcases={showcases}
+            onOpenShowcase={openShowcase}
           />
         </StrictMode>,
       );

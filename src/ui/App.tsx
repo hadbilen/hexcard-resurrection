@@ -1,6 +1,6 @@
 /**
  * Studio UI root: the System 7 shell with the card viewport as its desktop, plus the studio
- * windows (Object Inspector, Stack Graph) of spec 04 task 4.
+ * windows (Object Inspector, Stack Graph) of spec 04 task 4 and the showcase chooser of task 8.
  * Everything it needs is created by the composition root (`src/main.tsx`).
  */
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -10,6 +10,7 @@ import type { HexStore } from "../core/store.ts";
 import type { PaintController } from "../engine/graphics/paintTools.ts";
 import { CardViewport } from "./CardViewport.tsx";
 import { ObjectInspector, type StudioWindows } from "./ObjectInspector.tsx";
+import { ShowcaseChooser, type ShowcaseChoice } from "./ShowcaseChooser.tsx";
 import { StackGraphModal } from "./StackGraphModal.tsx";
 import { System7Shell, type ForwardedCommand, type ModalManager, type UiStore } from "./System7Shell.tsx";
 import type { EffectStage, MouseTracker } from "./vmHost.ts";
@@ -51,9 +52,16 @@ export interface AppProps {
   onReady?: () => void;
   /** Menu commands neither the shell nor the app implements (e.g. the File menu). */
   onCommand?: (command: ForwardedCommand) => void;
+  /** Stacks listed by File > Open Showcase Stack (Requirement 7.5). */
+  showcases?: readonly ShowcaseChoice[];
+  /** Loads the chosen showcase stack (through the stack loader). */
+  onOpenShowcase?: (id: string) => void;
 }
 
-export function App({ store, history, modals, windows, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady, onCommand }: AppProps) {
+export function App({
+  store, history, modals, windows, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady, onCommand,
+  showcases = [], onOpenShowcase,
+}: AppProps) {
   const [patternIndex, setPatternIndex] = useState(initialPatternIndex);
   const open = useSyncExternalStore(windows.subscribe, windows.getSnapshot, windows.getSnapshot);
   useEffect(() => {
@@ -71,6 +79,7 @@ export function App({ store, history, modals, windows, bus, painter, effects, mo
       modals={modals}
       onCommand={(command) => {
         if (command === "go.stackGraph") windows.openStackGraph();
+        else if (command === "file.openShowcase") windows.openShowcaseChooser();
         else onCommand?.(command);
       }}
       patternIndex={patternIndex}
@@ -93,6 +102,18 @@ export function App({ store, history, modals, windows, bus, painter, effects, mo
         <ObjectInspector key={open.id} store={store} history={history} request={open} onClose={windows.close} />
       ) : null}
       {open?.kind === "stackGraph" ? <StackGraphModal key={open.id} store={store} onClose={windows.close} /> : null}
+      {open?.kind === "showcaseChooser" ? (
+        <ShowcaseChooser
+          key={open.id}
+          showcases={showcases}
+          onOpen={(id) => {
+            // A successful load closes the window through onReplaceStack; a damaged one shows its alert.
+            windows.close();
+            onOpenShowcase?.(id);
+          }}
+          onClose={windows.close}
+        />
+      ) : null}
     </System7Shell>
   );
 }

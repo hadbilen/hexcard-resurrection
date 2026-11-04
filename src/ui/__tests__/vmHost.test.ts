@@ -6,12 +6,14 @@ import { createMessageBus, type HexMessage, type MessageBus } from "../../core/m
 import { parseHexTalk } from "../../core/parser.ts";
 import type { HexButtonPart, HexCard, HexFieldPart, HexStack } from "../../core/schema.ts";
 import { createHexStore, readFieldText } from "../../core/store.ts";
-import type { HexValue } from "../../core/vm.ts";
+import type { FetchResult, HexValue } from "../../core/vm.ts";
 import { composeEffectFrame, EFFECT_FRAMES } from "../../engine/graphics/transitions.ts";
 import { encodeBitmapRLE, TOTAL_PIXELS } from "../../engine/graphics/rleCodec.ts";
 import { createModalManager } from "../System7Shell.tsx";
 import {
+  FETCH_CACHE_TTL_MS,
   createEffectStage,
+  createFetchCache,
   createMouseTracker,
   createVmHost,
   formatShortDate,
@@ -217,6 +219,73 @@ describe("createVmHost", () => {
     await run(click);
     expect(errors).toEqual([]);
     expect(store.getSnapshot().currentCardId).toBe("crd_2");
+  });
+});
+
+describe("createFetchCache", () => {
+  const DOCUMENT = JSON.stringify({ current: { temperature_2m: 3.5, weather_code: 95 }, daily: { time: ["2026-01-09"] } });
+
+  function cached(responses: (url: string) => FetchResult = () => ({ ok: true, value: DOCUMENT })) {
+    let now = 1_000_000;
+    const calls: Array<{ url: string; path?: string }> = [];
+    const fetchJson = createFetchCache({
+      fetchDocument: async (url, path) => {
+        calls.push({ url, path });
+        return responses(url);
+      },
+      nowMs: () => now,
+    });
+    return { fetchJson, calls, advance: (ms: number) => { now += ms; } };
+  }
+
+  it("answers the same URL with different JSON paths from one request within 60 s", async () => {
+    const { fetchJson, calls, advance } = cached();
+    expect(await fetchJson("https://api.example.com/w", "current.temperature_2m")).toEqual({ ok: true, value: "3.5" });
+    advance(FETCH_CACHE_TTL_MS - 1);
+    expect(await fetchJson("https://api.example.com/w", "daily.time[0]")).toEqual({ ok: true, value: "2026-01-09" });
+    expect(await fetchJson("https://api.example.com/w", "current")).toEqual({ ok: true, value: '{"temperature_2m":3.5,"weather_code":95}' });
+    expect(await fetchJson("https://api.example.com/w")).toEqual({ ok: true, value: DOCUMENT });
+    expect(await fetchJson("https://api.example.com/w", "current.missing")).toEqual({ ok: false, reason: "path not found" });
+    expect(calls).toEqual([{ url: "https://api.example.com/w", path: undefined }]);
+  });
+
+  it("requests again after 60 s and for a different URL", async () => {
+    const { fetchJson, calls, advance } = cached();
+    await fetchJson("https://api.example.com/w", "current.weather_code");
+    await fetchJson("https://api.example.com/other", "current.weather_code");
+    advance(FETCH_CACHE_TTL_MS);
+    expect(await fetchJson("https://api.example.com/w", "current.weather_code")).toEqual({ ok: true, value: "95" });
+    expect(calls.map((call) => call.url)).toEqual(["https://api.example.com/w", "https://api.example.com/other", "https://api.example.com/w"]);
+  });
+
+  it("does not cache failures, and rejects a malformed path without a request", async () => {
+    let failing = true;
+    const { fetchJson, calls } = cached(() => (failing ? { ok: false, reason: "network error" } : { ok: true, value: DOCUMENT }));
+    expect(await fetchJson("https://api.example.com/w", "current.temperature_2m")).toEqual({ ok: false, reason: "network error" });
+    failing = false;
+    expect(await fetchJson("https://api.example.com/w", "current.temperature_2m")).toEqual({ ok: true, value: "3.5" });
+    expect(await fetchJson("https://api.example.com/w", "current..x")).toEqual({ ok: false, reason: "path not found" });
+    expect(await fetchJson("https://api.example.com/x", "[0]")).toEqual({ ok: false, reason: "path not found" });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("finds no path inside a primitive document", async () => {
+    const { fetchJson } = cached(() => ({ ok: true, value: "hello" }));
+    expect(await fetchJson("https://api.example.com/s")).toEqual({ ok: true, value: "hello" });
+    expect(await fetchJson("https://api.example.com/s", "length")).toEqual({ ok: false, reason: "path not found" });
+  });
+
+  it("the host's cache still applies the fetch policy: a plain http URL is blocked on every fetch", async () => {
+    const { store, errors, run } = setup([
+      "on mouseUp",
+      '  fetch "http://example.com/data.json" at "a.b" into x',
+      '  fetch "http://example.com/data.json" at "a.c" into y',
+      "  put it into card field 1",
+      "end mouseUp",
+    ].join("\n"));
+    await run(click);
+    expect(errors).toEqual([]);
+    expect(outText(store)).toBe("error: blocked url");
   });
 });
 

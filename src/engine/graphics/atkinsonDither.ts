@@ -2,7 +2,7 @@
 // The dithering function is copied from hexcard_design_spec.md §5.1. Everything except
 // `decodeImageBlobToRgba` is pure and runs in Node.
 
-import { BITMAP_HEIGHT, BITMAP_WIDTH, TOTAL_PIXELS } from "./rleCodec";
+import { BITMAP_HEIGHT, BITMAP_WIDTH, TOTAL_PIXELS } from "./rleCodec.ts";
 
 /** Decoded image in non-premultiplied RGBA8 (the layout of browser `ImageData`). */
 export interface RgbaImage {

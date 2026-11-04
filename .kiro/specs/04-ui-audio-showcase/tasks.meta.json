@@ -130,6 +130,38 @@
         "chatSessionId": "sess_21d5f589-bba6-4db9-8921-d8d0210d8374",
         "timestamp": 1793831935207
       }
+    ],
+    "8. Create the three showcase stacks": [
+      {
+        "executionId": "365d2116-f0e4-4a26-8480-8008ff26782a",
+        "chatSessionId": "sess_b777be9c-e57e-4dbf-ade5-2e7c555feba7",
+        "timestamp": 1793832422960
+      },
+      {
+        "executionId": "365d2116-f0e4-4a26-8480-8008ff26782a",
+        "chatSessionId": "sess_b777be9c-e57e-4dbf-ade5-2e7c555feba7",
+        "timestamp": 1793833842759
+      },
+      {
+        "executionId": "a2e9e663-06b6-44f8-9b44-06468129dd80",
+        "chatSessionId": "sess_b777be9c-e57e-4dbf-ade5-2e7c555feba7",
+        "timestamp": 1793834164908
+      },
+      {
+        "executionId": "a2e9e663-06b6-44f8-9b44-06468129dd80",
+        "chatSessionId": "sess_b777be9c-e57e-4dbf-ade5-2e7c555feba7",
+        "timestamp": 1793834917680
+      },
+      {
+        "executionId": "2e112987-05f7-4936-a27b-7f953cf6ad7a",
+        "chatSessionId": "sess_b777be9c-e57e-4dbf-ade5-2e7c555feba7",
+        "timestamp": 1793835134111
+      },
+      {
+        "executionId": "2e112987-05f7-4936-a27b-7f953cf6ad7a",
+        "chatSessionId": "sess_b777be9c-e57e-4dbf-ade5-2e7c555feba7",
+        "timestamp": 1793835282974
+      }
     ]
   }
 }

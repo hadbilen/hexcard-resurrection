@@ -6,7 +6,18 @@ import { noiseLayer, makeStack } from "../../storage/__tests__/fixtures.ts";
 import { decodeStackFile, encodeStackFile, encodeStackPayload } from "../../storage/stackFile.ts";
 import { DAMAGED_STACK_MESSAGE, createStackLoader } from "../../storage/stackLoader.ts";
 import { SHARE_HASH_PREFIX } from "../../storage/urlCodec.ts";
-import { SAVE_STACK_FILE_BUTTON, SHARE_LINK_COPIED_MESSAGE, createFileCommands, type FileBrowserAccess, type PickedFile } from "../fileCommands.ts";
+import {
+  CANCEL_BUTTON,
+  DONT_SAVE_BUTTON,
+  SAVE_CHANGES_BUTTON,
+  SAVE_CHANGES_MESSAGE,
+  SAVE_STACK_FILE_BUTTON,
+  SHARE_LINK_COPIED_MESSAGE,
+  createChangeTracker,
+  createFileCommands,
+  type FileBrowserAccess,
+  type PickedFile,
+} from "../fileCommands.ts";
 import { openInitialStack } from "../startup.ts";
 import { createModalManager } from "../System7Shell.tsx";
 
@@ -96,10 +107,141 @@ describe("File menu commands", () => {
     expect(downloads.map((download) => download.fileName)).toEqual(["Big.hexstack"]);
   });
 
+  it("Save Stack File resolves false when the stack cannot be encoded", async () => {
+    const { store, commands, downloads, modals } = setup();
+    const broken = createFileCommands({
+      getStack: () => ({ ...store.getSnapshot().stack, name: 1n as unknown as string }), // BigInt: JSON.stringify throws
+      loader: createStackLoader({ store, history: createHistory(store), alert: () => undefined }),
+      modals,
+      browser: { download: () => downloads.push({ fileName: "", text: "", mimeType: "" }), pickFile: async () => undefined, copyText: async () => undefined, pageUrl: () => "" },
+    });
+    expect(await commands.saveStackFile()).toBe(true);
+    expect(await broken.saveStackFile()).toBe(false);
+    expect(downloads).toHaveLength(1);
+  });
+
   it("run handles only this task's File commands", () => {
     const { commands } = setup();
     expect(commands.run("file.exportHtml")).toBe(false);
     expect(commands.run("go.next")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Requirement 7.6: unsaved changes before a File command replaces the stack
+// ---------------------------------------------------------------------------------------------
+
+describe("unsaved-changes guard", () => {
+  async function guarded() {
+    const opened = makeStack({ id: "stk_opened", name: "Opened" });
+    const base = setup(await encodeStackFile(opened));
+    const changes = createChangeTracker(base.store);
+    const loader = createStackLoader({ store: base.store, history: base.history, alert: (message, options) => void base.modals.alert(message, options) });
+    const commands = createFileCommands({
+      getStack: () => base.store.getSnapshot().stack,
+      loader,
+      modals: base.modals,
+      browser: {
+        download: (fileName, text, mimeType) => base.downloads.push({ fileName, text, mimeType }),
+        pickFile: async () => ({ text: async () => encodeStackFile(opened) }),
+        copyText: async () => undefined,
+        pageUrl: () => "https://example.org/",
+      },
+      changes,
+    });
+    const edit = () => base.store.applyRuntime({ type: "setStackProperty", property: "name", value: "Edited" });
+    const showcase = () => makeStack({ id: "stk_showcase", name: "Showcase" });
+    return { ...base, changes, commands, edit, showcase };
+  }
+
+  it("opens without asking when nothing changed since the stack was loaded", async () => {
+    const g = await guarded();
+    expect(g.changes.hasChanges()).toBe(false);
+    expect((await g.commands.replaceStackFrom(g.showcase))?.ok).toBe(true);
+    expect((await g.commands.openStackFile())?.ok).toBe(true);
+    expect(g.store.getSnapshot().stack.name).toBe("Opened");
+    expect(g.modals.getSnapshot()).toEqual([]);
+    expect(g.downloads).toEqual([]);
+  });
+
+  it("asks with Save…, Don't Save and Cancel in that order, Save… being the default", async () => {
+    const g = await guarded();
+    g.edit();
+    const done = g.commands.openStackFile();
+    const dialog = await nextDialog(g.modals);
+    expect(dialog).toMatchObject({
+      kind: "alert",
+      message: SAVE_CHANGES_MESSAGE,
+      buttons: ["Save\u2026", "Don't Save", "Cancel"],
+      defaultButton: SAVE_CHANGES_BUTTON,
+      cancelButton: CANCEL_BUTTON,
+    });
+    g.modals.settle(dialog.id, CANCEL_BUTTON);
+    await done;
+  });
+
+  it("Save… saves the changed stack as a .hexstack file, then opens", async () => {
+    const g = await guarded();
+    g.edit();
+    const edited = g.store.getSnapshot().stack;
+    const done = g.commands.openStackFile();
+    g.modals.settle((await nextDialog(g.modals)).id, SAVE_CHANGES_BUTTON);
+    expect((await done)?.ok).toBe(true);
+    expect(g.downloads.map((download) => download.fileName)).toEqual(["Edited.hexstack"]);
+    expect(await decodeStackFile(g.downloads[0].text)).toEqual(edited);
+    expect(g.store.getSnapshot().stack.name).toBe("Opened");
+  });
+
+  it("Don't Save opens without saving", async () => {
+    const g = await guarded();
+    g.edit();
+    const done = g.commands.replaceStackFrom(g.showcase);
+    g.modals.settle((await nextDialog(g.modals)).id, DONT_SAVE_BUTTON);
+    expect((await done)?.ok).toBe(true);
+    expect(g.downloads).toEqual([]);
+    expect(g.store.getSnapshot().stack.name).toBe("Showcase");
+    expect(g.changes.hasChanges()).toBe(false); // the loaded stack is the new baseline
+  });
+
+  it("Cancel leaves the stack, its undo history and the downloads untouched", async () => {
+    const g = await guarded();
+    g.history.execute({
+      label: "Rename",
+      apply: (stack) => ({ ...stack, name: "Authored" }),
+      revert: (stack) => ({ ...stack, name: "Current" }),
+    });
+    const before = g.store.getSnapshot();
+    expect(g.changes.hasChanges()).toBe(true);
+
+    const showcase = g.commands.replaceStackFrom(g.showcase);
+    g.modals.settle((await nextDialog(g.modals)).id, CANCEL_BUTTON);
+    expect(await showcase).toBeUndefined();
+    const file = g.commands.openStackFile();
+    g.modals.settle((await nextDialog(g.modals)).id, CANCEL_BUTTON);
+    expect(await file).toBeUndefined();
+
+    expect(g.store.getSnapshot()).toBe(before);
+    expect(g.history.canUndo()).toBe(true);
+    expect(g.downloads).toEqual([]);
+  });
+
+  it("does not count a change that was undone, or changes already saved as a file", async () => {
+    const g = await guarded();
+    g.history.execute({
+      label: "Rename",
+      apply: (stack) => ({ ...stack, name: "Authored" }),
+      revert: (stack) => ({ ...stack, name: "Current" }),
+    });
+    expect(g.changes.hasChanges()).toBe(true);
+    g.history.undo();
+    expect(g.changes.hasChanges()).toBe(false);
+
+    g.edit();
+    expect(g.changes.hasChanges()).toBe(true);
+    expect(await g.commands.saveStackFile()).toBe(true);
+    expect(g.changes.hasChanges()).toBe(false);
+    expect((await g.commands.replaceStackFrom(g.showcase))?.ok).toBe(true);
+    expect(g.modals.getSnapshot()).toEqual([]);
   });
 });
 
@@ -117,9 +259,12 @@ describe("openInitialStack", () => {
       loadMostRecent: record,
       loader,
       onStorageError: (error) => storageErrors.push(error),
+      firstLaunchStack,
     });
     return { store, modals, run, cleared: () => cleared, storageErrors };
   }
+
+  let firstLaunchStack: () => unknown = () => makeStack({ id: "stk_showcase", name: "Showcase" });
 
   it("prefers a share link in the hash and clears the hash", async () => {
     const shared = makeStack({ id: "stk_shared", name: "Shared" });
@@ -139,25 +284,38 @@ describe("openInitialStack", () => {
     expect(s.cleared()).toBe(1);
   });
 
-  it("keeps the starter stack without an alert when nothing is saved or IndexedDB is unavailable", async () => {
+  it("opens the first-launch showcase without an alert when nothing is saved or IndexedDB is unavailable (Req 7.4)", async () => {
     const empty = startup("", async () => undefined);
-    expect(await empty.run()).toBe("starter");
-    expect(empty.store.getSnapshot().stack.name).toBe("Current");
+    expect(await empty.run()).toBe("showcase");
+    expect(empty.store.getSnapshot().stack.name).toBe("Showcase");
     expect(empty.modals.getSnapshot()).toEqual([]);
     expect(empty.cleared()).toBe(0);
 
     const unavailable = startup("", async () => {
       throw new Error("IndexedDB is not available");
     });
-    expect(await unavailable.run()).toBe("starter");
+    expect(await unavailable.run()).toBe("showcase");
     expect(unavailable.modals.getSnapshot()).toEqual([]);
     expect(unavailable.storageErrors).toHaveLength(1);
   });
 
-  it("rejects a damaged auto-saved record with one alert and keeps the starter stack", async () => {
+  it("rejects a damaged auto-saved record with one alert, then opens the first-launch showcase", async () => {
     const s = startup("", async () => JSON.stringify({ ...makeStack(), cards: [] }));
-    expect(await s.run()).toBe("starter");
+    expect(await s.run()).toBe("showcase");
     expect(s.modals.getSnapshot().map((dialog) => dialog.message)).toEqual([DAMAGED_STACK_MESSAGE]);
-    expect(s.store.getSnapshot().stack.name).toBe("Current");
+    expect(s.store.getSnapshot().stack.name).toBe("Showcase");
+  });
+
+  it("keeps the starter stack only if the first-launch showcase is rejected", async () => {
+    const original = firstLaunchStack;
+    firstLaunchStack = () => ({ ...makeStack(), cards: [] });
+    try {
+      const s = startup("", async () => undefined);
+      expect(await s.run()).toBe("starter");
+      expect(s.store.getSnapshot().stack.name).toBe("Current");
+      expect(s.modals.getSnapshot().map((dialog) => dialog.message)).toEqual([DAMAGED_STACK_MESSAGE]);
+    } finally {
+      firstLaunchStack = original;
+    }
   });
 });

@@ -23,19 +23,25 @@ export interface InitialStackOptions {
   /** The most recently auto-saved record (indexedDb.ts `loadMostRecent`). */
   loadMostRecent: () => Promise<string | undefined>;
   loader: Pick<StackLoader, "loadFrom">;
-  /** Called when IndexedDB cannot be read; start-up continues with the starter stack. */
+  /** Called when IndexedDB cannot be read; start-up continues with the first-launch stack. */
   onStorageError: (error: unknown) => void;
+  /**
+   * The stack opened when nothing could be restored (spec 04 Requirement 7.4: 'The Haunted Stack
+   * of 1987'). Loaded through the loader like every other stack; the starter stack stays only if
+   * this one is rejected.
+   */
+  firstLaunchStack: () => unknown;
 }
 
-export type InitialStackSource = "urlHash" | "indexedDb" | "starter";
+export type InitialStackSource = "urlHash" | "indexedDb" | "showcase" | "starter";
 
 /**
- * Replaces the starter stack before the UI starts (spec 04 Requirements 5.3-5.5): a share link in
- * the URL hash first, otherwise the most recently auto-saved stack, otherwise the starter stays.
- * A damaged source is alerted by the loader and the next source is tried. Runs before the message
- * bus exists, so the stack is opened only once, by `startStudio`.
+ * Replaces the starter stack before the UI starts (spec 04 Requirements 5.3-5.5, 7.4): a share
+ * link in the URL hash first, otherwise the most recently auto-saved stack, otherwise the
+ * first-launch showcase stack. A damaged source is alerted by the loader and the next source is
+ * tried. Runs before the message bus exists, so the stack is opened only once, by `startStudio`.
  */
-export async function openInitialStack({ hash, clearHash, loadMostRecent, loader, onStorageError }: InitialStackOptions): Promise<InitialStackSource> {
+export async function openInitialStack({ hash, clearHash, loadMostRecent, loader, onStorageError, firstLaunchStack }: InitialStackOptions): Promise<InitialStackSource> {
   const shared = await loadShareHash(hash, loader);
   if (shared !== undefined) clearHash();
   if (shared?.ok) return "urlHash";
@@ -46,12 +52,14 @@ export async function openInitialStack({ hash, clearHash, loadMostRecent, loader
   } catch (error) {
     // No IndexedDB (e.g. some private modes): nothing to restore, which is not a damaged stack.
     onStorageError(error);
-    return "starter";
   }
-  if (record === undefined) return "starter";
-  const saved = record;
-  const restored: LoadStackResult = await loader.loadFrom(() => JSON.parse(saved) as unknown);
-  return restored.ok ? "indexedDb" : "starter";
+  if (record !== undefined) {
+    const saved = record;
+    const restored: LoadStackResult = await loader.loadFrom(() => JSON.parse(saved) as unknown);
+    if (restored.ok) return "indexedDb";
+  }
+  const showcase = await loader.loadFrom(firstLaunchStack);
+  return showcase.ok ? "showcase" : "starter";
 }
 
 export interface StudioStartOptions {

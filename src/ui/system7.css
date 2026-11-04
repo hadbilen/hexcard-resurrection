@@ -797,6 +797,46 @@ body {
   stroke: none;
 }
 
+/* File > Open Showcase Stack (spec 04 task 8): a list box of stack names; the selected row is
+   inverted, as in a System 7 Open dialog. */
+.s7-chooser-prompt {
+  margin: 0 0 calc(8 * var(--px));
+}
+
+.s7-chooser-list {
+  width: calc(360 * var(--px));
+  margin: 0 0 calc(8 * var(--px));
+  padding: 0;
+  list-style: none;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+}
+
+.s7-shell .s7-chooser-item {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: calc(4 * var(--px)) calc(6 * var(--px));
+  text-align: left;
+}
+
+.s7-shell .s7-chooser-item-selected {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-shell .s7-chooser-item-selected:focus-visible {
+  outline-color: var(--light-bit);
+}
+
+.s7-chooser-name,
+.s7-chooser-description {
+  display: block;
+}
+
+.s7-chooser-description {
+  font-family: "HexCard PixelOperator", monospace;
+}
+
 /* Canvases are always drawn pixel-exact. */
 .s7-shell canvas {
   image-rendering: pixelated;

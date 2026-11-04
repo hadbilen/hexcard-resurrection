@@ -10,12 +10,19 @@
  *   the bus's `transition`, played by spec 03 `playEffect` on the `EffectStage` the card viewport
  *   attaches to.
  * - `play` is delegated to an injected sound player (the spec 04 synth); without one it is silent.
- * - `fetch` goes through `src/core/fetchPolicy.ts`.
+ * - `fetch` goes through `src/core/fetchPolicy.ts`, behind a 60 s in-memory cache of successful
+ *   responses keyed on the URL (`createFetchCache`).
  *
  * No React and no DOM access: everything browser-specific is injected, so this module runs in Node.
  */
 import type { HexVoice } from "../core/ast.ts";
-import { fetchJson as policyFetchJson } from "../core/fetchPolicy.ts";
+import {
+  FETCH_ERROR,
+  evaluateJsonPath,
+  parseJsonPath,
+  fetchJson as policyFetchJson,
+  stringifyJsonResult,
+} from "../core/fetchPolicy.ts";
 import { resolveRelativeCard, type MessageBus } from "../core/messageBus.ts";
 import type { VisualEffectSpeed, VisualEffectType } from "../core/schema.ts";
 import { readFieldText, type HexStore } from "../core/store.ts";
@@ -152,6 +159,80 @@ export function formatShortTime(date: Date): string {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Fetch cache
+// ---------------------------------------------------------------------------------------------
+
+/** How long a successful response answers identical `fetch` URLs. */
+export const FETCH_CACHE_TTL_MS = 60_000;
+/** Most responses kept at once (each at most 256 KB); the oldest is dropped first. */
+export const FETCH_CACHE_MAX_ENTRIES = 16;
+
+export type FetchJson = (url: string, jsonPath?: string) => Promise<FetchResult>;
+
+export interface FetchCacheOptions {
+  /**
+   * Fetches the whole document under the §4.3 policy (fetchPolicy.ts `fetchJson`). The cache always
+   * calls it without a JSON path and applies the request's path to the cached document itself.
+   */
+  fetchDocument: FetchJson;
+  /** Milliseconds clock for expiry; defaults to `Date.now`. */
+  nowMs?: () => number;
+  ttlMs?: number;
+  maxEntries?: number;
+}
+
+/**
+ * Answers identical `fetch` URLs from memory for `ttlMs`, so a script that reads several JSON paths
+ * of one response (HexOracle reads five) sends one request. Keyed on the exact URL string.
+ *
+ * Every network request still goes through `fetchDocument`, so the §4.3 policy (https only, GET,
+ * no credentials, no headers, 8 s timeout, 256 KB cap, JSON only) applies unchanged. Failures are
+ * never cached. A JSON path that does not match the grammar fails before any request, as in
+ * fetchPolicy.ts. Paths are walked with the policy's own `evaluateJsonPath`.
+ */
+export function createFetchCache({
+  fetchDocument,
+  nowMs = Date.now,
+  ttlMs = FETCH_CACHE_TTL_MS,
+  maxEntries = FETCH_CACHE_MAX_ENTRIES,
+}: FetchCacheOptions): FetchJson {
+  /** Insertion order is age order, so the first entry is the oldest. */
+  const entries = new Map<string, { document: string; expiresAt: number }>();
+
+  const pathResult = (document: string, jsonPath: string | undefined): FetchResult => {
+    if (jsonPath === undefined) return { ok: true, value: document };
+    const segments = parseJsonPath(jsonPath);
+    if (segments === null) return { ok: false, reason: FETCH_ERROR.pathNotFound };
+    // `document` is the policy's string form of the body: compact JSON for objects and arrays, the
+    // string form for primitives. Only objects and arrays can contain a path (it starts with a key).
+    let data: unknown;
+    try {
+      data = JSON.parse(document);
+    } catch {
+      return { ok: false, reason: FETCH_ERROR.pathNotFound };
+    }
+    const found = evaluateJsonPath(data, segments);
+    return found.found ? { ok: true, value: stringifyJsonResult(found.value) } : { ok: false, reason: FETCH_ERROR.pathNotFound };
+  };
+
+  return async (url, jsonPath) => {
+    if (jsonPath !== undefined && parseJsonPath(jsonPath) === null) return { ok: false, reason: FETCH_ERROR.pathNotFound };
+    const now = nowMs();
+    for (const [key, entry] of entries) if (entry.expiresAt <= now) entries.delete(key);
+
+    const cached = entries.get(url);
+    if (cached) return pathResult(cached.document, jsonPath);
+
+    const response = await fetchDocument(url);
+    if (!response.ok) return response;
+    entries.delete(url);
+    entries.set(url, { document: response.value, expiresAt: nowMs() + ttlMs });
+    while (entries.size > maxEntries) entries.delete(entries.keys().next().value as string);
+    return pathResult(response.value, jsonPath);
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
 // Host
 // ---------------------------------------------------------------------------------------------
 
@@ -170,8 +251,13 @@ export interface VmHostOptions {
   mouse?: Pick<MouseTracker, "get">;
   /** Without a player, `play` is silent. */
   playSound?: SoundPlayer;
-  /** Defaults to the sandboxed `fetchJson` of fetchPolicy.ts. */
-  fetchJson?: (url: string, jsonPath?: string) => Promise<FetchResult>;
+  /**
+   * Fetches a whole JSON document; defaults to the sandboxed `fetchJson` of fetchPolicy.ts. The host
+   * wraps it in `createFetchCache`, so it is called without a JSON path, once per URL per minute.
+   */
+  fetchJson?: FetchJson;
+  /** Clock of the fetch cache; defaults to `Date.now`. */
+  fetchCacheNowMs?: () => number;
   /** Rasterizer used to compose effect frames; defaults to partRenderer.ts's. */
   rasterizePart?: PartRasterizer;
   /** Wall clock for `the date`, `the time` and `the seconds`. Defaults to `new Date()`. */
@@ -185,7 +271,10 @@ const silent: SoundPlayer = () => undefined;
 export function createVmHost(options: VmHostOptions): HexHost {
   const { store, dialogs, effects } = options;
   const playSound = options.playSound ?? silent;
-  const fetchJson = options.fetchJson ?? ((url: string, jsonPath?: string) => policyFetchJson(url, jsonPath));
+  const fetchJson = createFetchCache({
+    fetchDocument: options.fetchJson ?? ((url: string, jsonPath?: string) => policyFetchJson(url, jsonPath)),
+    nowMs: options.fetchCacheNowMs,
+  });
   const now = options.now ?? (() => new Date());
   const uptimeMs = options.uptimeMs ?? (() => performance.now());
 

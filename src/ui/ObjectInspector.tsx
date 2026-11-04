@@ -7,8 +7,8 @@
  *   `HexAI Spellcaster`. Property and script edits are authoring commands run through
  *   `history.execute`; the store recompiles a saved script into its ScriptCache, and the editor
  *   shows the stored compile errors inline (gutter mark, column marker, clickable list).
- * - `StudioWindows` is the one place that knows which studio window (inspector or Stack Graph)
- *   is open, so the card viewport (double-click), the script error alert (**Script** button) and
+ * - `StudioWindows` is the one place that knows which studio window (inspector, Stack Graph or
+ *   the showcase chooser of task 8) is open, so the card viewport (double-click), the script error alert (**Script** button) and
  *   the Go menu can open them, and the message bus can treat them as modal.
  * - `createScriptErrorReporter` is the message bus `onError`: the bomb dialog for
  *   `HexVmGasLimitError`, an alert with a **Script** button for other located runtime errors.
@@ -53,7 +53,7 @@ export const INSPECTOR_TABS: readonly { id: InspectorTab; label: string }[] = [
 ];
 
 export type InspectorRequest = { id: number; kind: "inspector"; objectId: HexID; tab: InspectorTab; line?: number };
-export type StudioWindow = InspectorRequest | { id: number; kind: "stackGraph" };
+export type StudioWindow = InspectorRequest | { id: number; kind: "stackGraph" } | { id: number; kind: "showcaseChooser" };
 
 export interface StudioWindows {
   subscribe(listener: () => void): () => void;
@@ -63,6 +63,8 @@ export interface StudioWindows {
   /** Opens the inspector on `objectId`; `line` (1-based) selects that script line (Requirement 3.4). */
   openInspector(objectId: HexID, tab?: InspectorTab, line?: number): void;
   openStackGraph(): void;
+  /** File > Open Showcase Stack (spec 04 task 8, Requirement 7.5). */
+  openShowcaseChooser(): void;
   close(): void;
 }
 
@@ -90,6 +92,9 @@ export function createStudioWindows(): StudioWindows {
     },
     openStackGraph() {
       set({ id: nextId++, kind: "stackGraph" });
+    },
+    openShowcaseChooser() {
+      set({ id: nextId++, kind: "showcaseChooser" });
     },
     close() {
       if (current !== null) set(null);
