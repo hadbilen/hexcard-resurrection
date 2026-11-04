@@ -9,6 +9,7 @@
   - Lexer with line/column tracking, case folding and comments
   - Recursive-descent statements and precedence-climbing expressions per §4.1
   - Error reporting and recovery at `end <handler>`; handler-name and `pass` checks; `answer ... or` rule
+  - Reuse `HEX_RESERVED_WORDS` from `astValidator.ts`; test that every AST `parseHexTalk` returns without errors passes `validateAst`
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
 - [ ] 3. Implement the printer and round-trip tests
