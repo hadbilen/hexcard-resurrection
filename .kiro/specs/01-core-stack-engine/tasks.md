@@ -17,7 +17,7 @@
   - Wire `ScriptCache` recompilation through an injected `compile` function (spec 02 provides `parseHexTalk`)
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 4.1, 4.3, 4.4, 4.5_
 
-- [ ] 4. Implement the 50-step undo history
+- [x] 4. Implement the 50-step undo history
   - Implement `src/core/history.ts` ring buffer and `HexCommand`
   - Implement `PaintStrokeCommand` (bounding-rect before/after pixels)
   - Add `store.applyAuthoring(next)` to `src/core/store.ts` with incremental ScriptCache recompilation (design §3), and wire `createHistory(store)` to it (design §4)

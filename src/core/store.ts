@@ -62,6 +62,12 @@ export interface HexStore {
   getSnapshot(): HexRuntimeState;
   applyRuntime(m: RuntimeMutation): void;           // not undoable, schedules auto-save
   replaceStack(stack: HexStack): void;              // after validation only; recompiles ScriptCache
+  /**
+   * Authoring write path, called only by history.ts (Requirement 4.2). Replaces the stack with an
+   * authoring result, recompiles only scripts that changed, notifies listeners and schedules
+   * auto-save. Never touches the undo history.
+   */
+  applyAuthoring(next: HexStack): void;
   getCompiled(objectId: HexID): CompiledScript;
   /** Toggles Edit Background mode (Cmd/Ctrl+B). UI state only: not saved, not undoable. */
   setEditLayer(layer: HexLayer): void;
@@ -97,6 +103,18 @@ function freezeDeep<T>(value: T): T {
   if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
     Object.freeze(value);
     for (const key of Object.keys(value)) freezeDeep((value as Record<string, unknown>)[key]);
+  }
+  return value;
+}
+
+/**
+ * Freezes every not-yet-frozen object of a JSON-like tree. Unlike `freezeDeep` it also descends
+ * into frozen objects, because an authoring result may be a frozen copy holding new, unfrozen children.
+ */
+function freezeTree<T>(value: T): T {
+  if (typeof value === "object" && value !== null) {
+    Object.freeze(value);
+    for (const key of Object.keys(value)) freezeTree((value as Record<string, unknown>)[key]);
   }
   return value;
 }
@@ -613,6 +631,22 @@ export function createHexStore(options: HexStoreOptions): HexStore {
       flushAutoSave();
       cache.rebuild(next);
       publish({ stack: next, currentCardId: next.cards[0].id, editLayer: "card", tool: state.tool });
+    },
+
+    applyAuthoring(next) {
+      if (next === state.stack) return;
+      if (next.cards.length === 0) throw new HexMutationError("An authoring change cannot remove every card");
+      // Structural sharing: untouched subtrees keep their identity, new objects are frozen in place.
+      const stack = freezeTree(next);
+      let { currentCardId } = state;
+      if (!stack.cards.some((card) => card.id === currentCardId)) {
+        // The current card was removed (e.g. undoing "New Card"): stay at the same position.
+        const oldIndex = state.stack.cards.findIndex((card) => card.id === currentCardId);
+        currentCardId = stack.cards[Math.min(Math.max(oldIndex, 0), stack.cards.length - 1)].id;
+      }
+      cache.sync(stack);
+      publish({ ...state, stack, currentCardId });
+      scheduleAutoSave();
     },
 
     getCompiled: (objectId) => cache.get(objectId),

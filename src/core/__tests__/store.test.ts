@@ -459,3 +459,81 @@ describe("auto-save (Requirement 4.3)", () => {
     expect(autoSave).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("applyAuthoring (Requirements 4.2, 4.4)", () => {
+  it("recompiles only changed scripts, compiles added objects and drops removed ones", () => {
+    const { store, compile } = setup();
+    compile.mockClear();
+    const current = store.getSnapshot().stack;
+    const card1 = current.cards[0];
+    const next: HexStack = {
+      ...current,
+      cards: [
+        { ...card1, scriptSource: "on closeCard\nend closeCard", parts: [card1.parts[0], makeButton({ id: "prt_new", scriptSource: "on mouseDown" })] },
+        current.cards[1],
+        { ...current.cards[2], name: "Renamed" },
+      ],
+    };
+    store.applyAuthoring(next);
+
+    expect(compile.mock.calls.map(([source]) => source).sort()).toEqual(["on closeCard\nend closeCard", "on mouseDown"]);
+    expect(Object.keys(store.getCompiled("crd_1").ast.handlers)).toEqual(["closecard"]);
+    expect(Object.keys(store.getCompiled("prt_new").ast.handlers)).toEqual(["mousedown"]);
+    expect(store.getCompiled("prt_btn")).toEqual({ ast: { handlers: {} }, errors: [] }); // removed
+  });
+
+  it("stores an empty AST plus errors when an edited script fails to compile", () => {
+    const { store } = setup();
+    const current = store.getSnapshot().stack;
+    store.applyAuthoring({ ...current, scriptSource: "on openStack\n  BROKEN" });
+    expect(store.getCompiled("stk_1")).toEqual({
+      ast: { handlers: {} },
+      errors: [{ line: 2, column: 3, message: "Expected end" }],
+    });
+  });
+
+  it("publishes a frozen, structurally shared snapshot and notifies listeners", () => {
+    const { store } = setup();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    const current = store.getSnapshot().stack;
+    store.applyAuthoring({ ...current, cards: [{ ...current.cards[0], name: "Edited" }, ...current.cards.slice(1)] });
+
+    const { stack } = store.getSnapshot();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(stack.cards[0].name).toBe("Edited");
+    expect(Object.isFrozen(stack.cards[0])).toBe(true);
+    expect(Object.isFrozen(stack.cards)).toBe(true);
+    expect(stack.backgrounds).toBe(current.backgrounds);
+    expect(stack.cards[1]).toBe(current.cards[1]);
+
+    store.applyAuthoring(stack); // same stack: no-op
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the card position when the current card is removed and rejects removing every card", () => {
+    const { store } = setup();
+    store.applyRuntime({ type: "goToCard", cardId: "crd_3" });
+    const current = store.getSnapshot().stack;
+    store.applyAuthoring({ ...current, cards: current.cards.slice(0, 2) });
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+
+    const before = store.getSnapshot();
+    expect(() => store.applyAuthoring({ ...before.stack, cards: [] })).toThrow(HexMutationError);
+    expect(store.getSnapshot()).toBe(before);
+  });
+
+  it("schedules a debounced auto-save", () => {
+    vi.useFakeTimers();
+    try {
+      const { store, autoSave } = setup();
+      const current = store.getSnapshot().stack;
+      store.applyAuthoring({ ...current, name: "Authored" });
+      vi.advanceTimersByTime(500);
+      expect(autoSave).toHaveBeenCalledTimes(1);
+      expect(autoSave.mock.calls[0][0].name).toBe("Authored");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
