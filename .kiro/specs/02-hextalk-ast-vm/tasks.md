@@ -24,7 +24,7 @@
   - Reuse the store's property conversion helpers (e.g. the `location` centre rule `x + floor(width/2)`) instead of reimplementing them
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
 
-- [ ] 5. Implement suspending commands through the host interface
+- [x] 5. Implement suspending commands through the host interface
   - `wait`, `answer`, `ask`, `go` (with pending visual effect), `play`
   - End-to-end test through the spec 01 message bus: a parsed script's `go` sends closeCard/(closeBackground/openBackground)/openCard in order, shares the dispatch gas, and plays the pending visual effect
   - _Requirements: 5.1, 5.7_

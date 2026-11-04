@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   HexBinaryOp,
   HexContainerTarget,
@@ -19,9 +19,11 @@ import {
   resolveObjectTarget,
   runHandler,
   type DispatchContext,
+  type EvaluatedCardTarget,
   type FetchResult,
   type HexHost,
   type HexValue,
+  type PendingEffect,
 } from "../vm.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -75,7 +77,10 @@ interface TestHost extends HexHost {
 }
 
 /** Store-backed host; dialogs and fetch return scripted results. */
-function createHost(store: HexStore, scripted: Partial<Pick<HexHost, "showAnswer" | "showAsk" | "fetchJson" | "readField">> = {}): TestHost {
+function createHost(
+  store: HexStore,
+  scripted: Partial<Pick<HexHost, "showAnswer" | "showAsk" | "fetchJson" | "readField" | "goToCard" | "playSound">> = {},
+): TestHost {
   const host: TestHost = {
     answerCalls: [],
     readField: (ref) => readFieldText(store.getSnapshot().stack, ref.cardId, ref.layer, ref.partId),
@@ -515,5 +520,110 @@ describe("abort", () => {
     controller.abort();
     await expect(running).rejects.toBeInstanceOf(HexAbortError);
     expect(globals.has("after")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Suspending commands: go, wait, play (Requirements 4.5, 5.7)
+// ---------------------------------------------------------------------------------------------
+
+describe("go", () => {
+  it("hands the evaluated target and the pending visual effect to the host and clears the effect", async () => {
+    const calls: { target: EvaluatedCardTarget; effect: PendingEffect | null; pendingDuringGo: PendingEffect | null }[] = [];
+    const { host, newCtx } = setup({
+      goToCard: (target, effect, ctx) => {
+        calls.push({ target, effect, pendingDuringGo: ctx.pendingVisualEffect });
+        return Promise.resolve();
+      },
+    });
+    const ctx = newCtx();
+    const body: HexStatementNode[] = [
+      { kind: "QueueVisualEffect", effect: "irisOpen", speed: "slow" },
+      { kind: "QueueVisualEffect", effect: "dissolve", speed: "fast" }, // the last one wins
+      { kind: "GoToCard", target: { type: "id", value: bin("&", lit("crd"), lit("_2")) } },
+      { kind: "GoToCard", target: { type: "relative", dir: "back" } },
+      { kind: "GoToCard", target: { type: "auto", value: lit(2) } },
+    ];
+    await runHandler(handler("mouseUp", body), [], "prt_btn", ctx, host);
+    expect(calls).toEqual([
+      { target: { type: "id", value: "crd_2" }, effect: { effect: "dissolve", speed: "fast" }, pendingDuringGo: null },
+      { target: { type: "relative", dir: "back" }, effect: null, pendingDuringGo: null },
+      { target: { type: "auto", value: 2 }, effect: null, pendingDuringGo: null },
+    ]);
+    expect(ctx.pendingVisualEffect).toBeNull();
+  });
+
+  it("waits for the card change before the next statement and stops there when aborted meanwhile", async () => {
+    const env = setup({
+      goToCard: () => {
+        env.store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+        env.controller.abort(); // e.g. Cmd+. while the transition plays
+        return Promise.resolve();
+      },
+    });
+    const body = [global("after"), { kind: "GoToCard", target: { type: "relative", dir: "next" } } as HexStatementNode, put(lit("ran"), toVar("after"))];
+    await expect(runHandler(handler("mouseUp", body), [], "prt_btn", env.newCtx(), env.host)).rejects.toBeInstanceOf(HexAbortError);
+    expect(env.store.getSnapshot().currentCardId).toBe("crd_2");
+    expect(env.globals.has("after")).toBe(false);
+  });
+});
+
+describe("wait", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each<[string, number, "ticks" | "seconds", number]>([
+    ["wait 30 ticks", 30, "ticks", 500],
+    ["wait 1.5 seconds", 1.5, "seconds", 1500],
+  ])("%s suspends for %d %s", async (_label, amount, unit, ms) => {
+    vi.useFakeTimers();
+    const { host, globals, newCtx } = setup();
+    const body = [global("after"), { kind: "Wait", amount: lit(amount), unit } as HexStatementNode, put(lit("ran"), toVar("after"))];
+    let done = false;
+    const running = runHandler(handler("test", body), [], "prt_btn", newCtx(), host).then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(ms - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await running;
+    expect(globals.get("after")).toBe("ran");
+  });
+
+  it("rejects with HexAbortError when aborted and clears its timer", async () => {
+    vi.useFakeTimers();
+    const { host, controller, globals, newCtx } = setup();
+    const body = [global("after"), { kind: "Wait", amount: lit(10), unit: "seconds" } as HexStatementNode, put(lit("ran"), toVar("after"))];
+    const running = runHandler(handler("test", body), [], "prt_btn", newCtx(), host);
+    await vi.advanceTimersByTimeAsync(100);
+    controller.abort();
+    await expect(running).rejects.toBeInstanceOf(HexAbortError);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(globals.has("after")).toBe(false);
+  });
+
+  it("reports a non-numeric amount as HexScriptError", async () => {
+    const { host, newCtx } = setup();
+    const body = [at(2, { kind: "Wait", amount: lit("soon"), unit: "ticks" })];
+    await expect(runHandler(handler("test", body), [], "prt_btn", newCtx(), host))
+      .rejects.toMatchObject({ name: "HexScriptError", line: 2, message: 'Expected a number but found "soon"' });
+  });
+});
+
+describe("play", () => {
+  it("passes voice, tempo and notes to the host without suspending", async () => {
+    const sounds: [string, number, string][] = [];
+    const { host, globals, newCtx } = setup({ playSound: (voice, tempo, notes) => void sounds.push([voice, tempo, notes]) });
+    const body = [
+      global("after"),
+      { kind: "PlaySound", voice: "harpsichord", tempo: 90, notes: "C4 E4 G4" } as HexStatementNode,
+      put(lit("ran"), toVar("after")),
+    ];
+    const ctx = newCtx();
+    await runHandler(handler("test", body), [], "prt_btn", ctx, host);
+    expect(sounds).toEqual([["harpsichord", 90, "C4 E4 G4"]]);
+    expect(globals.get("after")).toBe("ran");
+    expect(ctx.stepCount).toBe(4); // global, play, put, literal
   });
 });

@@ -186,6 +186,30 @@ export function suspend<T>(ctx: DispatchContext, promise: Promise<T>): Promise<T
   });
 }
 
+/** Longest delay a JS timer supports; longer `wait`s are clamped to it instead of firing at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/**
+ * The timer promise of `wait` (a suspension point, §3.2 rule 2): resolves after `ms`, or rejects
+ * with `HexAbortError` as soon as the dispatch is aborted, clearing the timer. Uses a callback
+ * timer only, never a string timer.
+ */
+function sleep(ctx: DispatchContext, ms: number): Promise<void> {
+  const signal = ctx.abortSignal;
+  if (signal.aborted) return Promise.reject(new HexAbortError());
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(handle);
+      reject(new HexAbortError());
+    };
+    const handle = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, Math.min(Math.max(ms, 0), MAX_TIMER_MS));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Host interface
 // ---------------------------------------------------------------------------------------------
@@ -807,8 +831,14 @@ async function runRepeat(frame: Frame, loop: Extract<HexStatementNode, { kind: "
   }
 }
 
-function notYetSupported(command: string): HexScriptError {
-  return new HexScriptError(`The ${command} command is not supported yet`);
+function evaluateCardTarget(frame: Frame, target: HexCardTarget): EvaluatedCardTarget {
+  if (target.type === "relative") return { type: "relative", dir: target.dir };
+  return { type: target.type, value: evalExpr(frame, target.value) };
+}
+
+/** `wait` amounts: 1 tick = 1/60 s (§4.2). */
+function waitMilliseconds(amount: number, unit: "ticks" | "seconds"): number {
+  return unit === "seconds" ? amount * 1000 : (amount * 1000) / 60;
 }
 
 /** Evaluates one statement node; returns a control-flow sentinel or undefined to continue. */
@@ -897,12 +927,25 @@ async function evalStatement(frame: Frame, statement: HexStatementNode): Promise
       }
       return undefined;
     }
-    case "GoToCard":
-      throw notYetSupported("go");
-    case "Wait":
-      throw notYetSupported("wait");
+    case "GoToCard": {
+      const target = evaluateCardTarget(frame, statement.target);
+      // §3.2 rule 7: this go consumes the pending effect, so handlers it triggers start without one.
+      const effect = ctx.pendingVisualEffect;
+      ctx.pendingVisualEffect = null;
+      // The host sends the nested lifecycle messages with `ctx` and suspends for the effect;
+      // statements after `go` see the new card (§3.2 rule 6).
+      await host.goToCard(target, effect, ctx);
+      return undefined;
+    }
+    case "Wait": {
+      const amount = toNumber(evalExpr(frame, statement.amount));
+      await sleep(ctx, waitMilliseconds(amount, statement.unit));
+      return undefined;
+    }
     case "PlaySound":
-      throw notYetSupported("play");
+      // Not a suspension point (§3.2 rule 2): the sound plays while the script continues.
+      host.playSound(statement.voice, statement.tempo, statement.notes);
+      return undefined;
     default: {
       const unknown: never = statement;
       throw new HexScriptError(`Unknown statement ${JSON.stringify(unknown)}`);
