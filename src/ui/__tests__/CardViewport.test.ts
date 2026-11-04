@@ -291,6 +291,20 @@ describe("starter stack and UI store view", () => {
     for (const part of card.parts) expect(store.getCompiled(part.id).errors).toEqual([]);
   });
 
+  it("the Hello button plays a harpsichord phrase before the answer dialog", () => {
+    const stack = createStarterStack();
+    const store = createHexStore({ stack, compile: parseHexTalk });
+    const compiled = store.getCompiled("prt_hello");
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.ast.handlers.mouseup.body.map((statement) => statement.kind)).toEqual(["PlaySound", "ShowAnswerDialog"]);
+    expect(compiled.ast.handlers.mouseup.body[0]).toMatchObject({
+      kind: "PlaySound",
+      voice: "harpsichord",
+      tempo: 140,
+      notes: "c4e e4e g4e c5q",
+    });
+  });
+
   it("the UI store view has no applyAuthoring or replaceStack at run time", () => {
     const store: HexStore = createHexStore({ stack: makeStack(), compile: parseHexTalk });
     const view = createUiStoreView(store);

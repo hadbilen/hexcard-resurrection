@@ -45,7 +45,8 @@ hexcard/
 │   │   │   ├── lfsrDissolve.ts   # 18-bit Galois LFSR dissolve
 │   │   │   └── __tests__/
 │   │   └── audio/
-│   │       └── synth.ts          # WebAudio Karplus-Strong & 8-bit sound engine + note parser             [04]
+│   │       ├── synth.ts          # WebAudio Karplus-Strong & 8-bit sound engine + note parser             [04]
+│   │       └── __tests__/
 │   ├── ai/                                                                                                 [04]
 │   │   ├── spellcaster.ts     # NL -> HexScriptAST (Tier 1 local, Tier 2 proxy, Tier 3 BYOK)
 │   │   ├── grimoire.ts        # 24 curated prompt -> AST presets

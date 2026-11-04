@@ -1,6 +1,6 @@
 # Implementation Plan: System 7 UI, WebAudio Synth, Spellcaster, Storage & Showcase Stacks
 
-- [ ] 1. Implement the WebAudio synthesizer
+- [x] 1. Implement the WebAudio synthesizer
   - `src/engine/audio/synth.ts` with the five voices, note parser (including rests and dotted notes) and autoplay unlock
   - _Requirements: 1.1, 1.2, 1.3_
 

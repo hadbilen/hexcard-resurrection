@@ -8,6 +8,9 @@
  * Persistence (spec 04 task 6): IndexedDB auto-save is injected into the store; before the UI
  * starts, a share link in the URL hash or the most recently auto-saved stack replaces the starter
  * stack through the stack loader, which is also used by File > Open Stack File.
+ *
+ * Audio (spec 04 task 1): the shared synth is created at start-up, which installs its autoplay
+ * unlock listeners before the first click; the VM host plays `play` statements through it.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,6 +19,7 @@ import { createMessageBus, type MessageBus } from "./core/messageBus.ts";
 import { parseHexTalk } from "./core/parser.ts";
 import { validateStack } from "./core/stackValidator.ts";
 import { createHexStore } from "./core/store.ts";
+import { getHexAudioSynth, playSound } from "./engine/audio/synth.ts";
 import { createPaintController } from "./engine/graphics/paintTools.ts";
 import { PATTERNS } from "./engine/graphics/patterns.ts";
 import { loadBundledFonts } from "./engine/graphics/textRaster.ts";
@@ -35,6 +39,9 @@ const DEFAULT_PATTERN_INDEX = 1;
 async function main(): Promise<void> {
   const rootElement = document.getElementById("root");
   if (!rootElement) throw new Error("Missing #root element");
+
+  // Creates the synth and installs the autoplay unlock before any await, so the first click unlocks audio.
+  getHexAudioSynth();
 
   const starter = validateStack(createStarterStack());
   if (!starter.ok) throw new Error(`The built-in starter stack is invalid: ${starter.error}`);
@@ -87,6 +94,7 @@ async function main(): Promise<void> {
     dialogs: modals,
     effects,
     mouse,
+    playSound, // a module-level function that resolves the shared synth itself, so no `this` to bind
   });
   bus = createMessageBus({
     store,

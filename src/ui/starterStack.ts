@@ -9,6 +9,7 @@ import { THEME_PALETTES, type HexStack } from "../core/schema.ts";
 
 export const STARTER_BUTTON_SCRIPT = [
   "on mouseUp",
+  '  play harpsichord tempo 140 "c4e e4e g4e c5q"',
   '  answer "Welcome to HexCard!" with "OK"',
   "end mouseUp",
 ].join("\n");
