@@ -1,21 +1,33 @@
 /*
  * System 7 shell styles. 1-bit rules (steering tech.md): only hard-offset shadows, no gradients,
  * no blur, no opacity fades. Colours come from --dark-bit / --light-bit set by the shell.
+ *
+ * UI scale (spec 04 Requirement 2.10): every length is a 1x System 7 metric times --px, which the
+ * shell sets to k CSS pixels (k = computeUiScale(window)), so the whole UI is the 1x UI enlarged
+ * k times. Fonts are used only at multiples of their native pixel size (Pixel Operator 16 px,
+ * Pixel Operator 8 8 px), so glyph pixels stay k x k blocks. --menubar-height (20k) comes from
+ * MENU_BAR_BASE_HEIGHT in FloatingTools.tsx.
  */
 .s7-shell {
   --dark-bit: #000000;
   --light-bit: #ffffff;
+  --k: 1;
+  --px: 1px;
+  --menubar-height: 20px;
   position: fixed;
   inset: 0;
   display: flex;
   flex-direction: column;
   background: var(--light-bit);
   color: var(--dark-bit);
-  font: 16px/16px "HexCard PixelOperator Bold", monospace;
+  font-family: "HexCard PixelOperator Bold", monospace;
+  font-size: calc(16 * var(--px));
+  line-height: calc(16 * var(--px));
   user-select: none;
 }
 
-.s7-shell button {
+/* Button reset. :where() keeps its specificity at (0,0,1) so every class rule below overrides it. */
+:where(.s7-shell) button {
   font: inherit;
   color: inherit;
   background: var(--light-bit);
@@ -25,56 +37,63 @@
   border-radius: 0;
 }
 
+/* Focus is shown for keyboard focus only (:focus-visible), never for pointer or plain focus. */
 .s7-shell button:focus-visible,
 .s7-shell input:focus-visible {
-  outline: 2px solid var(--dark-bit);
-  outline-offset: -4px;
+  outline: calc(2 * var(--px)) solid var(--dark-bit);
+  outline-offset: calc(-4 * var(--px));
 }
 
-/* Menu bar */
+/* Menu bar: 20 px at 1x, 1 px bottom line included. */
 .s7-menubar {
   position: relative;
   z-index: 20;
   flex: none;
   display: flex;
   align-items: stretch;
-  height: 24px;
+  height: var(--menubar-height);
   box-sizing: border-box;
-  border-bottom: 2px solid var(--dark-bit);
+  padding: 0 calc(6 * var(--px));
+  border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
   background: var(--light-bit);
 }
 
 .s7-menu {
   position: relative;
+  display: flex;
 }
 
 .s7-menu-title {
-  height: 22px;
-  padding: 0 10px;
+  height: 100%;
+  padding: 0 calc(8 * var(--px));
+  white-space: nowrap;
 }
 
+/* Inverted title: the open menu, or a title focused from the keyboard. */
 .s7-menu-title-open,
-.s7-menu-title:hover {
+.s7-shell .s7-menu-title:focus-visible {
   background: var(--dark-bit);
   color: var(--light-bit);
+  outline: none;
 }
 
 .s7-dropdown {
   position: absolute;
-  top: 22px;
+  /* The top border overlaps the menu bar's bottom line, as in System 7. */
+  top: 100%;
   left: 0;
-  min-width: 160px;
-  border: 2px solid var(--dark-bit);
+  min-width: calc(160 * var(--px));
+  border: calc(1 * var(--px)) solid var(--dark-bit);
   background: var(--light-bit);
-  box-shadow: 2px 2px 0px var(--dark-bit);
-  padding: 2px 0;
+  box-shadow: calc(1 * var(--px)) calc(1 * var(--px)) 0px var(--dark-bit);
+  padding: calc(1 * var(--px)) 0;
 }
 
 .s7-menu-item {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 20px;
+  height: calc(16 * var(--px));
   text-align: left;
   white-space: nowrap;
 }
@@ -91,29 +110,29 @@
 
 .s7-check {
   flex: none;
-  width: 18px;
+  width: calc(16 * var(--px));
   text-align: center;
 }
 
 .s7-menu-label {
   flex: 1;
-  padding-right: 16px;
+  padding-right: calc(16 * var(--px));
 }
 
 .s7-shortcut {
-  padding-right: 8px;
+  padding-right: calc(8 * var(--px));
 }
 
 .s7-separator {
   height: 0;
-  margin: 2px 0;
-  border-top: 1px solid var(--dark-bit);
+  margin: calc(3 * var(--px)) 0;
+  border-top: calc(1 * var(--px)) solid var(--dark-bit);
 }
 
 .s7-tear-strip {
   height: 0;
-  margin: 2px 4px 4px;
-  border-top: 2px dashed var(--dark-bit);
+  margin: calc(2 * var(--px)) calc(4 * var(--px)) calc(3 * var(--px));
+  border-top: calc(1 * var(--px)) dashed var(--dark-bit);
 }
 
 /* Edit Background: diagonal hash stripes along the menu bar border (Requirement 2.2). */
@@ -122,7 +141,7 @@
   left: 0;
   top: 100%;
   width: 100%;
-  height: 8px;
+  height: calc(8 * var(--px));
   pointer-events: none;
 }
 
@@ -141,52 +160,55 @@
   position: fixed;
   z-index: 30;
   box-sizing: border-box;
-  border: 2px solid var(--dark-bit);
+  border: calc(1 * var(--px)) solid var(--dark-bit);
   background: var(--light-bit);
-  box-shadow: 2px 2px 0px var(--dark-bit);
+  box-shadow: calc(1 * var(--px)) calc(1 * var(--px)) 0px var(--dark-bit);
 }
 
 .s7-palette-title {
   position: relative;
-  height: 16px;
-  border-bottom: 2px solid var(--dark-bit);
+  height: calc(12 * var(--px));
+  border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
   background: var(--dark-bit);
   color: var(--light-bit);
   text-align: center;
   cursor: move;
 }
 
+/* Pixel Operator 8 at its native 8 px (times k). */
 .s7-palette-title-text {
-  font-size: 12px;
-  line-height: 16px;
+  font-family: "HexCard PixelOperator8 Bold", monospace;
+  font-size: calc(8 * var(--px));
+  line-height: calc(12 * var(--px));
 }
 
 .s7-close-box {
   position: absolute;
-  left: 3px;
-  top: 3px;
-  width: 10px;
-  height: 10px;
+  left: calc(3 * var(--px));
+  top: calc(2 * var(--px));
+  width: calc(8 * var(--px));
+  height: calc(8 * var(--px));
   box-sizing: border-box;
-  border: 1px solid var(--light-bit);
+  border: calc(1 * var(--px)) solid var(--light-bit);
   background: var(--dark-bit);
 }
 
 .s7-tool-grid {
   display: grid;
-  grid-template-columns: repeat(2, 24px);
-  grid-auto-rows: 24px;
-  border-bottom: 2px solid var(--dark-bit);
+  grid-template-columns: repeat(2, calc(24 * var(--px)));
+  grid-auto-rows: calc(24 * var(--px));
+  border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
 }
 
 .s7-tool {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--dark-bit);
-  margin: 0 -1px -1px 0;
+  width: calc(24 * var(--px));
+  height: calc(24 * var(--px));
+  box-sizing: border-box;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  margin: 0 calc(-1 * var(--px)) calc(-1 * var(--px)) 0;
 }
 
 .s7-tool[aria-pressed="true"],
@@ -197,26 +219,27 @@
 
 .s7-pattern-grid {
   display: grid;
-  grid-template-columns: repeat(4, 12px);
-  grid-auto-rows: 12px;
+  grid-template-columns: repeat(4, calc(12 * var(--px)));
+  grid-auto-rows: calc(12 * var(--px));
 }
 
 .s7-pattern {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
-  border: 1px solid var(--dark-bit);
-  margin: 0 -1px -1px 0;
+  width: calc(12 * var(--px));
+  height: calc(12 * var(--px));
+  box-sizing: border-box;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  margin: 0 calc(-1 * var(--px)) calc(-1 * var(--px)) 0;
   color: var(--dark-bit);
 }
 
 .s7-pattern[aria-checked="true"] {
   /* Selected pattern: keep the pattern visible by inverting the frame only. */
   background: var(--light-bit);
-  outline: 2px solid var(--dark-bit);
-  outline-offset: -3px;
+  outline: calc(2 * var(--px)) solid var(--dark-bit);
+  outline-offset: calc(-3 * var(--px));
 }
 
 .s7-icon,
@@ -238,14 +261,14 @@
 
 .s7-dialog {
   display: flex;
-  gap: 12px;
+  gap: calc(12 * var(--px));
   box-sizing: border-box;
-  min-width: 280px;
-  max-width: 440px;
-  padding: 14px;
-  border: 2px solid var(--dark-bit);
+  min-width: calc(280 * var(--px));
+  max-width: calc(440 * var(--px));
+  padding: calc(14 * var(--px));
+  border: calc(2 * var(--px)) solid var(--dark-bit);
   background: var(--light-bit);
-  box-shadow: 2px 2px 0px var(--dark-bit);
+  box-shadow: calc(2 * var(--px)) calc(2 * var(--px)) 0px var(--dark-bit);
   user-select: text;
 }
 
@@ -255,7 +278,7 @@
 
 .s7-dialog-message,
 .s7-dialog-detail {
-  margin: 0 0 8px;
+  margin: 0 0 calc(8 * var(--px));
   white-space: pre-wrap;
 }
 
@@ -267,10 +290,10 @@
   display: block;
   width: 100%;
   box-sizing: border-box;
-  height: 24px;
-  margin-bottom: 8px;
-  padding: 0 4px;
-  border: 2px solid var(--dark-bit);
+  height: calc(24 * var(--px));
+  margin-bottom: calc(8 * var(--px));
+  padding: 0 calc(4 * var(--px));
+  border: calc(1 * var(--px)) solid var(--dark-bit);
   background: var(--light-bit);
   color: var(--dark-bit);
   font: inherit;
@@ -280,16 +303,16 @@
 .s7-dialog-buttons {
   display: flex;
   justify-content: flex-end;
-  gap: 16px;
-  margin-top: 8px;
+  gap: calc(16 * var(--px));
+  margin-top: calc(8 * var(--px));
 }
 
 .s7-button {
-  min-width: 64px;
-  height: 22px;
-  padding: 0 12px;
-  border: 1px solid var(--dark-bit);
-  border-radius: 8px;
+  min-width: calc(64 * var(--px));
+  height: calc(20 * var(--px));
+  padding: 0 calc(12 * var(--px));
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  border-radius: calc(8 * var(--px));
 }
 
 .s7-button:active {
@@ -298,8 +321,8 @@
 }
 
 .s7-button-default {
-  outline: 2px solid var(--dark-bit);
-  outline-offset: 2px;
+  outline: calc(2 * var(--px)) solid var(--dark-bit);
+  outline-offset: calc(2 * var(--px));
 }
 
 /* Canvases are always drawn pixel-exact. */
@@ -308,11 +331,17 @@
 }
 
 /* Card viewport (spec 04 task 3). The only DOM over the card canvas is the hidden textarea and
-   the authoring selection marquee / handles (design spec §5.6). */
+   the authoring selection marquee / handles (design spec §5.6).
+   Requirement 2.10: the viewport box is exactly the 512k x 342k canvas (no border, padding or
+   margin), so it fits below the 20k menu bar at the k from computeUiScale. Its frame is an
+   outline, which takes no layout space; where the card fills the desktop it is clipped there. */
 .hc-viewport {
   position: relative;
   flex: none;
-  outline: 2px solid var(--dark-bit);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: calc(2 * var(--px)) solid var(--dark-bit);
 }
 
 .hc-card-canvas {
@@ -326,8 +355,8 @@
   position: absolute;
   left: 0;
   top: 0;
-  width: 1px;
-  height: 1px;
+  width: calc(1 * var(--px));
+  height: calc(1 * var(--px));
   margin: 0;
   padding: 0;
   border: 0;
@@ -348,18 +377,18 @@
 }
 
 .hc-part-selection {
-  border: 1px solid var(--dark-bit);
+  border: calc(1 * var(--px)) solid var(--dark-bit);
 }
 
 .hc-marquee {
-  border: 1px dashed var(--dark-bit);
+  border: calc(1 * var(--px)) dashed var(--dark-bit);
 }
 
 .hc-handle {
   position: absolute;
   box-sizing: border-box;
   background: var(--dark-bit);
-  border: 1px solid var(--light-bit);
+  border: calc(1 * var(--px)) solid var(--light-bit);
 }
 
 .hc-handle-nw { left: 0; top: 0; }

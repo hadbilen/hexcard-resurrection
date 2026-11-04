@@ -855,6 +855,10 @@ describe("abort", () => {
 describe("opening the current stack", () => {
   const openers: Scripts = { openStack: [], openBackground: [], openCard: [] };
   const lifecycle: Scripts = { ...openers, closeCard: [], closeBackground: [] };
+  /** Card lifecycle handlers without openStack, so openStack reaches the stack's handler. */
+  const cardLifecycle: Scripts = { closeCard: [], closeBackground: [], openBackground: [], openCard: [] };
+  /** Without openBackground, so openBackground reaches the background's handler. */
+  const cardOpenClose: Scripts = { closeCard: [], openCard: [] };
 
   it("posts openStack, openBackground and openCard to the current card, in that order", async () => {
     const { bus, store, log, contexts } = setup({ stack: { openStack: [] }, bkg_2: { openBackground: [] }, crd_3: { openCard: [] } });
@@ -898,6 +902,46 @@ describe("opening the current stack", () => {
     expect(bus.backHistory()).toEqual([]);
     expect(errors).toEqual([]);
     expect(bus.isRunning()).toBe(false);
+  });
+
+  it("skips the original card's openBackground and openCard when an openStack handler runs go", async () => {
+    const { bus, store, log, errors } = setup({ stack: { openStack: [goNext] }, crd_2: cardLifecycle, crd_3: cardLifecycle });
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    bus.openCurrentStack();
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_3");
+    expect(log).toEqual([
+      "stk_1.openStack", "crd_2.closeCard", "crd_2.closeBackground", "crd_3.openBackground", "crd_3.openCard",
+    ]);
+    expect(errors).toEqual([]);
+    expect(bus.isRunning()).toBe(false);
+    expect(bus.pendingCount()).toBe(0);
+  });
+
+  it("skips the original card's openCard when an openBackground handler runs go", async () => {
+    const { bus, store, log } = setup({ stack: { openStack: [] }, bkg_1: { openBackground: [goNext] }, crd_1: cardOpenClose, crd_2: cardOpenClose });
+    bus.openCurrentStack();
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+    expect(log).toEqual(["stk_1.openStack", "bkg_1.openBackground", "crd_1.closeCard", "crd_2.openCard"]);
+  });
+
+  it("skips the rest of the sequence when go leaves the card and comes back", async () => {
+    const { bus, store, log } = setup({ stack: { openStack: [goNext] }, crd_1: { openCard: [] }, crd_2: { openCard: [goBack] } });
+    bus.openCurrentStack();
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(log).toEqual(["stk_1.openStack", "crd_2.openCard", "crd_1.openCard"]); // no second crd_1.openCard
+  });
+
+  it("skips the rest of the sequence after store.replaceStack when a handler runs go", async () => {
+    const { bus, store, log, errors } = setup({});
+    store.replaceStack(makeStack({ stack: { openStack: [goNext] }, crd_1: cardLifecycle, crd_2: cardLifecycle }));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+    expect(log).toEqual(["stk_1.openStack", "crd_1.closeCard", "crd_2.openCard"]);
+    expect(bus.backHistory()).toEqual(["crd_1"]);
+    expect(errors).toEqual([]);
   });
 
   it("stops opening replaced stacks after dispose", async () => {

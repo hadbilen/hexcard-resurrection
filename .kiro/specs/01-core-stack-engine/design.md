@@ -44,7 +44,7 @@ export interface HexStore {
   getSnapshot(): HexRuntimeState;
   applyRuntime(m: RuntimeMutation): void;           // not undoable, schedules auto-save
   replaceStack(stack: HexStack): void;              // after validation only; recompiles ScriptCache
-  onReplaceStack(listener: () => void): () => void; // called by replaceStack before subscribers; message bus clears its back history
+  onReplaceStack(listener: () => void): () => void; // called by replaceStack before subscribers; message bus clears its back history and opens the new stack (Req 2.9)
   applyAuthoring(next: HexStack): void;             // authoring result; incremental recompile; never touches history
   getCompiled(objectId: HexID): { ast: HexScriptAST; errors: HexCompileError[] };
 }

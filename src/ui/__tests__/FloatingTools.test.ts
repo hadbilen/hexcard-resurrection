@@ -7,10 +7,12 @@ import { PATTERNS } from "../../engine/graphics/patterns.ts";
 import {
   FloatingTools,
   ICON_SIZE,
-  MENU_BAR_HEIGHT,
+  MENU_BAR_BASE_HEIGHT,
   PALETTE_GRAB,
   TOOLS,
   clampPaletteOrigin,
+  computeUiScale,
+  menuBarHeight,
   patternToPath,
   pixelRowsToPath,
 } from "../FloatingTools.tsx";
@@ -82,12 +84,59 @@ describe("clampPaletteOrigin", () => {
   const viewport = { width: 800, height: 600 };
 
   it("keeps the palette below the menu bar and the title bar inside the window", () => {
-    expect(clampPaletteOrigin({ x: 100, y: -50 }, viewport).y).toBe(MENU_BAR_HEIGHT);
+    expect(clampPaletteOrigin({ x: 100, y: -50 }, viewport).y).toBe(MENU_BAR_BASE_HEIGHT);
     expect(clampPaletteOrigin({ x: 5000, y: 5000 }, viewport)).toEqual({ x: 800 - PALETTE_GRAB, y: 600 - PALETTE_GRAB });
   });
 
   it("leaves a position inside the window unchanged", () => {
     expect(clampPaletteOrigin({ x: 120, y: 90 }, viewport)).toEqual({ x: 120, y: 90 });
+  });
+});
+
+describe("computeUiScale (Requirement 2.10)", () => {
+  it("is the classic 20 px menu bar times k", () => {
+    expect(MENU_BAR_BASE_HEIGHT).toBe(20);
+    expect([1, 2, 3, 4].map(menuBarHeight)).toEqual([20, 40, 60, 80]);
+  });
+
+  it("fits the card (512k x 342k) plus the 20k menu bar in the viewport", () => {
+    expect(computeUiScale(512, 362)).toBe(1);
+    expect(computeUiScale(1024, 724)).toBe(2);
+    expect(computeUiScale(1536, 1086)).toBe(3); // 342*3 + 20*3 = 1086 exactly
+    expect(computeUiScale(3000, 3000)).toBe(5); // width-bound: 512*5 = 2560
+  });
+
+  it("drops to a smaller k where the card alone would fit but the menu bar does not", () => {
+    expect(computeUiScale(1536, 1085)).toBe(2); // one pixel short of 1086
+    expect(computeUiScale(1536, 1026)).toBe(2); // 342*3: the card fits, the 60 px menu bar does not
+    expect(computeUiScale(1920, 1080)).toBe(2); // the card alone would get 3
+    expect(computeUiScale(2560, 1440)).toBe(3); // the card alone would get 4
+  });
+
+  it("gives 1 for tiny or invalid viewports", () => {
+    expect(computeUiScale(300, 200)).toBe(1);
+    expect(computeUiScale(512, 342)).toBe(1);
+    expect(computeUiScale(0, 0)).toBe(1);
+    expect(computeUiScale(Number.NaN, 1000)).toBe(1);
+  });
+});
+
+describe("scaled palette", () => {
+  it("clamps below the 20k menu bar with a 32k grab margin", () => {
+    const viewport = { width: 1600, height: 1200 };
+    expect(clampPaletteOrigin({ x: 100, y: 0 }, viewport, 3)).toEqual({ x: 100, y: 60 });
+    expect(clampPaletteOrigin({ x: 5000, y: 5000 }, viewport, 3)).toEqual({ x: 1600 - 96, y: 1200 - 96 });
+  });
+
+  it("draws icons and pattern swatches k times larger", () => {
+    const html = renderToStaticMarkup(
+      createElement(FloatingTools, {
+        store: fakeStore("browse"), patternIndex: 1, onPatternChange: () => {},
+        position: { x: 10, y: 80 }, onPositionChange: () => {}, onClose: () => {}, scale: 3,
+      }),
+    );
+    expect(html.match(/<svg class="s7-icon" width="48" height="48"/g)).toHaveLength(12);
+    expect(html.match(/<svg width="24" height="24" viewBox="0 0 8 8"/g)).toHaveLength(PATTERNS.length);
   });
 });
 

@@ -2,8 +2,10 @@
  * Spec 04 task 3: card viewport logic (pointer mapping, Browse forwarding, field editing rules,
  * part move/resize), the starter stack, the UI store view and server rendering of the viewport.
  */
+/// <reference types="node" />
 import { describe, expect, it } from "vitest";
-import { createElement } from "react";
+import { readFileSync } from "node:fs";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createHistory } from "../../core/history.ts";
 import { createMessageBus, type HexMessage } from "../../core/messageBus.ts";
@@ -16,6 +18,8 @@ import { createPaintController, DEFAULT_PAINT_SETTINGS } from "../../engine/grap
 import { createUiStoreView } from "../App.tsx";
 import {
   CardViewport,
+  PartSelection,
+  cardRectStyle,
   clientToCardPoint,
   createBrowseInput,
   createPartRectCommand,
@@ -24,10 +28,14 @@ import {
   fieldExitMessage,
   handleAt,
   hitTestLayerPart,
+  HANDLE_SIZE,
   MIN_PART_SIZE,
 } from "../CardViewport.tsx";
 import { createStarterStack } from "../starterStack.ts";
-import { createModalManager } from "../System7Shell.tsx";
+import { createModalManager, System7Shell } from "../System7Shell.tsx";
+
+// Read as plain text: Vitest's CSS handling turns `system7.css?raw` into "".
+const SHELL_CSS = readFileSync(new URL("../system7.css", import.meta.url), "utf8");
 import { createEffectStage, createMouseTracker, createVmHost } from "../vmHost.ts";
 
 const emptyBitmap = { width: 512, height: 342, rleData: "" };
@@ -292,24 +300,86 @@ describe("starter stack and UI store view", () => {
   });
 });
 
+function viewportElement(store: HexStore) {
+  const history = createHistory(store);
+  return createElement(CardViewport, {
+    store: createUiStoreView(store),
+    history,
+    bus: { post: () => undefined, abort: () => undefined },
+    painter: createPaintController({ store, history, getSettings: () => DEFAULT_PAINT_SETTINGS }),
+    effects: createEffectStage(),
+    mouse: createMouseTracker(),
+    isModalOpen: () => false,
+  });
+}
+
+/** Renders `child` inside a System7Shell with a fixed UI scale k. */
+function renderInShell(store: HexStore, k: number, child: ReactNode): string {
+  return renderToStaticMarkup(createElement(System7Shell, {
+    store: createUiStoreView(store),
+    history: createHistory(store),
+    modals: createModalManager(),
+    patternIndex: 1,
+    onPatternChange: () => undefined,
+    scale: k,
+  }, child));
+}
+
 describe("CardViewport markup", () => {
   it("renders one 512x342 canvas and the hidden, labelled textarea", () => {
     const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
-    const history = createHistory(store);
-    const html = renderToStaticMarkup(createElement(CardViewport, {
-      store: createUiStoreView(store),
-      history,
-      bus: { post: () => undefined, abort: () => undefined },
-      painter: createPaintController({ store, history, getSettings: () => DEFAULT_PAINT_SETTINGS }),
-      effects: createEffectStage(),
-      mouse: createMouseTracker(),
-      isModalOpen: () => false,
-    }));
+    const html = renderToStaticMarkup(viewportElement(store));
     expect(html.match(/<canvas/g)).toHaveLength(1);
     expect(html).toContain('width="512"');
     expect(html).toContain('height="342"');
     expect(html).toContain('class="hc-hidden-input"');
     expect(html).toContain('aria-label="Card field"');
     expect(html).not.toContain("part-selection");
+  });
+});
+
+describe("UI scale k (Requirement 2.10)", () => {
+  it("shows the canvas at 512k x 342k CSS pixels with the shell's k; the backing store stays 512x342", () => {
+    for (const k of [1, 3]) {
+      const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
+      const html = renderInShell(store, k, viewportElement(store));
+      const size = `width:${512 * k}px;height:${342 * k}px`;
+      expect(html).toContain(`<div class="hc-viewport" style="${size}"`);
+      expect(html).toMatch(new RegExp(`<canvas class="hc-card-canvas" width="512" height="342" style="${size}"`));
+    }
+  });
+
+  it("sizes the selection frame and handles with k", () => {
+    const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
+    const rect = { x: 10, y: 20, width: 80, height: 30 };
+    for (const k of [1, 3]) {
+      const html = renderInShell(store, k, createElement(PartSelection, { rect }));
+      expect(html).toContain(`style="left:${10 * k}px;top:${20 * k}px;width:${80 * k}px;height:${30 * k}px"`);
+      const handle = `width:${HANDLE_SIZE * k}px;height:${HANDLE_SIZE * k}px`;
+      expect(html.match(new RegExp(`class="hc-handle hc-handle-(nw|ne|sw|se)" style="${handle}"`, "g"))).toHaveLength(4);
+    }
+  });
+
+  it("places the editing textarea over the field's k-scaled rect", () => {
+    const rect = { x: 10, y: 200, width: 100, height: 40 };
+    expect(cardRectStyle(rect, 1)).toEqual({ left: 10, top: 200, width: 100, height: 40 });
+    expect(cardRectStyle(rect, 3)).toEqual({ left: 30, top: 600, width: 300, height: 120 });
+  });
+
+  it("maps pointer positions on a 512k x 342k canvas back to card pixels", () => {
+    const rect = { left: 0, top: 60, width: 512 * 3, height: 342 * 3 };
+    expect(clientToCardPoint(3 * 10 + 2, 60 + 3 * 200 + 2, rect)).toEqual({ x: 10, y: 200 });
+  });
+
+  it("expresses every .hc-* length in 1x pixels times var(--px)", () => {
+    const viewportRules = SHELL_CSS.slice(SHELL_CSS.indexOf("/* Card viewport"));
+    expect(viewportRules).toMatch(/\.hc-viewport \{/);
+    expect(viewportRules).toMatch(/outline: calc\(2 \* var\(--px\)\) solid var\(--dark-bit\);/);
+    expect(viewportRules).toMatch(/\.hc-handle \{[^}]*border: calc\(1 \* var\(--px\)\) solid/);
+    expect(viewportRules).toMatch(/\.hc-marquee \{[^}]*border: calc\(1 \* var\(--px\)\) dashed/);
+    const bare = viewportRules
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .match(/\b\d+(\.\d+)?px\b/g) ?? [];
+    expect(bare.filter((value) => value !== "0px")).toEqual([]);
   });
 });

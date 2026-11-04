@@ -64,7 +64,8 @@ export interface HexStore {
   replaceStack(stack: HexStack): void;              // after validation only; recompiles ScriptCache
   /**
    * Called by every `replaceStack`, after the new snapshot is in place and before `subscribe`
-   * listeners are notified. Used by the message bus to clear its back history (Requirement 2.7).
+   * listeners are notified. Used by the message bus to clear its back history (Requirement 2.7)
+   * and to open the new stack (Requirement 2.9).
    */
   onReplaceStack(listener: () => void): () => void;
   /**

@@ -120,9 +120,12 @@ export interface MessageBus {
   /**
    * Requirement 2.9: opens the stack in the store. Aborts the running dispatch, clears the queue
    * (messages queued for the previous stack are never delivered), then posts `openStack`,
-   * `openBackground` and `openCard`, in that order, each targeted at the current card. The studio
-   * calls it once at start, after fonts are loaded; the bus calls it itself after every
-   * `store.replaceStack`.
+   * `openBackground` and `openCard`, in that order, each targeted at the current card. If the
+   * current card changes before the sequence is complete (a handler's `go`, the arrow-key
+   * built-in, or any other change of `currentCardId`, even one that later returns to the same
+   * card), the messages of the sequence still in the queue are skipped. The studio calls it once
+   * at start, after fonts are loaded; the bus calls it itself after every `store.replaceStack`.
+   * Each call starts a fresh sequence.
    */
   openCurrentStack(): void;
   /** `[part?, card, background, stack]` for a target in the current snapshot; empty if it is gone. */
@@ -266,6 +269,25 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
   /** True while `go back` changes the card, so that change is not pushed. */
   let goingBack = false;
 
+  /** Card changes seen by the store subscriber below; a stack replacement is not counted. */
+  let cardChanges = 0;
+  /**
+   * Requirement 2.9: the open sequence posted by the last `openCurrentStack`. `pending` holds its
+   * messages not yet taken off the queue; `cardChanges` is the count when the sequence started.
+   */
+  let openSequence: { pending: Set<HexMessage>; cardChanges: number } | null = null;
+
+  /**
+   * Takes `msg` off the open sequence. True when `msg` belongs to it and the current card has
+   * changed since the sequence started, so `msg` must be skipped.
+   */
+  function isSkippedOpenMessage(msg: HexMessage): boolean {
+    const sequence = openSequence;
+    if (!sequence || !sequence.pending.delete(msg)) return false;
+    if (sequence.pending.size === 0) openSequence = null;
+    return cardChanges !== sequence.cardChanges;
+  }
+
   function pushBack(cardId: HexID): void {
     backHistory.push(cardId);
     if (backHistory.length > MAX_BACK_HISTORY) backHistory.shift();
@@ -324,7 +346,9 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
   async function drain(): Promise<void> {
     running = true;
     try {
-      for (let msg = queue.shift(); msg; msg = queue.shift()) await runTopLevel(msg);
+      for (let msg = queue.shift(); msg; msg = queue.shift()) {
+        if (!isSkippedOpenMessage(msg)) await runTopLevel(msg);
+      }
     } finally {
       running = false;
     }
@@ -405,6 +429,7 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
 
     abort() {
       queue.length = 0;
+      openSequence = null; // its queued messages are gone with the queue
       controller?.abort();
     },
 
@@ -413,7 +438,11 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
       // An aborted dispatch keeps `running` set until its promise chain unwinds; its drain loop
       // then takes these messages off the queue, so they still run one at a time and in order.
       const targetId = store.getSnapshot().currentCardId;
-      for (const name of OPEN_STACK_MESSAGES) bus.post({ name, params: [], targetId });
+      const messages: HexMessage[] = OPEN_STACK_MESSAGES.map((name) => ({ name, params: [], targetId }));
+      // The whole sequence is registered before the first post: on an idle bus, `post` starts
+      // the first dispatch synchronously and takes openStack off the queue at once.
+      openSequence = { pending: new Set(messages), cardChanges };
+      for (const msg of messages) bus.post(msg);
     },
 
     buildPath: (targetId) => buildMessagePath(store.getSnapshot(), targetId),
@@ -444,6 +473,7 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
     if (currentCardId !== lastCardId) {
       if (!goingBack) pushBack(lastCardId);
       lastCardId = currentCardId;
+      cardChanges += 1; // Requirement 2.9: skips the rest of a running open sequence
     }
   });
 

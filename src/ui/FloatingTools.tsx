@@ -9,6 +9,7 @@
  */
 import { useEffect, useRef, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import type { AuthoringTool } from "../core/schema.ts";
+import { computeIntegerScale } from "../engine/graphics/bitmapCanvas.ts";
 import { PATTERNS, type Pattern } from "../engine/graphics/patterns.ts";
 import type { UiStore } from "./System7Shell.tsx";
 
@@ -16,7 +17,7 @@ import type { UiStore } from "./System7Shell.tsx";
 // 1-bit pixel art -> SVG path
 // ---------------------------------------------------------------------------------------------
 
-/** Icon size in pixels; icons are drawn 1:1 so every icon pixel is one device pixel. */
+/** Icon size in pixels at 1x; at UI scale k every icon pixel is a k x k block of CSS pixels. */
 export const ICON_SIZE = 16;
 
 /**
@@ -358,15 +359,51 @@ export interface Point {
   y: number;
 }
 
-/** Height of the menu bar in CSS pixels (kept in sync with `.s7-menubar` in system7.css). */
-export const MENU_BAR_HEIGHT = 24;
-/** Part of a palette that must stay inside the window so the title bar can always be grabbed. */
+// ---------------------------------------------------------------------------------------------
+// UI scale (Requirement 2.10)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Height of the classic System 7 menu bar at 1x, bottom border included. At UI scale k the menu
+ * bar is `menuBarHeight(k)` = 20k CSS pixels; the shell writes that value into `--menubar-height`,
+ * so this constant is the only source of the menu bar height.
+ */
+export const MENU_BAR_BASE_HEIGHT = 20;
+
+/** Menu bar height in CSS pixels at UI scale `scale`. */
+export function menuBarHeight(scale: number): number {
+  return MENU_BAR_BASE_HEIGHT * scale;
+}
+
+/**
+ * Requirement 2.10: the one integer scale factor k of the whole studio UI for a viewport of
+ * `viewportWidth` x `viewportHeight` CSS pixels (normally `window.innerWidth` / `innerHeight`).
+ *
+ * k is the largest integer >= 1 for which the card (512k x 342k) fits in the space left below a
+ * menu bar of 20k, i.e. `computeIntegerScale(width, height - 20k) >= k`. That condition is
+ * monotone in k (512k <= width and 362k <= height), so the search starts at the scale the card
+ * alone would get, `computeIntegerScale(width, height)`, an upper bound, and steps down until the
+ * menu bar fits as well. Viewports too small for even the 1x UI give 1 (the desktop scrolls).
+ */
+export function computeUiScale(viewportWidth: number, viewportHeight: number): number {
+  for (let k = computeIntegerScale(viewportWidth, viewportHeight); k > 1; k--) {
+    if (computeIntegerScale(viewportWidth, viewportHeight - menuBarHeight(k)) >= k) return k;
+  }
+  return 1;
+}
+
+/** Part of a palette (at 1x) that must stay inside the window so the title bar can be grabbed. */
 export const PALETTE_GRAB = 32;
 
-/** Keeps a palette's top-left corner where its title bar is still reachable below the menu bar. */
-export function clampPaletteOrigin(origin: Point, viewport: { width: number; height: number }): Point {
-  const x = Math.min(Math.max(origin.x, PALETTE_GRAB - 64), Math.max(viewport.width - PALETTE_GRAB, 0));
-  const y = Math.min(Math.max(origin.y, MENU_BAR_HEIGHT), Math.max(viewport.height - PALETTE_GRAB, MENU_BAR_HEIGHT));
+/**
+ * Keeps a palette's top-left corner where its title bar is still reachable below the menu bar.
+ * `scale` is the UI scale k: the menu bar is 20k and the grab margin 32k CSS pixels.
+ */
+export function clampPaletteOrigin(origin: Point, viewport: { width: number; height: number }, scale = 1): Point {
+  const grab = PALETTE_GRAB * scale;
+  const top = menuBarHeight(scale);
+  const x = Math.min(Math.max(origin.x, grab - 64 * scale), Math.max(viewport.width - grab, 0));
+  const y = Math.min(Math.max(origin.y, top), Math.max(viewport.height - grab, top));
   return { x, y };
 }
 
@@ -411,9 +448,15 @@ export interface FloatingToolsProps {
   position: Point;
   onPositionChange: (position: Point) => void;
   onClose: () => void;
+  /**
+   * UI scale k (Requirement 2.10), passed by the shell. A prop rather than `useUiScale()` because
+   * System7Shell.tsx imports this module, and a context import back would make the cycle real.
+   * Sizes in system7.css follow `--px` on the shell; this sets the icon sizes and the clamping.
+   */
+  scale?: number;
 }
 
-export function FloatingTools({ store, patternIndex, onPatternChange, position, onPositionChange, onClose }: FloatingToolsProps) {
+export function FloatingTools({ store, patternIndex, onPatternChange, position, onPositionChange, onClose, scale = 1 }: FloatingToolsProps) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const stopDrag = useRef<(() => void) | null>(null);
   useEffect(() => () => stopDrag.current?.(), []);
@@ -425,7 +468,7 @@ export function FloatingTools({ store, patternIndex, onPatternChange, position, 
     stopDrag.current = beginPointerDrag(
       { x: event.clientX, y: event.clientY },
       position,
-      (next) => onPositionChange(clampPaletteOrigin(next, { width: window.innerWidth, height: window.innerHeight })),
+      (next) => onPositionChange(clampPaletteOrigin(next, { width: window.innerWidth, height: window.innerHeight }, scale)),
     );
   };
 
@@ -453,7 +496,7 @@ export function FloatingTools({ store, patternIndex, onPatternChange, position, 
             aria-pressed={state.tool === tool.id}
             onClick={() => store.setTool(tool.id)}
           >
-            <PixelIcon rows={tool.icon} />
+            <PixelIcon rows={tool.icon} scale={scale} />
           </button>
         ))}
       </div>
@@ -470,7 +513,7 @@ export function FloatingTools({ store, patternIndex, onPatternChange, position, 
             aria-checked={patternIndex === index}
             onClick={() => onPatternChange(index)}
           >
-            <svg width={8} height={8} viewBox="0 0 8 8" shapeRendering="crispEdges" fill="currentColor" aria-hidden="true" focusable="false">
+            <svg width={8 * scale} height={8 * scale} viewBox="0 0 8 8" shapeRendering="crispEdges" fill="currentColor" aria-hidden="true" focusable="false">
               <path d={patternToPath(pattern)} />
             </svg>
           </button>

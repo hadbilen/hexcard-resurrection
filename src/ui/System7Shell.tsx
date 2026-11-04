@@ -11,6 +11,8 @@
  *   VM host (`showAnswer` / `showAsk`) and the message bus (`isModalOpen`) can use the same instance.
  */
 import {
+  createContext,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -26,14 +28,59 @@ import { THEME_PALETTES, type AuthoringTool, type HexStack, type ThemePaletteNam
 import type { HexLayer, HexStore } from "../core/store.ts";
 import {
   FloatingTools,
-  MENU_BAR_HEIGHT,
   PixelIcon,
   TOOLS,
   beginPointerDrag,
   clampPaletteOrigin,
+  computeUiScale,
+  menuBarHeight,
   type Point,
 } from "./FloatingTools.tsx";
 import "./system7.css";
+
+// ---------------------------------------------------------------------------------------------
+// UI scale (Requirement 2.10)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The integer UI scale factor k of the studio (Requirement 2.10), provided by `System7Shell` to
+ * everything it renders, including its `children` (the card viewport).
+ *
+ * Contract for consumers:
+ * - Read it with `useUiScale()` inside the shell's subtree. Outside a shell it is 1.
+ * - k is an integer >= 1, computed by `computeUiScale(window.innerWidth, window.innerHeight)`:
+ *   the card at 512k x 342k CSS pixels plus the 20k menu bar fit in the window. It is recomputed
+ *   on window `resize`, and consumers re-render when it changes.
+ * - The card viewport draws the card at exactly 512k x 342k CSS pixels with this k, so the menu
+ *   bar, menus, dialogs, tools palette and card share one scale. It must not derive its own scale.
+ * - In CSS the same value is available on `.s7-shell` and below as `--k` (unitless), `--px`
+ *   (`k` CSS pixels, one 1x pixel) and `--menubar-height` (20k px).
+ */
+export const UiScaleContext = createContext<number>(1);
+
+/** The UI scale k of the enclosing shell (see `UiScaleContext`). */
+export function useUiScale(): number {
+  return useContext(UiScaleContext);
+}
+
+/** CSS custom properties of UI scale `k`; system7.css sizes every shell metric from `--px`. */
+export function uiScaleCssVariables(k: number): CSSProperties {
+  return { "--k": String(k), "--px": `${k}px`, "--menubar-height": `${menuBarHeight(k)}px` } as CSSProperties;
+}
+
+function subscribeToResize(listener: () => void): () => void {
+  window.addEventListener("resize", listener);
+  return () => window.removeEventListener("resize", listener);
+}
+
+const readViewportScale = (): number => computeUiScale(window.innerWidth, window.innerHeight);
+/** Server rendering (and tests in Node) have no window: 1x. */
+const serverViewportScale = (): number => 1;
+
+/** k for the current window, re-read on every `resize` (a number, so equal values do not re-render). */
+export function useViewportScale(): number {
+  return useSyncExternalStore(subscribeToResize, readViewportScale, serverViewportScale);
+}
 
 /** Requirement 2.6: the store view handed to every UI component. */
 export type UiStore = Omit<HexStore, "applyAuthoring" | "replaceStack">;
@@ -177,6 +224,7 @@ function ModalDialog({ request, modals }: { request: ModalRequest; modals: Modal
   const defaultButtonRef = useRef<HTMLButtonElement>(null);
   const [text, setText] = useState(request.kind === "ask" ? request.defaultAnswer : "");
   const titleId = useId();
+  const k = useUiScale();
 
   useEffect(() => {
     if (request.kind === "ask") inputRef.current?.select();
@@ -213,7 +261,7 @@ function ModalDialog({ request, modals }: { request: ModalRequest; modals: Modal
       >
         {request.kind === "bomb" ? (
           <div className="s7-dialog-icon">
-            <PixelIcon rows={BOMB_ICON} scale={2} />
+            <PixelIcon rows={BOMB_ICON} scale={2 * k} />
           </div>
         ) : null}
         <div className="s7-dialog-body">
@@ -415,17 +463,26 @@ export function isEditBackgroundShortcut(event: { key: string; metaKey: boolean;
   return (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "b";
 }
 
-/** Pixels the pointer must travel below the menu bar before the Tools menu detaches. */
+/** Pixels (at 1x) the pointer must travel below the menu bar before the Tools menu detaches. */
 export const TEAR_OFF_DISTANCE = 8;
 
-/** Requirement 2.3: the pointer has been dragged below the menu bar. */
-export function shouldTearOff(pointerY: number, menuBarBottom: number): boolean {
-  return pointerY > menuBarBottom + TEAR_OFF_DISTANCE;
+/** Client y (CSS px) the pointer must pass to tear off the Tools menu at UI scale k: 20k + 8k. */
+export function tearOffThreshold(scale: number): number {
+  return menuBarHeight(scale) + TEAR_OFF_DISTANCE * scale;
 }
 
-const DEFAULT_PALETTE_POSITION: Point = { x: 16, y: MENU_BAR_HEIGHT + 16 };
-/** Where the pointer sits on the palette's title bar right after tear-off. */
-const TEAR_OFF_GRAB: Point = { x: 40, y: 8 };
+/** Requirement 2.3: the pointer has been dragged below the menu bar (at UI scale `scale`). */
+export function shouldTearOff(pointerY: number, scale: number): boolean {
+  return pointerY > tearOffThreshold(scale);
+}
+
+/** Where the palette first appears at UI scale k: 16k from the left, 16k below the menu bar. */
+export function defaultPalettePosition(scale: number): Point {
+  return { x: 16 * scale, y: menuBarHeight(scale) + 16 * scale };
+}
+
+/** Where the pointer sits on the palette's title bar right after tear-off (at 1x). */
+const TEAR_OFF_GRAB: Point = { x: 40, y: 6 };
 
 // ---------------------------------------------------------------------------------------------
 // Shell
@@ -440,8 +497,10 @@ export interface System7ShellProps {
   onPatternChange: (index: number) => void;
   /** Receives menu commands implemented outside the shell. */
   onCommand?: (command: ForwardedCommand) => void;
-  /** The card area. */
+  /** The card area. Reads the shared UI scale with `useUiScale()`. */
   children?: ReactNode;
+  /** Fixed UI scale k instead of the one computed from the window (tests, embedding). */
+  scale?: number;
 }
 
 function isTool(value: string): value is AuthoringTool {
@@ -452,31 +511,47 @@ function isTheme(value: string): value is ThemePaletteName {
   return (THEME_NAMES as readonly string[]).includes(value);
 }
 
-/** Diagonal hash stripes along the menu bar border: an 8x8 tile with a 2 px thick diagonal. */
+/**
+ * Diagonal hash stripes along the menu bar border: an 8x8 tile (at 1x) with a 2 px thick
+ * diagonal, enlarged k times with `patternTransform` so every stripe pixel is a k x k block.
+ */
 function EditBackgroundStripes() {
   const patternId = useId();
+  const k = useUiScale();
   let path = "";
   for (let y = 0; y < 8; y++) path += `M${y} ${y}h1v1h-1zM${(y + 1) % 8} ${y}h1v1h-1z`;
   return (
-    <svg className="s7-stripes" width="100%" height={8} shapeRendering="crispEdges" aria-hidden="true" focusable="false" data-testid="edit-background-stripes">
+    <svg className="s7-stripes" width="100%" height={8 * k} shapeRendering="crispEdges" aria-hidden="true" focusable="false" data-testid="edit-background-stripes">
       <defs>
-        <pattern id={patternId} width={8} height={8} patternUnits="userSpaceOnUse">
+        <pattern id={patternId} width={8} height={8} patternUnits="userSpaceOnUse" patternTransform={`scale(${k})`}>
           <path d={path} fill="var(--dark-bit)" />
         </pattern>
       </defs>
-      <rect width="100%" height={8} fill={`url(#${patternId})`} />
+      <rect width="100%" height={8 * k} fill={`url(#${patternId})`} />
     </svg>
   );
 }
 
-export function System7Shell({ store, history, modals, patternIndex, onPatternChange, onCommand, children }: System7ShellProps) {
+/**
+ * Keeps menu titles from taking focus on a pointer press (System 7 menus never take focus), so
+ * a title can only be focused, and shown inverted through `:focus-visible`, from the keyboard.
+ */
+const keepFocusOnPointerPress = (event: { preventDefault(): void }): void => event.preventDefault();
+
+export function System7Shell({ store, history, modals, patternIndex, onPatternChange, onCommand, children, scale }: System7ShellProps) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const modalQueue = useSyncExternalStore(modals.subscribe, modals.getSnapshot, modals.getSnapshot);
   const modalOpen = modalQueue.length > 0;
+  const viewportScale = useViewportScale();
+  const k = scale ?? viewportScale;
+  const scaleRef = useRef(k);
+  scaleRef.current = k;
 
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [paletteVisible, setPaletteVisible] = useState(false);
-  const [palettePosition, setPalettePosition] = useState<Point>(DEFAULT_PALETTE_POSITION);
+  /** `null` until the palette is first placed: it then opens at `defaultPalettePosition(k)`. */
+  const [placedPalette, setPalettePosition] = useState<Point | null>(null);
+  const palettePosition = placedPalette ?? defaultPalettePosition(k);
   const menuBarRef = useRef<HTMLDivElement>(null);
   const stopGesture = useRef<(() => void) | null>(null);
   const suppressClick = useRef(false);
@@ -517,6 +592,13 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
 
   useEffect(() => () => stopGesture.current?.(), []);
 
+  // A new UI scale (window resize) moves a placed palette back where its title bar is reachable.
+  useEffect(() => {
+    setPalettePosition((placed) =>
+      placed === null ? null : clampPaletteOrigin(placed, { width: window.innerWidth, height: window.innerHeight }, k),
+    );
+  }, [k]);
+
   const runCommand = (command: ShellCommand): void => {
     setOpenMenu(null);
     if (command.startsWith("tool:")) {
@@ -548,14 +630,14 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
     let stopFollowing: (() => void) | null = null;
     let torn = false;
     const watch = (e: PointerEvent): void => {
-      const bottom = menuBarRef.current?.getBoundingClientRect().bottom ?? MENU_BAR_HEIGHT;
-      if (torn || !shouldTearOff(e.clientY, bottom)) return;
+      const s = scaleRef.current;
+      if (torn || !shouldTearOff(e.clientY, s)) return;
       torn = true;
       suppressClick.current = true;
       setOpenMenu(null);
       setPaletteVisible(true);
-      const clamp = (p: Point): Point => clampPaletteOrigin(p, { width: window.innerWidth, height: window.innerHeight });
-      const origin = clamp({ x: e.clientX - TEAR_OFF_GRAB.x, y: e.clientY - TEAR_OFF_GRAB.y });
+      const clamp = (p: Point): Point => clampPaletteOrigin(p, { width: window.innerWidth, height: window.innerHeight }, scaleRef.current);
+      const origin = clamp({ x: e.clientX - TEAR_OFF_GRAB.x * s, y: e.clientY - TEAR_OFF_GRAB.y * s });
       setPalettePosition(origin);
       stopFollowing = beginPointerDrag({ x: e.clientX, y: e.clientY }, origin, (next) => setPalettePosition(clamp(next)));
     };
@@ -584,11 +666,13 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
   });
 
   return (
+    <UiScaleContext value={k}>
     <div
       className="s7-shell"
       data-theme={palette.name}
       data-edit-background={editBackground ? "true" : "false"}
-      style={themeCssVariables(palette)}
+      data-ui-scale={k}
+      style={{ ...themeCssVariables(palette), ...uiScaleCssVariables(k) }}
     >
       <div ref={menuBarRef} className="s7-menubar" role="menubar" aria-label="Menu bar">
         {menus.map((menu) => {
@@ -601,6 +685,7 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
                 role="menuitem"
                 aria-haspopup="menu"
                 aria-expanded={open}
+                onMouseDown={keepFocusOnPointerPress}
                 onPointerDown={menu.id === "tools" ? onToolsPointerDown : undefined}
                 onPointerEnter={() => {
                   if (openMenu !== null && openMenu !== menu.id) setOpenMenu(menu.id);
@@ -655,9 +740,11 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
           position={palettePosition}
           onPositionChange={setPalettePosition}
           onClose={() => setPaletteVisible(false)}
+          scale={k}
         />
       ) : null}
       <ModalLayer modals={modals} />
     </div>
+    </UiScaleContext>
   );
 }

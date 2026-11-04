@@ -4,9 +4,11 @@
  * Requirements: spec 04 2.1, 2.5, 2.8, 2.9; spec 03 4.2. Design: .kiro/specs/04-ui-audio-showcase/design.md §1;
  * hexcard_design_spec.md §3 (message targets), §5.5 (hidden textarea), §5.6 (frame pipeline, DOM overlay).
  *
- * - Every frame is composed by spec 03 `composeFrame` and drawn with `putImageData`; the canvas is
- *   scaled by an integer CSS factor (`computeIntegerScale`). The only DOM elements over it are the
- *   hidden textarea and the authoring selection marquee / handles.
+ * - Every frame is composed by spec 03 `composeFrame` and drawn with `putImageData`. Requirement
+ *   2.10: the canvas is shown at 512k x 342k CSS pixels for the shell's UI scale k (`useUiScale()`),
+ *   the same k as the menu bar, menus, dialogs and tools palette; the viewport never derives its
+ *   own scale. The only DOM elements over it are the hidden textarea and the authoring selection
+ *   marquee / handles, positioned and sized with the same k.
  * - Browse tool: pointer and keyboard events become message bus posts (`createBrowseInput`). A click
  *   in an enabled unlocked field opens it for editing: text goes through the hidden textarea and
  *   is written with `store.applyRuntime` (runtime mutation, not undoable).
@@ -31,11 +33,11 @@ import type { HexCommand, HexHistory } from "../core/history.ts";
 import { isAbortShortcut, resolveBrowseClick, type BrowseClick, type MessageBus } from "../core/messageBus.ts";
 import type { HexFieldPart, HexID, HexPart, HexRect, HexStack } from "../core/schema.ts";
 import { readFieldText, resolveEditTarget, type HexLayer, type HexRuntimeState, type RuntimeMutation } from "../core/store.ts";
-import { composeFrame, computeIntegerScale, frameToImageData } from "../engine/graphics/bitmapCanvas.ts";
+import { composeFrame, frameToImageData } from "../engine/graphics/bitmapCanvas.ts";
 import { createPartRasterizer, fieldCaretIndexAt, hitTest, layoutFieldText } from "../engine/graphics/partRenderer.ts";
 import { isPaintTool, type PaintController } from "../engine/graphics/paintTools.ts";
 import { BITMAP_HEIGHT, BITMAP_WIDTH, encodeBitmapRLE } from "../engine/graphics/rleCodec.ts";
-import type { UiStore } from "./System7Shell.tsx";
+import { useUiScale, type UiStore } from "./System7Shell.tsx";
 import type { EffectStage, MouseTracker } from "./vmHost.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -358,8 +360,24 @@ function rectBetween(a: CardPoint, b: CardPoint): HexRect {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(a.x - b.x) + 1, height: Math.abs(a.y - b.y) + 1 };
 }
 
-function cssRect(rect: HexRect, scale: number): CSSProperties {
-  return { left: rect.x * scale, top: rect.y * scale, width: rect.width * scale, height: rect.height * scale };
+/** CSS box (in CSS pixels, relative to the canvas) of a card-pixel rect at UI scale `k`. */
+export function cardRectStyle(rect: HexRect, k: number): CSSProperties {
+  return { left: rect.x * k, top: rect.y * k, width: rect.width * k, height: rect.height * k };
+}
+
+/**
+ * Selection frame and four HANDLE_SIZE corner handles of a selected part, at the shell's UI scale
+ * k (Requirement 2.10). Card pixel (x, y) is the k x k CSS square at (x * k, y * k).
+ */
+export function PartSelection({ rect }: { rect: HexRect }) {
+  const k = useUiScale();
+  return (
+    <div className="hc-part-selection" style={cardRectStyle(rect, k)} data-testid="part-selection">
+      {HANDLES.map((handle) => (
+        <span key={handle} className={`hc-handle hc-handle-${handle}`} style={{ width: HANDLE_SIZE * k, height: HANDLE_SIZE * k }} />
+      ))}
+    </div>
+  );
 }
 
 /** Focus targets whose own keyboard handling must not be forwarded as `keyDown`. */
@@ -425,7 +443,8 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
   const marqueeStart = useRef<CardPoint | null>(null);
   const previous = useRef({ tool: state.tool, cardId: state.currentCardId, editLayer: state.editLayer });
 
-  const [scale, setScale] = useState(1);
+  // Requirement 2.10: the shell's UI scale k, shared with the menu bar, menus, dialogs and palette.
+  const scale = useUiScale();
   const [editing, setEditingState] = useState<EditingSession | null>(null);
   const [selectedPartId, setSelectedPartId] = useState<HexID | null>(null);
   const [drag, setDragState] = useState<PartDrag | null>(null);
@@ -519,18 +538,6 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
       unsubscribe();
     };
   }, [effects, getSurface, draw]);
-
-  // Integer CSS scale from the space the desktop gives the card.
-  useLayoutEffect(() => {
-    const host = wrapperRef.current?.parentElement;
-    if (!host) return;
-    const update = (): void => setScale(computeIntegerScale(host.clientWidth, host.clientHeight));
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(update);
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, []);
 
   // --- field editing --------------------------------------------------------------------------
 
@@ -878,21 +885,15 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
         spellCheck={false}
         autoComplete="off"
         autoCapitalize="off"
-        style={editingPart ? cssRect(editingPart.rect, scale) : undefined}
+        style={editingPart ? cardRectStyle(editingPart.rect, scale) : undefined}
         onInput={onTextInput}
         onSelect={syncCaret}
         onKeyUp={syncCaret}
         onBlur={onTextBlur}
       />
-      {selectionRect ? (
-        <div className="hc-part-selection" style={cssRect(selectionRect, scale)} data-testid="part-selection">
-          {HANDLES.map((handle) => (
-            <span key={handle} className={`hc-handle hc-handle-${handle}`} style={{ width: HANDLE_SIZE * scale, height: HANDLE_SIZE * scale }} />
-          ))}
-        </div>
-      ) : null}
-      {pixelSelection ? <div className="hc-marquee" style={cssRect(pixelSelection.bounds, scale)} /> : null}
-      {marquee ? <div className="hc-marquee" style={cssRect(marquee, scale)} /> : null}
+      {selectionRect ? <PartSelection rect={selectionRect} /> : null}
+      {pixelSelection ? <div className="hc-marquee" style={cardRectStyle(pixelSelection.bounds, scale)} /> : null}
+      {marquee ? <div className="hc-marquee" style={cardRectStyle(marquee, scale)} /> : null}
     </div>
   );
 }

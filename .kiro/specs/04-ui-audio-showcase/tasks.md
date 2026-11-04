@@ -7,13 +7,13 @@
 - [x] 2. Build the System 7 shell and tools palette
   - `System7Shell.tsx` menus, Edit Background stripes, four themes, modal manager
   - `FloatingTools.tsx` tear-off palette with 12 tools and pattern selector
-  - _Requirements: 2.2, 2.3, 2.4_
+  - _Requirements: 2.2, 2.3, 2.4, 2.10_
 
 - [x] 3. Build the card viewport and VM host
   - `CardViewport.tsx` canvas presentation, pointer mapping, Browse event forwarding, hidden-textarea editing, selection handles
   - `src/ui/vmHost.ts` implementing the spec-02 `HexHost`
   - `src/main.tsx` is the composition root: it creates the store with a built-in starter stack (one background, one card with a "Welcome to HexCard" field and one button), the history, the message bus, the VM host and the paint controller, and passes the narrowed store view to the UI. The starter stack must pass `validateStack`. The loader (task 6) and the showcase stacks (task 8) later replace the starter stack through `store.replaceStack`
-  - _Requirements: 2.1, 2.5, 2.6, 2.7, 2.8, 2.9_
+  - _Requirements: 2.1, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10_
 
 - [ ] 4. Build the Object Inspector, error dialogs and Stack Graph
   - `ObjectInspector.tsx` with inline compile errors; bomb dialog and script-error alert with **Script** button
