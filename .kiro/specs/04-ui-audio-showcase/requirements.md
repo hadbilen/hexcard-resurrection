@@ -47,6 +47,7 @@ This spec covers everything the user touches directly: the React System 7 shell,
 3. IF the Tier 1 compiler cannot map a prompt to an AST, THEN THE SYSTEM SHALL say so and suggest the closest Grimoire presets instead of producing a guess.
 4. WHERE a BYOK API key is entered, THE SYSTEM SHALL keep it in memory only for the current session and SHALL NOT write it to any storage, URL, export or log.
 5. IF the Tier 2 proxy is unreachable, THEN THE SYSTEM SHALL fall back to Tier 1 and tell the user.
+6. THE SYSTEM SHALL ship a test corpus of at least 60 free-form English prompts that are not Grimoire entries (paraphrases, different word order, synonyms, typos, multi-step requests) with expected AST outcomes; the Tier 1 compiler SHALL produce a correct, validated AST for at least 80% of them, and for every other prompt SHALL return the 'not understood' result with suggestions instead of a wrong script.
 
 ### Requirement 5: Persistence & Sharing
 **User Story:** As a user, I want my work saved automatically and shareable without a server.

@@ -21,9 +21,12 @@
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
 - [ ] 5. Implement the Spellcaster
-  - `grimoire.ts` (24 validated prompt/AST pairs) and Tier 1 compiler with closest-preset suggestions
-  - Acceptance pipeline and preview/Apply flow; optional Tier 2 proxy and Tier 3 in-memory BYOK
-  - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
+
+  - [ ] 5.1 Tier 1 local compiler, 24-entry Grimoire, acceptance pipeline and the Spellcaster tab preview/Apply flow
+    - _Requirements: 4.1, 4.2, 4.3, 4.6_
+
+  - [ ] 5.2 Optional Tier 2 proxy adapter and Tier 3 in-memory BYOK
+    - _Requirements: 4.4, 4.5_
 
 - [x] 6. Implement persistence and sharing
   - `indexedDb.ts` auto-save, `stackFile.ts`, `urlCodec.ts` with the 32,000-character warning, validation on every load
