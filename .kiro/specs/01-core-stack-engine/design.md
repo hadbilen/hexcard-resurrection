@@ -35,6 +35,8 @@ export type RuntimeMutation =
   | { type: "setFieldText"; cardId: HexID; layer: "card" | "background"; partId: HexID; text: string }
   | { type: "setPartProperty"; partId: HexID; property: HexPropertyName; value: string | number | boolean }
   | { type: "setCardProperty"; cardId: HexID; property: "name" | "marked"; value: string | boolean }
+  | { type: "setBackgroundProperty"; backgroundId: HexID; property: "name"; value: string }
+  | { type: "setStackProperty"; property: "name"; value: string }
   | { type: "goToCard"; cardId: HexID };
 
 export interface HexStore {
@@ -62,7 +64,7 @@ export interface HexCommand {
 ~~~
 
 - Ring buffer of 50 commands; `execute` clears the redo list.
-- `PaintStrokeCommand` stores `{ layer, layerOwnerId, rect, before: Uint8Array, after: Uint8Array }` for the stroke's bounding rectangle and re-encodes the layer with the spec-03 codec on apply/revert.
+- `PaintStrokeCommand` stores `{ layer, layerOwnerId, rect, before: Uint8Array, after: Uint8Array }` for the stroke's bounding rectangle. It re-encodes the layer on apply/revert through an injected codec `{ encode(pixels): string; decode(rleData, emptyFill): Uint8Array }`, so `src/core/` never imports `src/engine/`. Production wiring passes `encodeBitmapRLE`/`decodeBitmapRLE` (spec 03); core tests pass a fake codec.
 
 ## 5. Message Bus (`messageBus.ts`)
 
