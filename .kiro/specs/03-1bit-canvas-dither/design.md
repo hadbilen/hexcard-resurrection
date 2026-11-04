@@ -41,6 +41,16 @@ export function frameToImageData(frame: Uint8Array, palette: { darkBitHex: strin
 - Word wrapping is done in TypeScript with `measureText`, so line breaks are identical across browsers that load the same font.
 - `textStyle` support: bold/italic come from the bitmap font's variants when available; `underline`, `outline`, `shadow`, `condense` are pixel operations on the mask.
 - Font loading uses `FontFace` with files from `public/fonts/`; rendering waits for `document.fonts.ready` before the first frame.
+- Native-size rendering (Requirement 4.3): text is drawn only at 1x, 2x, ... of a font file's native pixel size (Pixel Operator 16 px, Pixel Operator 8 px, Fairfax Serif 12 px; declared once per file in `FONT_FILES`). The exported `TEXT_SIZE_TABLE` maps each logical font and size to the file (bold file only where one exists at that native size, otherwise bold is synthesized), the render size in px and the line height; rendering, measuring, CSS font strings, `FontFace` registration and `lineMetrics` derive from it:
+
+  | Size | Line height | System | Sans (bold file) | Mono (bold file) | Serif |
+  |------|-------------|--------|------------------|------------------|-------|
+  | 9 | 12 | Pixel Operator 8 Bold, 8 px (1x) | Pixel Operator 8 (8 Bold), 8 px (1x) | Pixel Operator Mono 8 (Mono 8 Bold), 8 px (1x) | Fairfax Serif, 12 px (1x) |
+  | 10 | 14 | Pixel Operator 8 Bold, 8 px (1x) | Pixel Operator 8 (8 Bold), 8 px (1x) | Pixel Operator Mono 8 (Mono 8 Bold), 8 px (1x) | Fairfax Serif, 12 px (1x) |
+  | 12 | 16 | Pixel Operator Bold, 16 px (1x) | Pixel Operator (Bold), 16 px (1x) | Pixel Operator Mono (Mono Bold), 16 px (1x) | Fairfax Serif, 12 px (1x) |
+  | 14 | 19 | Pixel Operator Bold, 16 px (1x) | Pixel Operator (Bold), 16 px (1x) | Pixel Operator Mono (Mono Bold), 16 px (1x) | Fairfax Serif, 12 px (1x) |
+  | 18 | 24 | Pixel Operator 8 Bold, 16 px (2x) | Pixel Operator 8 (8 Bold), 16 px (2x) | Pixel Operator Mono 8 (Mono 8 Bold), 16 px (2x) | Fairfax Serif, 24 px (2x) |
+  | 24 | 32 | Pixel Operator Bold, 32 px (2x) | Pixel Operator (Bold), 32 px (2x) | Pixel Operator Mono (Mono Bold), 32 px (2x) | Fairfax Serif, 24 px (2x) |
 
 ## 5. Transitions (`transitions.ts`, `lfsrDissolve.ts`)
 - `playEffect(effect, speed, from: Uint32Array, to: Uint32Array, present: (buf) => void): Promise<void>` drives frames with `requestAnimationFrame` and resolves when the destination frame is fully shown. It rejects on abort (spec 01 Requirement 3.7) after presenting the destination frame.

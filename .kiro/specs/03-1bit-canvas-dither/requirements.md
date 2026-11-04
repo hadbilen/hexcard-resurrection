@@ -36,7 +36,7 @@ This spec covers everything that turns stack data into 1-bit pixels: the bitmap 
 #### Acceptance Criteria
 1. WHEN card text (field text, button titles) is drawn, THE SYSTEM SHALL render it with `renderCrisp1BitText`, thresholding alpha at `>= 128`, and SHALL NOT render it as DOM text.
 2. WHILE an unlocked field is being edited in Browse mode, THE SYSTEM SHALL take input from one visually hidden `<textarea>` (hidden with `clip-path`, not opacity, labelled with the field name) and draw the caret and selection as inverted pixels.
-3. THE SYSTEM SHALL map the logical fonts `System`, `Sans`, `Mono`, `Serif` to bitmap fonts in `public/fonts/` licensed under OFL-1.1, CC0 or public domain, with each licence recorded in `public/fonts/LICENSES.md`.
+3. THE SYSTEM SHALL map the logical fonts `System`, `Sans`, `Mono`, `Serif` to bitmap fonts in `public/fonts/` licensed under OFL-1.1, CC0 or public domain, with each licence recorded in `public/fonts/LICENSES.md`, and SHALL render every logical text size (9, 10, 12, 14, 18, 24) at a positive integer multiple (1x, 2x, ...) of the chosen font file's native pixel size, never at an in-between size, as listed in the size table of design.md §4.
 4. THE SYSTEM SHALL NOT bundle or load Apple's Chicago, Geneva, Monaco or New York font files.
 
 ### Requirement 5: Atkinson Image Import

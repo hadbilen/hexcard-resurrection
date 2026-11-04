@@ -10,7 +10,7 @@
   - `frameToImageData` palette mapping and integer scaling helper
   - _Requirements: 2.1, 2.2, 2.3_
 
-- [ ] 3. Implement crisp text rendering and fonts
+- [x] 3. Implement crisp text rendering and fonts
   - Choose freely licensed bitmap fonts, add them to `public/fonts/` with `LICENSES.md`
   - `renderCrisp1BitText` with threshold, deterministic wrapping and pixel-based text styles
   - _Requirements: 4.1, 4.3, 4.4_
