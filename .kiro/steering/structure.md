@@ -16,6 +16,7 @@ hexcard/
 │   ├── specs/                 # 01-core-stack-engine, 02-hextalk-ast-vm, 03-1bit-canvas-dither, 04-ui-audio-showcase
 │   └── hooks/                 # Kiro agent hooks (IDE 1.0 JSON format)
 ├── public/
+│   ├── favicon.svg            # 16x16 1-bit pixel-art favicon (linked from index.html)
 │   └── fonts/                 # Freely licensed bitmap fonts + LICENSES.md
 ├── src/
 │   ├── core/                  # Pure TypeScript, no React, no DOM          [spec 01 + 02]

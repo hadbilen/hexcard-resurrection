@@ -11,6 +11,26 @@
  * Pixel Operator 8 8 px), so glyph pixels stay k x k blocks. --menubar-height (20k) comes from
  * MENU_BAR_BASE_HEIGHT in FloatingTools.tsx.
  */
+
+/* Page reset. The shell is a fixed box over the whole window, so the document itself never
+   scrolls; when the card does not fit, only .s7-desktop scrolls. The :root defaults let the body
+   use the 1-bit colours outside the shell (ClassicPaper; the shell overrides them per theme). */
+:root {
+  --dark-bit: #000000;
+  --light-bit: #ffffff;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--light-bit);
+}
+
 .s7-shell {
   --dark-bit: #000000;
   --light-bit: #ffffff;
@@ -162,14 +182,18 @@
   pointer-events: none;
 }
 
+/* The card is centred while it fits. `safe` falls back to start alignment when it overflows (a
+   window too small for the 1x card), so the card begins at the desktop's top-left corner and
+   every part of it can be scrolled into view; plain `center` would push the overflowing left and
+   top edges out where no scrollbar reaches. */
 .s7-desktop {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
 }
 
 /* Tools palette (Requirement 2.3) */
@@ -182,19 +206,27 @@
   box-shadow: calc(1 * var(--px)) calc(1 * var(--px)) 0px var(--dark-bit);
 }
 
+/* The title bar is 48 px wide inside the palette border (2 tool columns of 24). The close box
+   covers x 3..10; the title starts at x 13, so the ink of "Tools" in Pixel Operator 8 (regular,
+   33 px advance, ink x 14..44) leaves 3 px on both sides. The bold face (ink 36 px) cannot fit
+   beside the close box. Left-aligned with a k-multiple padding, the glyphs stay on the k grid,
+   which text-align: center (8.5 px offset) would not. */
 .s7-palette-title {
   position: relative;
   height: calc(12 * var(--px));
+  padding-left: calc(13 * var(--px));
   border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
   background: var(--dark-bit);
   color: var(--light-bit);
-  text-align: center;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
   cursor: move;
 }
 
 /* Pixel Operator 8 at its native 8 px (times k). */
 .s7-palette-title-text {
-  font-family: "HexCard PixelOperator8 Bold", monospace;
+  font-family: "HexCard PixelOperator8", monospace;
   font-size: calc(8 * var(--px));
   line-height: calc(12 * var(--px));
 }
