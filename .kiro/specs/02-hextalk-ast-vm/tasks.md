@@ -16,7 +16,7 @@
   - fast-check generators for valid ASTs; both round-trip properties
   - _Requirements: 2.1, 2.2, 2.3_
 
-- [ ] 4. Implement the VM core
+- [x] 4. Implement the VM core
   - `runHandler`, `evalStatement`, `evalExpr`, `DispatchContext.tick()` with gas, abort and error types
   - Locals, `it`, globals, value coercion, property validity, control-flow sentinels
   - Define and export `DispatchContext` (`stepCount`, `depth`, `abortSignal`, `pendingVisualEffect`, `tick()`) in `src/core/vm.ts`; the spec 01 message bus imports it from there

@@ -380,15 +380,32 @@ function parseRect(value: PropertyValue): HexRect {
   return freeze({ x: left, y: top, width: right - left, height: bottom - top });
 }
 
+/** Offset of a part's centre from its top-left corner: (floor(width / 2), floor(height / 2)). */
+function centreOffset(rect: HexRect): { dx: number; dy: number } {
+  return { dx: Math.floor(rect.width / 2), dy: Math.floor(rect.height / 2) };
+}
+
 /** `location` is the part centre "x,y", with centre = (x + floor(width / 2), y + floor(height / 2)). */
 function moveCentreTo(rect: HexRect, value: PropertyValue): HexRect {
   const [cx, cy] = toIntegers(value, 2, "location", '"x,y"');
-  return freeze({
-    x: cx - Math.floor(rect.width / 2),
-    y: cy - Math.floor(rect.height / 2),
-    width: rect.width,
-    height: rect.height,
-  });
+  const { dx, dy } = centreOffset(rect);
+  return freeze({ x: cx - dx, y: cy - dy, width: rect.width, height: rect.height });
+}
+
+/** Read direction of `location`: the part centre as "x,y" (inverse of the `location` write). */
+export function formatLocation(rect: HexRect): string {
+  const { dx, dy } = centreOffset(rect);
+  return `${rect.x + dx},${rect.y + dy}`;
+}
+
+/** Read direction of `rect`: "left,top,right,bottom" (inverse of the `rect` write). */
+export function formatRect(rect: HexRect): string {
+  return `${rect.x},${rect.y},${rect.x + rect.width},${rect.y + rect.height}`;
+}
+
+/** Read direction of `textStyle`: comma-separated styles, or "plain" when none is set. */
+export function formatTextStyle(styles: readonly HexFieldPart["textStyle"][number][]): string {
+  return styles.length === 0 ? "plain" : styles.join(",");
 }
 
 function parseTextSize(value: PropertyValue): HexFieldPart["textSize"] {
