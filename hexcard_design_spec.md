@@ -364,6 +364,10 @@ VoiceName     ::= "harpsichord" | "boing" | "flute" | "square8bit" | "click" ;
 **Grammar notes**
 - In `answer ... with A or B or C`, the button expressions are parsed at `ConcatExpr` level, so the word `or` separates buttons instead of acting as the boolean operator. Use parentheses for a boolean button label.
 - `the PropertyName of ...` and `the FunctionName of ...` never collide because the two name sets are disjoint.
+- `visual effect` without a `SpeedName` uses the speed `normal`.
+- A script may define each handler name only once (names compare case-insensitively). A second handler with the same name is a compile error at its `on` line; the first handler is kept.
+- `exit Identifier` follows the same rule as `pass`: the name must equal the enclosing handler's name, otherwise it is a compile error at that line.
+- Inside `ObjectRef`, `card field N` (or `card fld N`) is the card-layer field (`CardWord FieldRef`), not a card selected by the field's text (`"card" PartSelector`). To select a card by a field's text, write `card bg field N`.
 - Not supported in v2.0.0 (deliberate scope limits): `else if` chains on one line, single-line `if ... then ... else ...`, `send`, `do`, user-defined functions, chunk expressions (`word 2 of ...`).
 
 ### 4.2. Deterministic AST Schema (`src/core/ast.ts`)

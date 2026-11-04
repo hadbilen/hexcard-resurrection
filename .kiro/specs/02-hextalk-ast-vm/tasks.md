@@ -5,7 +5,7 @@
   - Implement `src/core/astValidator.ts` (Zod) with the extra rejection rules
   - _Requirements: 3.1, 3.2_
 
-- [ ] 2. Implement the lexer and parser
+- [x] 2. Implement the lexer and parser
   - Lexer with line/column tracking, case folding and comments
   - Recursive-descent statements and precedence-climbing expressions per §4.1
   - Error reporting and recovery at `end <handler>`; handler-name and `pass` checks; `answer ... or` rule
