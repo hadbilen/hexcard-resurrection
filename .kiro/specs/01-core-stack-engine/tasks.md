@@ -1,6 +1,6 @@
 # Implementation Plan: Core Stack Engine
 
-- [ ] 1. Scaffold the project and the persisted schema
+- [x] 1. Scaffold the project and the persisted schema
   - Initialize Vite + React 19 + TypeScript strict + Vitest + fast-check + Zod
   - Implement `src/core/schema.ts` exactly as `hexcard_design_spec.md` §2.1 (including `THEME_PALETTES`)
   - _Requirements: 1.5, 4.5_

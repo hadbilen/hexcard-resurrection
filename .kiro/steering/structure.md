@@ -53,8 +53,12 @@ hexcard/
 │   ├── player/                                                                                             [04]
 │   │   └── main.ts            # Browse-only runtime entry for exported HTML (no authoring, no AI)
 │   ├── presets/               # 3 showcase stacks (Haunted Mansion, Synth, Weather Oracle)                [04]
-│   └── ui/                    # React System 7 shell, tools palette, viewport, inspector, stack graph     [04]
-├── vite.config.ts             # Studio build
+│   ├── ui/                    # React System 7 shell, tools palette, viewport, inspector, stack graph     [04]
+│   └── main.tsx               # Studio entry: mounts ui/App.tsx into index.html's #root                   [04]
+├── index.html                 # Studio HTML entry (Vite)
+├── package.json               # Scripts: dev, build, typecheck, test (vitest --run)
+├── tsconfig.json              # Project references: tsconfig.app.json (src, strict) + tsconfig.node.json (vite config)
+├── vite.config.ts             # Studio build + Vitest config (Node environment)
 ├── vite.player.config.ts      # Player build (single IIFE, imported by htmlExporter via ?raw)
 ├── LICENSE                    # MIT (required: OSI open-source licence file in the repo)
 └── hexcard_design_spec.md     # Master reference specification (canonical shared contracts)
