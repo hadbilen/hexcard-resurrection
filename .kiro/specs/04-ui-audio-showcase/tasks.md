@@ -34,6 +34,7 @@
   - _Requirements: 2.7, 6.1, 6.2, 6.3_
 
 - [ ] 8. Create the three showcase stacks
-  - Author scripts in HexTalk; draw/import art in HexCard and export canonical `rleData`; offline data for MacOracle
+  - Author scripts in HexTalk; generate canonical rleData with scripts/buildPresetArt.ts (or draw/import in HexCard); offline data for MacOracle
+  - Open 'The Haunted Stack of 1987' on first launch (7.4) and add the File -> Open Showcase Stack chooser (7.5)
   - Tests: every preset validates and compiles with zero errors
-  - _Requirements: 7.1, 7.2, 7.3_
+  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_

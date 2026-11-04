@@ -19,6 +19,8 @@ hexcard/
 ├── public/
 │   ├── favicon.svg            # 16x16 1-bit pixel-art favicon (linked from index.html)
 │   └── fonts/                 # Freely licensed bitmap fonts + LICENSES.md
+├── scripts/                   # Committed build-time scripts, not shipped in any bundle                   [04]
+│   └── buildPresetArt.ts      # Draws preset art with the spec 03 engine and writes canonical rleData
 ├── src/
 │   ├── core/                  # Pure TypeScript, no React, no DOM          [spec 01 + 02]
 │   │   ├── schema.ts          # Persisted types: HexStack, HexBackground, HexCard, HexPart, THEME_PALETTES   [01]
@@ -65,7 +67,7 @@ hexcard/
 │   └── main.tsx               # Studio entry: mounts ui/App.tsx into index.html's #root                   [04]
 ├── index.html                 # Studio HTML entry (Vite)
 ├── package.json               # Scripts: dev, build, typecheck, test (vitest --run)
-├── tsconfig.json              # Project references: tsconfig.app.json (src, strict) + tsconfig.node.json (vite config)
+├── tsconfig.json              # Project references: tsconfig.app.json (src, strict) + tsconfig.node.json (vite config, scripts/)
 ├── vite.config.ts             # Studio build (base from BASE_PATH, default "/") + Vitest config (Node environment)
 ├── vite.player.config.ts      # Player build (single IIFE, imported by htmlExporter via ?raw)
 ├── LICENSE                    # MIT (required: OSI open-source licence file in the repo)

@@ -73,3 +73,5 @@ This spec covers everything the user touches directly: the React System 7 shell,
 1. WHEN HexCard starts for the first time, THE SYSTEM SHALL offer `File -> Open Showcase Stack` with `The Haunted Stack of 1987`, `HexSynth Sequencer` and `MacOracle 1987`.
 2. THE SYSTEM SHALL author every showcase stack as HexTalk `scriptSource` with canonical `rleData`, and SHALL verify in tests that each passes the stack validator and compiles with zero errors.
 3. WHEN `MacOracle 1987` cannot reach its API, THE SYSTEM SHALL show its bundled offline sample data.
+4. WHEN HexCard starts with no auto-saved stack and no share link, THE SYSTEM SHALL open 'The Haunted Stack of 1987' instead of the starter stack.
+5. THE SYSTEM SHALL offer File -> Open Showcase Stack as a chooser listing the three showcase stacks by name.
