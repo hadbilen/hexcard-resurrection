@@ -495,6 +495,98 @@ function ModalDialog({ request, modals }: { request: ModalRequest; modals: Modal
   );
 }
 
+/**
+ * Horizontal title-bar stripes of a System 7 window: six 1x dark lines with 1x gaps (a 1x2 tile
+ * enlarged k times with `patternTransform`), filling the space beside the title.
+ */
+function WindowTitleStripes() {
+  const patternId = useId();
+  const k = useUiScale();
+  return (
+    <svg className="s7-window-stripes" width="100%" height={11 * k} shapeRendering="crispEdges" aria-hidden="true" focusable="false">
+      <defs>
+        <pattern id={patternId} width={1} height={2} patternUnits="userSpaceOnUse" patternTransform={`scale(${k})`}>
+          <rect width={1} height={1} fill="var(--dark-bit)" />
+        </pattern>
+      </defs>
+      <rect width="100%" height={11 * k} fill={`url(#${patternId})`} />
+    </svg>
+  );
+}
+
+export interface System7WindowProps {
+  title: string;
+  onClose: () => void;
+  /** Extra class on the window box (sizes of the Object Inspector and the Stack Graph). */
+  className?: string;
+  /** Changes whenever the window's content changes size (e.g. a tab switch), to re-snap it. */
+  layoutKey?: string;
+  /** Inline size of the window box (the Object Inspector's fixed size). */
+  style?: CSSProperties;
+  children?: ReactNode;
+}
+
+/**
+ * A modal System 7 document window with a striped title bar and a close box, used by the Object
+ * Inspector and the Stack Graph (spec 04 task 4). It sits below the alerts of the modal manager,
+ * so a script error can be shown over it. Key presses inside it do not reach the window-level
+ * shortcuts (Edit Background, Browse `keyDown`), except the abort shortcut (Cmd/Ctrl+.).
+ * Escape closes it unless the focus is in a text box.
+ */
+export function System7Window({ title, onClose, className, layoutKey, style, children }: System7WindowProps) {
+  const windowRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const k = useUiScale();
+
+  useLayoutEffect(() => {
+    const element = windowRef.current;
+    if (!element) return;
+    const snap = (): void => snapModalLayout(element, k);
+    snap();
+    window.addEventListener("resize", snap);
+    return () => window.removeEventListener("resize", snap);
+  }, [k, layoutKey]);
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (isAbortShortcutKey(event)) return;
+    event.stopPropagation();
+    const target = event.target as HTMLElement;
+    if (event.key === "Escape" && target.tagName !== "TEXTAREA" && target.tagName !== "INPUT") {
+      event.preventDefault();
+      onClose();
+    }
+  };
+
+  return (
+    <div className="s7-modal-backdrop s7-window-backdrop">
+      <div
+        ref={windowRef}
+        className={className ? `s7-window ${className}` : "s7-window"}
+        style={style}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onKeyDown={onKeyDown}
+      >
+        <div className="s7-window-title">
+          <button type="button" className="s7-window-close" aria-label="Close" onClick={onClose} />
+          <WindowTitleStripes />
+          <span id={titleId} className="s7-window-title-text">
+            {title}
+          </span>
+          <WindowTitleStripes />
+        </div>
+        <div className="s7-window-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Cmd+. / Ctrl+. (the message bus abort shortcut); kept here so the shell needs no bus import. */
+function isAbortShortcutKey(event: { key: string; metaKey: boolean; ctrlKey: boolean }): boolean {
+  return event.key === "." && (event.metaKey || event.ctrlKey);
+}
+
 function ModalLayer({ modals }: { modals: ModalManager }) {
   const queue = useSyncExternalStore(modals.subscribe, modals.getSnapshot, modals.getSnapshot);
   const current = queue[0];

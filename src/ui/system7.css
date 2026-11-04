@@ -428,6 +428,375 @@ body {
   fill: var(--s7-button-face);
 }
 
+/* Studio windows (spec 04 task 4): the Object Inspector and the Stack Graph. A System 7 document
+   window: 1 px frame, hard 1 px shadow, a title bar with six 1 px stripes (WindowTitleStripes)
+   and a close box. Below the alerts (z-index 100), so a script error can show over them.
+   The backdrop still covers the menu bar (the windows are modal), but its padding centres the
+   window in the desktop below the menu bar, and max-height keeps it there. */
+.s7-window-backdrop {
+  z-index: 90;
+  box-sizing: border-box;
+  padding-top: var(--menubar-height);
+}
+
+.s7-window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16 * var(--px));
+  max-height: calc(100vh - var(--menubar-height) - 16 * var(--px));
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  background: var(--light-bit);
+  box-shadow: calc(1 * var(--px)) calc(1 * var(--px)) 0px var(--dark-bit);
+}
+
+.s7-window-title {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: calc(19 * var(--px));
+  padding: 0 calc(2 * var(--px));
+  border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
+  white-space: nowrap;
+}
+
+.s7-window-stripes {
+  flex: 1;
+  min-width: calc(8 * var(--px));
+  display: block;
+}
+
+.s7-window-title-text {
+  flex: none;
+  padding: 0 calc(6 * var(--px));
+  line-height: calc(19 * var(--px));
+}
+
+.s7-shell .s7-window-close {
+  flex: none;
+  width: calc(11 * var(--px));
+  height: calc(11 * var(--px));
+  box-sizing: border-box;
+  margin: 0 calc(2 * var(--px)) 0 calc(6 * var(--px));
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  background: var(--light-bit);
+}
+
+.s7-shell .s7-window-close:active {
+  background: var(--dark-bit);
+}
+
+.s7-window-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: calc(10 * var(--px)) calc(12 * var(--px)) calc(14 * var(--px));
+  user-select: text;
+  scrollbar-color: var(--dark-bit) var(--light-bit);
+}
+
+/* Object Inspector: a fixed size for every tab (INSPECTOR_WIDTH x INSPECTOR_HEIGHT times k, set
+   inline). The tab panel takes the height left below the tabs; Properties and the Spellcaster
+   scroll inside it, the script tab lays itself out to fit (editor and error list scroll). */
+.s7-inspector .s7-window-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.s7-inspector .s7-tabs {
+  flex: none;
+}
+
+.s7-tab-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: var(--dark-bit) var(--light-bit);
+}
+
+/* Not a scroll box: the default button ring (4 px outside Save) shows in the body padding. */
+.s7-tab-panel-script {
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+/* Tabs: a row of framed labels; the selected tab is inverted. */
+.s7-tabs {
+  display: flex;
+  margin-bottom: calc(10 * var(--px));
+  border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
+}
+
+.s7-shell .s7-tab {
+  height: calc(20 * var(--px));
+  padding: 0 calc(8 * var(--px));
+  margin-right: calc(-1 * var(--px));
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  border-bottom: 0;
+  white-space: nowrap;
+}
+
+.s7-shell .s7-tab[aria-selected="true"] {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-inspector-note {
+  margin: 0;
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+/* Properties form */
+.s7-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--px));
+}
+
+.s7-form-row {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--px));
+}
+
+.s7-form-label {
+  flex: none;
+  min-width: calc(72 * var(--px));
+}
+
+.s7-form-inline,
+.s7-form-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4 * var(--px)) calc(12 * var(--px));
+}
+
+.s7-form-inline .s7-form-label {
+  min-width: 0;
+}
+
+.s7-input {
+  flex: 1;
+  min-width: 0;
+  height: calc(20 * var(--px));
+  box-sizing: border-box;
+  padding: 0 calc(4 * var(--px));
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  background: var(--light-bit);
+  color: var(--dark-bit);
+  caret-color: var(--dark-bit);
+  font-family: "HexCard PixelOperator", monospace;
+  font-size: calc(16 * var(--px));
+  appearance: none;
+}
+
+.s7-form-inline .s7-input {
+  flex: none;
+}
+
+.s7-shell .s7-checkbox {
+  display: flex;
+  align-items: center;
+  gap: calc(2 * var(--px));
+  height: calc(16 * var(--px));
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-choices {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.s7-shell .s7-choice {
+  height: calc(18 * var(--px));
+  padding: 0 calc(5 * var(--px));
+  margin: 0 calc(-1 * var(--px)) calc(-1 * var(--px)) 0;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-shell .s7-choice[aria-checked="true"] {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+/* HexTalk script editor: line-number gutter, unwrapped monospace text (Pixel Operator Mono,
+   8 px advance) and compile-error markers under the error column (ObjectInspector.tsx).
+   .s7-script fills the script tab panel: the editor takes the height left by the status line,
+   the error list and the button row, which never shrink. */
+.s7-script {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.s7-script > * {
+  flex: none;
+}
+
+.s7-shell .s7-script > .s7-script-editor {
+  flex: 1;
+  min-height: calc(64 * var(--px));
+}
+
+.s7-script-editor {
+  display: flex;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  font-family: "HexCard PixelOperatorMono", monospace;
+  font-size: calc(16 * var(--px));
+  line-height: calc(16 * var(--px));
+}
+
+.s7-script-gutter {
+  flex: none;
+  min-width: calc(32 * var(--px));
+  box-sizing: border-box;
+  padding: calc(4 * var(--px)) calc(4 * var(--px)) calc(24 * var(--px));
+  border-right: calc(1 * var(--px)) solid var(--dark-bit);
+  overflow: hidden;
+  text-align: right;
+}
+
+.s7-script-line {
+  height: calc(16 * var(--px));
+}
+
+.s7-script-line-error {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-script-area {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.s7-script-text {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: calc(4 * var(--px));
+  border: 0;
+  resize: none;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
+  background: var(--light-bit);
+  color: var(--dark-bit);
+  caret-color: var(--dark-bit);
+  font: inherit;
+  appearance: none;
+  outline: none;
+  scrollbar-color: var(--dark-bit) var(--light-bit);
+}
+
+.s7-script-markers {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.s7-script-marker {
+  position: absolute;
+  background: var(--dark-bit);
+}
+
+.s7-script-status {
+  margin: calc(6 * var(--px)) 0 0;
+}
+
+.s7-script-errors {
+  margin: calc(4 * var(--px)) 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: calc(48 * var(--px));
+  overflow: auto;
+  scrollbar-color: var(--dark-bit) var(--light-bit);
+}
+
+.s7-shell .s7-script-error {
+  width: 100%;
+  text-align: left;
+  white-space: pre-wrap;
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-shell .s7-script-error:hover {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+/* Stack Graph: nodes absolutely placed on a k-scaled 1x grid, arrows in one crisp SVG on top. */
+.s7-graph {
+  position: relative;
+}
+
+.s7-graph-nodes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.s7-graph-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  background: var(--light-bit);
+}
+
+.s7-graph-thumbnail {
+  display: block;
+  flex: none;
+  image-rendering: pixelated;
+  border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
+}
+
+.s7-graph-label {
+  height: calc(16 * var(--px));
+  padding: 0 calc(4 * var(--px));
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-graph-node-current .s7-graph-label {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-graph-arrows {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  shape-rendering: crispEdges;
+  fill: var(--dark-bit);
+  stroke: var(--dark-bit);
+}
+
+.s7-graph-arrows line,
+.s7-graph-arrows polyline {
+  fill: none;
+  stroke-width: 1;
+}
+
+.s7-graph-arrows polygon {
+  stroke: none;
+}
+
 /* Canvases are always drawn pixel-exact. */
 .s7-shell canvas {
   image-rendering: pixelated;

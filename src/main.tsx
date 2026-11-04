@@ -30,6 +30,7 @@ import { stripHash } from "./storage/urlCodec.ts";
 import { createBrowserFileAccess, createFileCommands, loadShareHash } from "./ui/fileCommands.ts";
 import { createStarterStack } from "./ui/starterStack.ts";
 import { openInitialStack, startStudio } from "./ui/startup.ts";
+import { createScriptErrorReporter, createStudioWindows } from "./ui/ObjectInspector.tsx";
 import { createModalManager } from "./ui/System7Shell.tsx";
 import { createEffectStage, createMouseTracker, createVmHost } from "./ui/vmHost.ts";
 
@@ -64,6 +65,8 @@ async function main(): Promise<void> {
   const store = createHexStore({ stack: starter.stack, compile: parseHexTalk, autoSave: (stack) => void autoSave(stack) });
   const history = createHistory(store);
   const modals = createModalManager();
+  // Object Inspector / Stack Graph (spec 04 task 4); modal for the bus, so `idle` waits while they are open.
+  const windows = createStudioWindows();
 
   // Requirement 5.5: the one loading path; the only holder of `store.replaceStack` (Req 2.6).
   const loader = createStackLoader({
@@ -84,6 +87,13 @@ async function main(): Promise<void> {
   const effects = createEffectStage();
   const mouse = createMouseTracker();
 
+  const reportScriptError = createScriptErrorReporter({
+    getStack: () => store.getSnapshot().stack,
+    modals,
+    openScript: (objectId, line) => windows.openInspector(objectId, "script", line),
+    log: (error, message) => console.error(`HexCard: script error while handling "${message.name}"`, error),
+  });
+
   let bus: MessageBus | undefined;
   const host = createVmHost({
     store,
@@ -100,9 +110,9 @@ async function main(): Promise<void> {
     store,
     host,
     isPageVisible: () => document.visibilityState === "visible",
-    isModalOpen: () => modals.isOpen(),
-    // Script error dialogs (bomb / alert with Script button) are spec 04 task 4.
-    onError: (error, message) => console.error(`HexCard: script error while handling "${message.name}"`, error),
+    isModalOpen: () => modals.isOpen() || windows.isOpen(),
+    // Requirements 3.3 and 3.4: the bomb dialog, or an alert whose Script button opens the editor.
+    onError: (error, message) => void reportScriptError(error, message),
   });
 
   let patternIndex = DEFAULT_PATTERN_INDEX;
@@ -135,6 +145,7 @@ async function main(): Promise<void> {
             store={uiStore}
             history={history}
             modals={modals}
+            windows={windows}
             bus={readyBus}
             painter={painter}
             effects={effects}

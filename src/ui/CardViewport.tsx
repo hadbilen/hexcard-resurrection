@@ -282,6 +282,16 @@ export function hitTestLayerPart(state: HexRuntimeState, type: HexPart["type"], 
   return null;
 }
 
+/**
+ * Spec 04 Requirement 3.1: the part a double-click at (x, y) opens in the Object Inspector. With
+ * the button or field tool it is the topmost part of that type on the edit layer (the part the
+ * tool selects); other tools open nothing.
+ */
+export function inspectablePartAt(state: HexRuntimeState, x: number, y: number): HexPart | null {
+  if (state.tool !== "button" && state.tool !== "field") return null;
+  return hitTestLayerPart(state, state.tool, x, y);
+}
+
 /** The corner handle at (x, y), or null. Handles are HANDLE_SIZE squares inside the rect's corners. */
 export function handleAt(rect: HexRect, x: number, y: number): ResizeHandle | null {
   const left = x >= rect.x && x < rect.x + HANDLE_SIZE;
@@ -450,6 +460,8 @@ export interface CardViewportProps {
   effects: EffectStage;
   mouse: Pick<MouseTracker, "set">;
   isModalOpen: () => boolean;
+  /** Opens the Object Inspector on a part double-clicked with the button or field tool (Req 3.1). */
+  onInspectPart?: (partId: HexID) => void;
 }
 
 interface EditingSession extends FieldEditTarget {
@@ -479,7 +491,7 @@ function selectedPartOf(state: HexRuntimeState, partId: HexID | null): HexPart |
   return resolveEditTarget(state).owner.parts.find((part) => part.id === partId && part.type === state.tool) ?? null;
 }
 
-export function CardViewport({ store, history, bus, painter, effects, mouse, isModalOpen }: CardViewportProps) {
+export function CardViewport({ store, history, bus, painter, effects, mouse, isModalOpen, onInspectPart }: CardViewportProps) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -885,9 +897,15 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
   };
 
   const onDoubleClick = (event: { clientX: number; clientY: number }): void => {
-    if (store.getSnapshot().tool !== "browse" || isModalOpen()) return;
+    if (isModalOpen()) return;
+    const snapshot = store.getSnapshot();
     const point = toPoint(event);
-    browse.doubleClick(point.x, point.y);
+    if (snapshot.tool === "browse") {
+      browse.doubleClick(point.x, point.y);
+      return;
+    }
+    const part = inspectablePartAt(snapshot, point.x, point.y);
+    if (part) onInspectPart?.(part.id);
   };
 
   /** Scrolling fields keep their scroll offset in UI state (spec 03 design §3). */

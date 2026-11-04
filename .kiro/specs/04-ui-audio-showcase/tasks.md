@@ -15,7 +15,7 @@
   - `src/main.tsx` is the composition root: it creates the store with a built-in starter stack (one background, one card with a "Welcome to HexCard" field and one button), the history, the message bus, the VM host and the paint controller, and passes the narrowed store view to the UI. The starter stack must pass `validateStack`. The loader (task 6) and the showcase stacks (task 8) later replace the starter stack through `store.replaceStack`
   - _Requirements: 2.1, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10_
 
-- [ ] 4. Build the Object Inspector, error dialogs and Stack Graph
+- [x] 4. Build the Object Inspector, error dialogs and Stack Graph
   - `ObjectInspector.tsx` with inline compile errors; bomb dialog and script-error alert with **Script** button
   - `StackGraphModal.tsx`
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_

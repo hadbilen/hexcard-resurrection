@@ -108,6 +108,28 @@
         "chatSessionId": "sess_3d4f8b4c-d4d6-4a92-ade2-fcbc1c0e9178",
         "timestamp": 1793829274621
       }
+    ],
+    "4. Build the Object Inspector, error dialogs and Stack Graph": [
+      {
+        "executionId": "8b0e7a39-f445-4f4a-b14d-21f61df85d26",
+        "chatSessionId": "sess_21d5f589-bba6-4db9-8921-d8d0210d8374",
+        "timestamp": 1793829860542
+      },
+      {
+        "executionId": "8b0e7a39-f445-4f4a-b14d-21f61df85d26",
+        "chatSessionId": "sess_21d5f589-bba6-4db9-8921-d8d0210d8374",
+        "timestamp": 1793830869751
+      },
+      {
+        "executionId": "4fe00903-50e8-4a57-b942-40a0e2b04813",
+        "chatSessionId": "sess_21d5f589-bba6-4db9-8921-d8d0210d8374",
+        "timestamp": 1793831288565
+      },
+      {
+        "executionId": "4fe00903-50e8-4a57-b942-40a0e2b04813",
+        "chatSessionId": "sess_21d5f589-bba6-4db9-8921-d8d0210d8374",
+        "timestamp": 1793831935207
+      }
     ]
   }
 }
