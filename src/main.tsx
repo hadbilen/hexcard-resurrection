@@ -4,6 +4,10 @@
  * with the narrowed store view (Requirement 2.6). The start-up order is in `ui/startup.ts`: the
  * first frame is composed only after `loadBundledFonts()` has settled (Requirement 2.7), and the
  * stack is opened (spec 01 Requirement 2.9) once the UI has mounted.
+ *
+ * Persistence (spec 04 task 6): IndexedDB auto-save is injected into the store; before the UI
+ * starts, a share link in the URL hash or the most recently auto-saved stack replaces the starter
+ * stack through the stack loader, which is also used by File > Open Stack File.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,8 +20,12 @@ import { createPaintController } from "./engine/graphics/paintTools.ts";
 import { PATTERNS } from "./engine/graphics/patterns.ts";
 import { loadBundledFonts } from "./engine/graphics/textRaster.ts";
 import { App, createUiStoreView } from "./ui/App.tsx";
+import { createAutoSaver, openStackDatabase, type StackDatabase } from "./storage/indexedDb.ts";
+import { createStackLoader } from "./storage/stackLoader.ts";
+import { stripHash } from "./storage/urlCodec.ts";
+import { createBrowserFileAccess, createFileCommands, loadShareHash } from "./ui/fileCommands.ts";
 import { createStarterStack } from "./ui/starterStack.ts";
-import { startStudio } from "./ui/startup.ts";
+import { openInitialStack, startStudio } from "./ui/startup.ts";
 import { createModalManager } from "./ui/System7Shell.tsx";
 import { createEffectStage, createMouseTracker, createVmHost } from "./ui/vmHost.ts";
 
@@ -31,9 +39,41 @@ async function main(): Promise<void> {
   const starter = validateStack(createStarterStack());
   if (!starter.ok) throw new Error(`The built-in starter stack is invalid: ${starter.error}`);
 
-  const store = createHexStore({ stack: starter.stack, compile: parseHexTalk });
+  // Start loading the fonts at once; `startStudio` awaits them before the first frame (Req 2.7).
+  const fonts = loadBundledFonts();
+  fonts.catch(() => {}); // the rejection is reported by startStudio's onFontError
+
+  // Requirement 5.1: the store debounces runtime and authoring changes (500 ms) into this callback.
+  const openDatabase = (() => {
+    let database: Promise<StackDatabase> | undefined;
+    return () => (database ??= openStackDatabase().catch((error: unknown) => {
+      database = undefined;
+      throw error;
+    }));
+  })();
+  const autoSave = createAutoSaver(openDatabase, (error) =>
+    console.error("HexCard: the stack could not be auto-saved to IndexedDB", error));
+
+  const store = createHexStore({ stack: starter.stack, compile: parseHexTalk, autoSave: (stack) => void autoSave(stack) });
   const history = createHistory(store);
   const modals = createModalManager();
+
+  // Requirement 5.5: the one loading path; the only holder of `store.replaceStack` (Req 2.6).
+  const loader = createStackLoader({
+    store,
+    history,
+    alert: (message, options) => void modals.alert(message, options),
+  });
+  // A loaded stack is saved at once, so a reload restores it even before it is edited.
+  store.onReplaceStack(() => void autoSave(store.getSnapshot().stack));
+  // Before the message bus exists, so the restored stack is opened once, by startStudio.
+  await openInitialStack({
+    hash: window.location.hash,
+    clearHash: () => window.history.replaceState(window.history.state, "", stripHash(window.location.href)),
+    loadMostRecent: async () => (await openDatabase()).loadMostRecent(),
+    loader,
+    onStorageError: (error) => console.error("HexCard: the auto-saved stack could not be read from IndexedDB", error),
+  });
   const effects = createEffectStage();
   const mouse = createMouseTracker();
 
@@ -60,10 +100,25 @@ async function main(): Promise<void> {
   let patternIndex = DEFAULT_PATTERN_INDEX;
   const painter = createPaintController({ store, history, getSettings: () => ({ pattern: PATTERNS[patternIndex] }) });
 
+  // Requirements 5.2 and 5.3: File > Save Stack File, Open Stack File, Copy Share Link.
+  const fileCommands = createFileCommands({
+    getStack: () => store.getSnapshot().stack,
+    loader,
+    modals,
+    browser: createBrowserFileAccess(),
+    onError: (error) => console.error("HexCard: file command failed", error),
+  });
+  // A share link pasted into the address bar of an open studio changes only the hash.
+  window.addEventListener("hashchange", () => {
+    void loadShareHash(window.location.hash, loader).then((result) => {
+      if (result !== undefined) window.history.replaceState(window.history.state, "", stripHash(window.location.href));
+    });
+  });
+
   const uiStore = createUiStoreView(store);
   const readyBus: MessageBus = bus; // `bus` is a `let`, so its narrowing does not reach the closure below
   await startStudio({
-    loadFonts: loadBundledFonts,
+    loadFonts: () => fonts,
     onFontError: (error) => console.error("HexCard: the bundled fonts could not be loaded; card text uses fallback fonts", error),
     mount: () => new Promise<void>((resolve) => {
       createRoot(rootElement).render(
@@ -81,6 +136,9 @@ async function main(): Promise<void> {
               patternIndex = index;
             }}
             onReady={resolve}
+            onCommand={(command) => {
+              fileCommands.run(command);
+            }}
           />
         </StrictMode>,
       );

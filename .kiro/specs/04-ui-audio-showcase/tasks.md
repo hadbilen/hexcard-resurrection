@@ -25,7 +25,7 @@
   - Acceptance pipeline and preview/Apply flow; optional Tier 2 proxy and Tier 3 in-memory BYOK
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
-- [ ] 6. Implement persistence and sharing
+- [x] 6. Implement persistence and sharing
   - `indexedDb.ts` auto-save, `stackFile.ts`, `urlCodec.ts` with the 32,000-character warning, validation on every load
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 

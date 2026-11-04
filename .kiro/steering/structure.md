@@ -14,6 +14,7 @@ hexcard/
 ├── .kiro/
 │   ├── steering/              # Always-included guardrails (product.md, tech.md, structure.md)
 │   ├── specs/                 # 01-core-stack-engine, 02-hextalk-ast-vm, 03-1bit-canvas-dither, 04-ui-audio-showcase
+│   │                          # Bugfix specs from Kiro's bugfix workflow also live here, next to 01-04 (currently partrenderer-test-timeouts)
 │   └── hooks/                 # Kiro agent hooks (IDE 1.0 JSON format)
 ├── public/
 │   ├── favicon.svg            # 16x16 1-bit pixel-art favicon (linked from index.html)
@@ -53,7 +54,9 @@ hexcard/
 │   │   ├── indexedDb.ts       # Local auto-save
 │   │   ├── stackFile.ts       # .hexstack file import/export (deflate-raw + Base64URL)
 │   │   ├── urlCodec.ts        # URL-hash share links (deflate-raw + Base64URL)
-│   │   └── htmlExporter.ts    # Single-file standalone HTML (embeds the player bundle)
+│   │   ├── stackLoader.ts     # The one load path: validateStack + decode every layer, then replaceStack
+│   │   ├── htmlExporter.ts    # Single-file standalone HTML (embeds the player bundle)
+│   │   └── __tests__/
 │   ├── player/                                                                                             [04]
 │   │   └── main.ts            # Browse-only runtime entry for exported HTML (no authoring, no AI)
 │   ├── presets/               # 3 showcase stacks (Haunted Mansion, Synth, Weather Oracle)                [04]

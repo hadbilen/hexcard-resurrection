@@ -8,7 +8,7 @@ import type { MessageBus } from "../core/messageBus.ts";
 import type { HexStore } from "../core/store.ts";
 import type { PaintController } from "../engine/graphics/paintTools.ts";
 import { CardViewport } from "./CardViewport.tsx";
-import { System7Shell, type ModalManager, type UiStore } from "./System7Shell.tsx";
+import { System7Shell, type ForwardedCommand, type ModalManager, type UiStore } from "./System7Shell.tsx";
 import type { EffectStage, MouseTracker } from "./vmHost.ts";
 
 /**
@@ -44,9 +44,11 @@ export interface AppProps {
    * the visual-effect surface (child effects run before this one). StrictMode may call it twice.
    */
   onReady?: () => void;
+  /** Menu commands the shell does not implement itself (e.g. the File menu). */
+  onCommand?: (command: ForwardedCommand) => void;
 }
 
-export function App({ store, history, modals, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady }: AppProps) {
+export function App({ store, history, modals, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady, onCommand }: AppProps) {
   const [patternIndex, setPatternIndex] = useState(initialPatternIndex);
   useEffect(() => {
     onReady?.();
@@ -58,6 +60,7 @@ export function App({ store, history, modals, bus, painter, effects, mouse, init
       store={store}
       history={history}
       modals={modals}
+      onCommand={onCommand}
       patternIndex={patternIndex}
       onPatternChange={(index) => {
         setPatternIndex(index);

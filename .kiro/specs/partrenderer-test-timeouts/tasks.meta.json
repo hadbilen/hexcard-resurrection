@@ -1,0 +1,132 @@
+{
+  "pbtResults": {
+    "1. Write bug condition exploration test": {
+      "status": "passed",
+      "failingExample": "expectDimmed(button()) on unfixed code: AssertionError: expected 175106 to be less than or equal to 3 (175,106 = TOTAL_PIXELS 175,104 per-pixel expect calls + 2 toBeGreaterThan checks). Confirms the bug condition.",
+      "lastRunTimestamp": 1793827969495
+    },
+    "2. Write preservation property tests (BEFORE implementing fix)": {
+      "status": "passed",
+      "lastRunTimestamp": 1793828083482
+    },
+    "3.2 Verify bug condition exploration test now passes": {
+      "status": "passed",
+      "lastRunTimestamp": 1793828329135
+    },
+    "3.3 Verify preservation tests still pass": {
+      "status": "passed",
+      "lastRunTimestamp": 1793828408318
+    }
+  },
+  "executionHistory": {
+    "1. Write bug condition exploration test": [
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827910789
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827919019
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827988487
+      }
+    ],
+    "2. Write preservation property tests (BEFORE implementing fix)": [
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827911005
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827993107
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828132585
+      }
+    ],
+    "3.1 Implement the fix": [
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827911173
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828136715
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828278580
+      }
+    ],
+    "3.2 Verify bug condition exploration test now passes": [
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827911281
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828282523
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828365524
+      }
+    ],
+    "3.3 Verify preservation tests still pass": [
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827911443
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828370088
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828471042
+      }
+    ],
+    "4. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793827911572
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828475025
+      },
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828584644
+      }
+    ],
+    "3. Fix the test timeouts in the parallel suite": [
+      {
+        "executionId": "e77831c3-fca4-470d-866b-9436bcbe27e3",
+        "chatSessionId": "sess_9b8009cc-5a69-438a-8ab2-9456cfea7e0a",
+        "timestamp": 1793828471156
+      }
+    ]
+  }
+}

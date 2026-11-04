@@ -22,6 +22,9 @@ import type {
 import { HEX_RESERVED_WORDS, validateAst } from "../astValidator.ts";
 import { parseHexTalk, printHexTalk } from "../parser.ts";
 
+// Per-test budget for the heavy property tests, so CPU contention in the parallel suite cannot time them out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------------------------
@@ -672,7 +675,7 @@ describe("round-trip guarantees (§4.2)", () => {
       }),
       { numRuns: 300 },
     );
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   /** **Validates: Requirements 2.3** */
   it("Property 2: parse(print(parse(S))) deep-equals parse(S) for every source that parses without errors", () => {
@@ -688,5 +691,5 @@ describe("round-trip guarantees (§4.2)", () => {
       }),
       { numRuns: 300 },
     );
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });

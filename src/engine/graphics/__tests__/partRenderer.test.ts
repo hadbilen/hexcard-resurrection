@@ -26,6 +26,9 @@ const stub: TextRasterBackend = {
   },
 };
 
+// Per-test budget for the heavy tests, so CPU contention in the parallel suite cannot time them out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 const idx = (x: number, y: number): number => y * BITMAP_WIDTH + x;
 const at = (frame: Uint8Array, x: number, y: number): number => frame[idx(x, y)];
 const lightFrame = (): Uint8Array => new Uint8Array(TOTAL_PIXELS).fill(1);
@@ -270,47 +273,127 @@ describe("scrolling fields", () => {
 // Disabled parts (Requirement 3.4): text ink only where ((x + y) & 1) === 0, chrome unchanged.
 describe("disabled parts", () => {
   const checker = (x: number, y: number): boolean => ((x + y) & 1) === 0;
+  /** Cap on the mismatching pixels `expectDimmedFrames` lists in its failure message. */
+  const MAX_REPORTED_MISMATCHES = 20;
 
-  /** Compares a disabled rendering against the enabled one, pixel by pixel. */
-  function expectDimmed(enabledPart: HexPart, extra: Partial<PartDrawContext> = {}): void {
+  /** Draws the enabled (`on`), disabled (`off`) and text-less (`blank`) renderings of a part. */
+  function dimmedFrames(enabledPart: HexPart, extra: Partial<PartDrawContext> = {}): { on: Uint8Array; off: Uint8Array; blank: Uint8Array } {
     const on = draw(enabledPart, extra);
     const off = draw({ ...enabledPart, enabled: false }, extra);
     const blank = draw({ ...enabledPart, ...(enabledPart.type === "button" ? { title: "" } : { content: "" }) } as HexPart, extra);
+    return { on, off, blank };
+  }
+
+  /** Compares a disabled rendering against the enabled one, pixel by pixel. */
+  function expectDimmed(enabledPart: HexPart, extra: Partial<PartDrawContext> = {}): void {
+    const { on, off, blank } = dimmedFrames(enabledPart, extra);
+    expectDimmedFrames(on, off, blank);
+  }
+
+  /**
+   * Checks the dimming rule on three composed frames: chrome unchanged, ink kept only on the checkerboard.
+   * The loop compares in plain code and the helper asserts 3 times in total, so it stays fast under load.
+   */
+  function expectDimmedFrames(on: Uint8Array, off: Uint8Array, blank: Uint8Array): void {
+    const mismatches: Array<{ index: number; x: number; y: number; expected: number; actual: number | undefined }> = [];
     let inkKept = 0;
     let inkDropped = 0;
     for (let i = 0; i < TOTAL_PIXELS; i++) {
       const x = i % BITMAP_WIDTH;
       const y = Math.floor(i / BITMAP_WIDTH);
+      let expected: number;
       if (on[i] === blank[i]) {
-        expect(off[i]).toBe(on[i]); // frame, chrome and everything else unchanged
+        expected = on[i]; // frame, chrome and everything else unchanged
       } else if (checker(x, y)) {
-        expect(off[i]).toBe(on[i]);
+        expected = on[i];
         inkKept++;
       } else {
-        expect(off[i]).toBe(blank[i]);
+        expected = blank[i];
         inkDropped++;
       }
+      // `off[i]` is undefined past the end of a short array, so a short frame still mismatches.
+      if (off[i] !== expected && mismatches.length < MAX_REPORTED_MISMATCHES) {
+        mismatches.push({ index: i, x, y, expected, actual: off[i] });
+      }
     }
+    expect(mismatches).toEqual([]);
     expect(inkKept).toBeGreaterThan(0);
     expect(inkDropped).toBeGreaterThan(0);
   }
 
-  it("dims a push button's title and keeps its border", () => expectDimmed(button()));
-  it("dims a pressed button's title inside the inverted interior", () => expectDimmed(button(), { pressed: true }));
+  it("dims a push button's title and keeps its border", () => expectDimmed(button()), HEAVY_TEST_TIMEOUT_MS);
+  it("dims a pressed button's title inside the inverted interior", () => expectDimmed(button(), { pressed: true }), HEAVY_TEST_TIMEOUT_MS);
   it("dims a checkbox title and keeps the box and mark", () =>
-    expectDimmed(button({ style: "checkBox", hilite: true, rect: { x: 0, y: 0, width: 80, height: 16 } })));
+    expectDimmed(button({ style: "checkBox", hilite: true, rect: { x: 0, y: 0, width: 80, height: 16 } })), HEAVY_TEST_TIMEOUT_MS);
   it("dims field text and keeps the frame, rules and scrollbar", () =>
-    expectDimmed(field({ style: "scrolling", showLines: true, rect: { x: 0, y: 0, width: 100, height: 60 }, content: "ab\ncd" })));
+    expectDimmed(field({ style: "scrolling", showLines: true, rect: { x: 0, y: 0, width: 100, height: 60 }, content: "ab\ncd" })), HEAVY_TEST_TIMEOUT_MS);
   it("dims field text but draws the caret normally", () => {
     const part = field({ content: "ab", enabled: false });
     const f = draw(part, { editing: { partId: part.id, caret: 1, selEnd: 1 } });
     expect([at(f, 9, 2), at(f, 9, 3), at(f, 9, 17)]).toEqual([2, 2, 2]);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("leaves the enabled rendering unchanged", () => {
     const f = draw(field({ content: "ab cd" }));
     expect([at(f, 4, 9), at(f, 5, 9), at(f, 4, 10)]).toEqual([2, 2, 2]);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
+
+  it("expectDimmed makes at most 3 expect calls", () => {
+    const before = expect.getState().assertionCalls;
+    expectDimmed(button());
+    const after = expect.getState().assertionCalls;
+    expect(after - before).toBeLessThanOrEqual(3);
+  }, HEAVY_TEST_TIMEOUT_MS);
+
+  // The four expectDimmed configurations above, as data for the preservation property.
+  const DIMMED_CONFIGS: ReadonlyArray<{ part: HexPart; extra: Partial<PartDrawContext> }> = [
+    { part: button(), extra: {} },
+    { part: button(), extra: { pressed: true } },
+    { part: button({ style: "checkBox", hilite: true, rect: { x: 0, y: 0, width: 80, height: 16 } }), extra: {} },
+    { part: field({ style: "scrolling", showLines: true, rect: { x: 0, y: 0, width: 100, height: 60 }, content: "ab\ncd" }), extra: {} },
+  ];
+  type MutationKind = "chrome" | "keptInk" | "droppedInk";
+
+  it("property: flipping one chrome, kept-ink or dropped-ink pixel of the disabled frame is rejected", () => {
+    const frames = DIMMED_CONFIGS.map(({ part, extra }) => dimmedFrames(part, extra));
+    /** Index of the k-th pixel of the given kind, in index order, or -1 if there are not that many. */
+    const kthPixel = (config: number, kind: MutationKind, k: number): number => {
+      const { on, blank } = frames[config];
+      const { x: rx, y: ry, width, height } = DIMMED_CONFIGS[config].part.rect;
+      let seen = 0;
+      for (let i = 0; i < TOTAL_PIXELS; i++) {
+        const x = i % BITMAP_WIDTH;
+        const y = Math.floor(i / BITMAP_WIDTH);
+        const isKind =
+          kind === "chrome"
+            ? on[i] === blank[i] && x >= rx && x < rx + width && y >= ry && y < ry + height
+            : on[i] !== blank[i] && checker(x, y) === (kind === "keptInk");
+        if (isKind && seen++ === k) return i;
+      }
+      return -1;
+    };
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: DIMMED_CONFIGS.length - 1 }),
+        fc.constantFrom<MutationKind>("chrome", "keptInk", "droppedInk"),
+        fc.integer({ min: 0, max: 4 }),
+        (config, kind, k) => {
+          const { on, off, blank } = frames[config];
+          const i = kthPixel(config, kind, k);
+          expect(i).toBeGreaterThanOrEqual(0); // every configuration has at least 5 pixels of each kind
+          const bad = off.slice();
+          bad[i] = 3 - bad[i];
+          expect(() => expectDimmedFrames(on, bad, blank)).toThrow();
+        },
+      ),
+      { numRuns: 20 },
+    );
+  }, HEAVY_TEST_TIMEOUT_MS);
+
+  it("rejects frames that keep and drop no text ink", () => {
+    const f = draw(button());
+    expect(() => expectDimmedFrames(f, f, f)).toThrow();
+  }, HEAVY_TEST_TIMEOUT_MS);
 });
 
 describe("composeFrame default rasterizer", () => {
@@ -358,7 +441,7 @@ describe("rasterizer invariants", () => {
       }),
       { numRuns: 60 },
     );
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });
 
 describe("hitTest", () => {
@@ -403,5 +486,5 @@ describe("hitTest", () => {
         expect(scaled).toBe(hitTest(stack, "crd_1", x, y));
       }),
     );
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });

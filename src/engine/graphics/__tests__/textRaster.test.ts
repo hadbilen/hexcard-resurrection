@@ -25,6 +25,9 @@ import {
 //   rows baseline-7..baseline-1 inked, row baseline-8 alpha 100 (dropped).
 // ---------------------------------------------------------------------------------------------
 
+// Per-test budget for the heavy property test, so CPU contention in the parallel suite cannot time it out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 const ADVANCE = 6;
 const stubMeasure = (s: string): number => [...s].length * ADVANCE;
 
@@ -352,5 +355,5 @@ describe("renderCrisp1BitText", () => {
       ),
       { numRuns: 200 },
     );
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });
