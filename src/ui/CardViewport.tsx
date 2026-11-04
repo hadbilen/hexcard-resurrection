@@ -20,6 +20,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -37,7 +38,8 @@ import { composeFrame, frameToImageData } from "../engine/graphics/bitmapCanvas.
 import { createPartRasterizer, fieldCaretIndexAt, hitTest, layoutFieldText } from "../engine/graphics/partRenderer.ts";
 import { isPaintTool, type PaintController } from "../engine/graphics/paintTools.ts";
 import { BITMAP_HEIGHT, BITMAP_WIDTH, encodeBitmapRLE } from "../engine/graphics/rleCodec.ts";
-import { useUiScale, type UiStore } from "./System7Shell.tsx";
+import { CARD_FRAME_WIDTH } from "./FloatingTools.tsx";
+import { gridSnapOffset, useUiScale, type UiStore } from "./System7Shell.tsx";
 import type { EffectStage, MouseTracker } from "./vmHost.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -380,6 +382,55 @@ export function PartSelection({ rect }: { rect: HexRect }) {
   );
 }
 
+/**
+ * Marching-ants frame of a paint selection or a select-drag marquee: the 1 px edge of `rect` drawn
+ * as alternating dark and light card pixels (a 2x2 checkerboard tile enlarged k times with
+ * `patternTransform`, crispEdges), so it shows on dark and light card pixels alike and never uses
+ * a dashed border (steering tech.md, 1-Bit Fidelity Rules 6). The checkerboard phase follows the
+ * card pixel grid (`(x + y)` even is dark), so the ants stay put while the marquee grows.
+ */
+export function SelectionMarquee({ rect }: { rect: HexRect }) {
+  const patternId = useId();
+  const k = useUiScale();
+  const width = rect.width * k;
+  const height = rect.height * k;
+  const phase = (rect.x + rect.y) & 1; // 0: tile pixel (0, 0) is dark
+  const edges: { x: number; y: number; width: number; height: number }[] = [{ x: 0, y: 0, width, height: k }];
+  if (rect.height > 1) edges.push({ x: 0, y: height - k, width, height: k });
+  edges.push({ x: 0, y: 0, width: k, height });
+  if (rect.width > 1) edges.push({ x: width - k, y: 0, width: k, height });
+  return (
+    <div className="hc-marquee" style={cardRectStyle(rect, k)} data-testid="selection-marquee">
+      <svg className="hc-marquee-art" width={width} height={height} shapeRendering="crispEdges" aria-hidden="true" focusable="false">
+        <defs>
+          <pattern id={patternId} width={2} height={2} patternUnits="userSpaceOnUse" patternTransform={`scale(${k})`}>
+            <rect width={2} height={2} fill="var(--light-bit)" />
+            <rect x={phase} y={0} width={1} height={1} fill="var(--dark-bit)" />
+            <rect x={1 - phase} y={1} width={1} height={1} fill="var(--dark-bit)" />
+          </pattern>
+        </defs>
+        {edges.map((edge, index) => (
+          <rect key={index} x={edge.x} y={edge.y} width={edge.width} height={edge.height} fill={`url(#${patternId})`} />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * Moves the (flex-centred) framed viewport onto the k-pixel grid with `left` / `top`: centring in
+ * the desktop can leave the frame half a CSS pixel or a non-multiple of k off the grid. The offset
+ * is <= 0 (`gridSnapOffset` floors) and the desktop starts on the grid (below the 20k menu bar),
+ * so the frame never moves out of the desktop and never adds scrollable overflow.
+ */
+function snapViewportToGrid(viewport: HTMLElement, k: number): void {
+  viewport.style.left = "0px";
+  viewport.style.top = "0px";
+  const box = viewport.getBoundingClientRect();
+  viewport.style.left = `${gridSnapOffset(box.left, k)}px`;
+  viewport.style.top = `${gridSnapOffset(box.top, k)}px`;
+}
+
 /** Focus targets whose own keyboard handling must not be forwarded as `keyDown`. */
 function isTextEntryTarget(target: EventTarget | null): boolean {
   if (typeof Element === "undefined" || !(target instanceof Element)) return false;
@@ -656,6 +707,16 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, browse, painter]);
 
+  // The framed card on the k-pixel grid: before the first paint, on every k and on window resize.
+  useLayoutEffect(() => {
+    const viewport = wrapperRef.current;
+    if (!viewport) return;
+    const snap = (): void => snapViewportToGrid(viewport, scale);
+    snap();
+    window.addEventListener("resize", snap);
+    return () => window.removeEventListener("resize", snap);
+  }, [scale]);
+
   // Every committed change (stack, card, tool, editing caret, part drag, scale) is drawn at once.
   useLayoutEffect(() => {
     draw();
@@ -850,6 +911,7 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
 
   const width = BITMAP_WIDTH * scale;
   const height = BITMAP_HEIGHT * scale;
+  const frame = CARD_FRAME_WIDTH * scale;
   const selected = selectedPartOf(state, selectedPartId);
   const selectionRect = selected ? (drag?.partId === selected.id ? drag.rect : selected.rect) : null;
   const pixelSelection = isPaintTool(state.tool) && !painter.isActive() ? painter.getSelection() : null;
@@ -857,7 +919,7 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
   const card = state.stack.cards.find((candidate) => candidate.id === state.currentCardId);
 
   return (
-    <div ref={wrapperRef} className="hc-viewport" style={{ width, height }} data-tool={state.tool}>
+    <div ref={wrapperRef} className="hc-viewport" style={{ width, height, borderWidth: frame }} data-tool={state.tool}>
       <canvas
         ref={canvasRef}
         className="hc-card-canvas"
@@ -892,8 +954,8 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
         onBlur={onTextBlur}
       />
       {selectionRect ? <PartSelection rect={selectionRect} /> : null}
-      {pixelSelection ? <div className="hc-marquee" style={cardRectStyle(pixelSelection.bounds, scale)} /> : null}
-      {marquee ? <div className="hc-marquee" style={cardRectStyle(marquee, scale)} /> : null}
+      {pixelSelection ? <SelectionMarquee rect={pixelSelection.bounds} /> : null}
+      {marquee ? <SelectionMarquee rect={marquee} /> : null}
     </div>
   );
 }

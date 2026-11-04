@@ -1,6 +1,9 @@
 /*
  * System 7 shell styles. 1-bit rules (steering tech.md): only hard-offset shadows, no gradients,
- * no blur, no opacity fades. Colours come from --dark-bit / --light-bit set by the shell.
+ * no blur, no opacity fades, no rounded corners, no dashed or dotted lines and no glyphs outside
+ * the bundled fonts. Anything that is not a straight solid line (button corners, check marks,
+ * dotted lines) is pixel art in an inline SVG with shape-rendering: crispEdges, drawn on a 1x
+ * grid enlarged k times. Colours come from --dark-bit / --light-bit set by the shell.
  *
  * UI scale (spec 04 Requirement 2.10): every length is a 1x System 7 metric times --px, which the
  * shell sets to k CSS pixels (k = computeUiScale(window)), so the whole UI is the 1x UI enlarged
@@ -34,7 +37,13 @@
   border: 0;
   padding: 0;
   cursor: default;
-  border-radius: 0;
+  appearance: none;
+}
+
+/* Selected text (dialogs, the ask field) inverts instead of using the system highlight colour. */
+.s7-shell ::selection {
+  background: var(--dark-bit);
+  color: var(--light-bit);
 }
 
 /* Focus is shown for keyboard focus only (:focus-visible), never for pointer or plain focus. */
@@ -108,10 +117,13 @@
   text-decoration: line-through;
 }
 
+/* Check mark column: a 16x16 pixel-art glyph (CHECK_MARK) in currentColor, so it inverts with a
+   highlighted item. The bundled fonts have no check mark character. */
 .s7-check {
   flex: none;
+  display: block;
   width: calc(16 * var(--px));
-  text-align: center;
+  height: calc(16 * var(--px));
 }
 
 .s7-menu-label {
@@ -129,10 +141,15 @@
   border-top: calc(1 * var(--px)) solid var(--dark-bit);
 }
 
+/* Tear-off line of the Tools menu: one 1x row of alternating dark / light pixels, drawn by an
+   SVG pattern (TearOffStrip), never by a dashed border. */
 .s7-tear-strip {
-  height: 0;
+  height: calc(1 * var(--px));
   margin: calc(2 * var(--px)) calc(4 * var(--px)) calc(3 * var(--px));
-  border-top: calc(1 * var(--px)) dashed var(--dark-bit);
+}
+
+.s7-tear-strip-art {
+  display: block;
 }
 
 /* Edit Background: diagonal hash stripes along the menu bar border (Requirement 2.2). */
@@ -270,6 +287,9 @@
   background: var(--light-bit);
   box-shadow: calc(2 * var(--px)) calc(2 * var(--px)) 0px var(--dark-bit);
   user-select: text;
+  /* snapModalLayout() offsets the centred dialog onto the k-pixel grid with left / top: flex
+     centring can leave half a CSS pixel, and Chrome draws text there with grey anti-aliasing. */
+  position: relative;
 }
 
 .s7-dialog-body {
@@ -296,8 +316,9 @@
   border: calc(1 * var(--px)) solid var(--dark-bit);
   background: var(--light-bit);
   color: var(--dark-bit);
+  caret-color: var(--dark-bit);
   font: inherit;
-  border-radius: 0;
+  appearance: none;
 }
 
 .s7-dialog-buttons {
@@ -307,22 +328,72 @@
   margin-top: calc(8 * var(--px));
 }
 
+/* Push buttons. The rounded frame is pixel art (PushButtonArt): two 4x20 corner caps and a
+   stretching middle with solid top and bottom edges, painted under the label (z-index -1 inside
+   the button's own stacking context). The default button adds the classic 3 px ring, 1 px away,
+   the same way with 8x28 caps. --s7-button-face is the inside colour; it inverts while pressed.
+   The label is left-aligned at 12k; snapModalLayout() centres it on the k-pixel grid with the
+   padding, because text-align: center can leave it half a CSS pixel off. */
 .s7-button {
+  --s7-button-face: var(--light-bit);
+  position: relative;
+  z-index: 0;
+  box-sizing: border-box;
   min-width: calc(64 * var(--px));
   height: calc(20 * var(--px));
   padding: 0 calc(12 * var(--px));
-  border: calc(1 * var(--px)) solid var(--dark-bit);
-  border-radius: calc(8 * var(--px));
+  text-align: left;
+  white-space: nowrap;
+  background: none;
 }
 
 .s7-button:active {
-  background: var(--dark-bit);
+  --s7-button-face: var(--dark-bit);
   color: var(--light-bit);
 }
 
-.s7-button-default {
-  outline: calc(2 * var(--px)) solid var(--dark-bit);
-  outline-offset: calc(2 * var(--px));
+.s7-button-art,
+.s7-button-ring {
+  position: absolute;
+  z-index: -1;
+  display: flex;
+  pointer-events: none;
+}
+
+.s7-button-art {
+  inset: 0;
+}
+
+.s7-button-ring {
+  inset: calc(-4 * var(--px));
+}
+
+.s7-button-edge {
+  flex: 1;
+  box-sizing: border-box;
+  border-top: calc(1 * var(--px)) solid var(--dark-bit);
+  border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
+  background: var(--s7-button-face);
+}
+
+.s7-button-ring .s7-button-edge {
+  border-top-width: calc(3 * var(--px));
+  border-bottom-width: calc(3 * var(--px));
+  background: none;
+}
+
+.s7-pixel-art {
+  display: block;
+  flex: none;
+  shape-rendering: crispEdges;
+}
+
+.s7-art-frame {
+  fill: var(--dark-bit);
+}
+
+.s7-art-face {
+  fill: var(--s7-button-face);
 }
 
 /* Canvases are always drawn pixel-exact. */
@@ -332,16 +403,24 @@
 
 /* Card viewport (spec 04 task 3). The only DOM over the card canvas is the hidden textarea and
    the authoring selection marquee / handles (design spec §5.6).
-   Requirement 2.10: the viewport box is exactly the 512k x 342k canvas (no border, padding or
-   margin), so it fits below the 20k menu bar at the k from computeUiScale. Its frame is an
-   outline, which takes no layout space; where the card fills the desktop it is clipped there. */
+   Requirement 2.10: the content box is exactly the 512k x 342k canvas and the frame is a solid
+   border of CARD_FRAME_WIDTH * k (set inline by CardViewport), so the outer box is
+   (512 + 4)k x (342 + 4)k: the space computeUiScale reserves below the 20k menu bar. The frame
+   takes layout space and is never clipped by the desktop. Overlays are positioned against the
+   padding box, which is the canvas; overflow: clip cuts them (a part or marquee dragged past the
+   card edge) at the canvas, so they never add desktop scrollbars. clip, not hidden: the
+   viewport must not become a scroll container the hidden textarea's caret could scroll.
+   CardViewport snaps the centred box onto the k-pixel grid with left / top. */
 .hc-viewport {
   position: relative;
+  left: 0;
+  top: 0;
   flex: none;
+  box-sizing: content-box;
   margin: 0;
   padding: 0;
-  border: 0;
-  outline: calc(2 * var(--px)) solid var(--dark-bit);
+  border: 0 solid var(--dark-bit);
+  overflow: clip;
 }
 
 .hc-card-canvas {
@@ -380,8 +459,10 @@
   border: calc(1 * var(--px)) solid var(--dark-bit);
 }
 
-.hc-marquee {
-  border: calc(1 * var(--px)) dashed var(--dark-bit);
+/* Marching ants: an inline SVG of alternating dark / light 1x pixels (SelectionMarquee). */
+.hc-marquee-art {
+  display: block;
+  shape-rendering: crispEdges;
 }
 
 .hc-handle {

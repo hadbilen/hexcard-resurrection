@@ -7,11 +7,26 @@ import { createHistory } from "../../core/history.ts";
 import { THEME_PALETTES, type HexStack } from "../../core/schema.ts";
 import { createHexStore } from "../../core/store.ts";
 import { validateStack } from "../../core/stackValidator.ts";
+import fc from "fast-check";
 import {
+  CHECK_MARK,
+  DEFAULT_RING_CORNER,
+  DEFAULT_RING_LEFT_CAP,
+  DEFAULT_RING_OUTSET,
+  DEFAULT_RING_RIGHT_CAP,
+  MenuDropdown,
+  PUSH_BUTTON_CORNER,
+  PUSH_BUTTON_HEIGHT,
+  PUSH_BUTTON_LEFT_CAP,
+  PUSH_BUTTON_MIN_WIDTH,
+  PUSH_BUTTON_RIGHT_CAP,
   System7Shell,
   THEME_NAMES,
   TEAR_OFF_DISTANCE,
+  UiScaleContext,
   buildMenus,
+  gridSnapOffset,
+  pushButtonLabelPadding,
   createModalManager,
   createThemeCommand,
   defaultPalettePosition,
@@ -296,5 +311,165 @@ describe("modal manager", () => {
     const html = render(parts);
     expect(html).toContain("s7-dialog-bomb");
     expect(html).toContain("s7-icon");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// 1-bit chrome (steering tech.md, 1-Bit Fidelity Rules 6)
+// ---------------------------------------------------------------------------------------------
+
+/** Shell rules only: everything before the card viewport (`.hc-*`, task 3), comments removed. */
+const SHELL_RULES = SHELL_CSS.slice(0, SHELL_CSS.indexOf("/* Card viewport")).replace(/\/\*[\s\S]*?\*\//g, "");
+
+/** Visible text of server-rendered markup (tags removed, entities decoded). */
+function visibleText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/** Printable ASCII: covered by every bundled font (Pixel Operator, Pixel Operator 8, Fairfax). */
+const COVERED_BY_BUNDLED_FONTS = /^[\x20-\x7e]*$/;
+
+function renderMenu(menu: ReturnType<typeof buildMenus>[number], k = 1): string {
+  return renderToStaticMarkup(
+    createElement(UiScaleContext, { value: k }, createElement(MenuDropdown, { menu, onRun: () => {} })),
+  );
+}
+
+describe("shell CSS draws only 1-bit pixels", () => {
+  it("separates the shell rules from the card viewport section", () => {
+    expect(SHELL_RULES).toContain(".s7-shell {");
+    expect(SHELL_RULES).not.toContain(".hc-");
+  });
+
+  it("uses no rounded corners, dashed or dotted lines, gradients, blur, filters or partial opacity", () => {
+    expect(SHELL_RULES).not.toMatch(/border-radius/);
+    expect(SHELL_RULES).not.toMatch(/dashed|dotted/);
+    expect(SHELL_RULES).not.toMatch(/gradient/);
+    expect(SHELL_RULES).not.toMatch(/blur\(/);
+    expect(SHELL_RULES).not.toMatch(/filter/); // also backdrop-filter
+    for (const [, value] of SHELL_RULES.matchAll(/opacity:\s*([\d.]+)/g)) {
+      const opacity = Number(value);
+      expect(opacity <= 0.01 || opacity >= 0.99, `opacity ${value}`).toBe(true);
+    }
+  });
+
+  it("gives every box-shadow a 0px blur", () => {
+    for (const [, value] of SHELL_RULES.matchAll(/box-shadow:\s*([^;]+);/g)) {
+      expect(value).toMatch(/^calc\(\d+ \* var\(--px\)\) calc\(\d+ \* var\(--px\)\) 0px var\(--dark-bit\)$/);
+    }
+  });
+
+  it("inverts selected text instead of using the system highlight", () => {
+    expect(SHELL_RULES).toMatch(/\.s7-shell ::selection \{[^}]*background: var\(--dark-bit\);[^}]*color: var\(--light-bit\);/);
+  });
+});
+
+describe("menu check marks", () => {
+  const menus = buildMenus({ ...baseState, tool: "pencil", editLayer: "background", themeName: "GreenPhosphor" });
+
+  it("render only text the bundled fonts cover, and no U+2713", () => {
+    for (const menu of menus) {
+      const text = visibleText(renderMenu(menu));
+      expect(text, menu.id).not.toContain("\u2713");
+      expect(text, menu.id).toMatch(COVERED_BY_BUNDLED_FONTS);
+    }
+  });
+
+  it("draw the check mark as k-scaled crisp pixel art and keep aria-checked", () => {
+    const html = renderMenu(menus.find((menu) => menu.id === "tools")!, 3);
+    expect(html.match(/role="menuitemcheckbox"/g)).toHaveLength(12);
+    expect(html.match(/aria-checked="true"/g)).toHaveLength(1);
+    expect(html.match(/aria-checked="false"/g)).toHaveLength(11);
+    const checks = html.match(/<span class="s7-check" aria-hidden="true">(.*?)<\/span>/g) ?? [];
+    expect(checks).toHaveLength(12);
+    const drawn = checks.filter((span) => span.includes("<svg"));
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]).toMatch(/<svg class="s7-icon" width="48" height="48" viewBox="0 0 16 16" shape-rendering="crispEdges" fill="currentColor"/);
+    expect(html).toMatch(/aria-checked="true"[^>]*><span class="s7-check" aria-hidden="true"><svg/);
+  });
+
+  it("is a 16x16 glyph that sits above the baseline (row 13)", () => {
+    expect(CHECK_MARK).toHaveLength(16);
+    for (const row of CHECK_MARK) expect(row).toMatch(/^[.#]{16}$/);
+    expect(CHECK_MARK.slice(13).join("")).not.toContain("#");
+  });
+});
+
+describe("Tools menu tear-off line", () => {
+  it("is an SVG pattern of alternating 1x pixels, scaled by k, not a border", () => {
+    const tools = buildMenus(baseState).find((menu) => menu.id === "tools")!;
+    const html = renderMenu(tools, 2);
+    expect(html).toMatch(/<div class="s7-tear-strip" aria-hidden="true"><svg class="s7-tear-strip-art" width="100%" height="2" shape-rendering="crispEdges"/);
+    expect(html).toMatch(/<pattern [^>]*width="2" height="1" patternUnits="userSpaceOnUse" patternTransform="scale\(2\)"><rect width="1" height="1" fill="currentColor"/);
+    expect(SHELL_RULES).toMatch(/\.s7-tear-strip \{[^}]*height: calc\(1 \* var\(--px\)\);/);
+    expect(SHELL_RULES.match(/\.s7-tear-strip \{[^}]*\}/)![0]).not.toMatch(/border/);
+    // Other menus have no tear-off line.
+    expect(renderMenu(buildMenus(baseState)[0])).not.toContain("s7-tear-strip");
+  });
+});
+
+describe("push buttons", () => {
+  it("draw the rounded frame as crisp pixel-art caps under the label", () => {
+    const parts = setup();
+    void parts.modals.alert("Script error", { buttons: ["Script", "OK"] });
+    const html = render(parts, { scale: 2 });
+    // The label stays the button's first child, in the bundled font.
+    expect(html).toMatch(/<button type="button" class="s7-button">Script<span class="s7-button-art" aria-hidden="true"><svg class="s7-pixel-art" width="8" height="40" viewBox="0 0 4 20" shape-rendering="crispEdges"/);
+    expect(html.match(/class="s7-button-art"/g)).toHaveLength(2);
+    // Only the default button has the ring: 8x28 caps at 1x.
+    expect(html.match(/class="s7-button-ring"/g)).toHaveLength(1);
+    expect(html).toMatch(/class="s7-button s7-button-default">OK<span class="s7-button-art"[\s\S]*?<span class="s7-button-ring" aria-hidden="true"><svg class="s7-pixel-art" width="16" height="56" viewBox="0 0 8 28"/);
+    expect(SHELL_RULES).toMatch(/\.s7-button \{[^}]*height: calc\(20 \* var\(--px\)\);/);
+    expect(SHELL_RULES).toMatch(/\.s7-button-ring \{[^}]*inset: calc\(-4 \* var\(--px\)\);/);
+  });
+
+  it("have caps that are full-height, mirrored and join the straight edges", () => {
+    expect(PUSH_BUTTON_LEFT_CAP).toHaveLength(PUSH_BUTTON_HEIGHT);
+    expect(DEFAULT_RING_LEFT_CAP).toHaveLength(PUSH_BUTTON_HEIGHT + 2 * DEFAULT_RING_OUTSET);
+    for (const [left, right] of [[PUSH_BUTTON_LEFT_CAP, PUSH_BUTTON_RIGHT_CAP], [DEFAULT_RING_LEFT_CAP, DEFAULT_RING_RIGHT_CAP]] as const) {
+      expect(new Set(left.map((row) => row.length)).size).toBe(1);
+      expect(right).toEqual(left.map((row) => [...row].reverse().join("")));
+      expect(left).toEqual([...left].reverse()); // symmetric top / bottom
+    }
+    // Button: 1 px edges meet the cap's last column at the top and bottom row.
+    expect(PUSH_BUTTON_CORNER[0].endsWith("#")).toBe(true);
+    expect(PUSH_BUTTON_LEFT_CAP[1].endsWith("+")).toBe(true);
+    // Ring: 3 px edges, then nothing (the 1 px gap and the button are not part of the ring).
+    expect(DEFAULT_RING_CORNER.slice(0, 3).every((row) => row.endsWith("#"))).toBe(true);
+    expect(DEFAULT_RING_CORNER[3].endsWith(".")).toBe(true);
+    expect(DEFAULT_RING_LEFT_CAP[10]).toBe("###.....");
+  });
+
+  it("centre the label on the 1x pixel grid inside the 64k minimum width", () => {
+    expect(pushButtonLabelPadding(16 * 3, 3)).toEqual({ left: 72, right: 72 }); // "OK" at 3x
+    expect(pushButtonLabelPadding(15 * 3, 3)).toEqual({ left: 72, right: 75 }); // odd width: rounded down
+    expect(pushButtonLabelPadding(45 * 2, 2)).toEqual({ left: 24, right: 24 }); // wider than the minimum
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 6 }), fc.integer({ min: 0, max: 120 }), (k, glyphPixels) => {
+        const width = glyphPixels * k;
+        const { left, right } = pushButtonLabelPadding(width, k);
+        expect(left % k).toBe(0);
+        expect(left + width + right).toBe(Math.max(PUSH_BUTTON_MIN_WIDTH * k, width + 24 * k));
+        expect(right - left).toBeGreaterThanOrEqual(0);
+        expect(right - left).toBeLessThan(2 * k);
+      }),
+    );
+  });
+
+  it("snap the dialog onto the k-pixel grid", () => {
+    expect(gridSnapOffset(10.5, 1)).toBe(-0.5);
+    expect(gridSnapOffset(37, 3)).toBe(-1);
+    expect(gridSnapOffset(36, 3)).toBe(0);
+  });
+
+  it("keep the inset focus-visible outline and drop the outline-drawn default ring", () => {
+    expect(SHELL_RULES).toMatch(/\.s7-shell button:focus-visible,\s*\.s7-shell input:focus-visible \{[^}]*outline: calc\(2 \* var\(--px\)\) solid var\(--dark-bit\);/);
+    expect(SHELL_RULES).not.toMatch(/\.s7-button-default \{/);
   });
 });

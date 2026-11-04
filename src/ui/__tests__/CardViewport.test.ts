@@ -19,6 +19,7 @@ import { createUiStoreView } from "../App.tsx";
 import {
   CardViewport,
   PartSelection,
+  SelectionMarquee,
   cardRectStyle,
   clientToCardPoint,
   createBrowseInput,
@@ -31,6 +32,7 @@ import {
   HANDLE_SIZE,
   MIN_PART_SIZE,
 } from "../CardViewport.tsx";
+import { CARD_FRAME_WIDTH, computeUiScale, menuBarHeight } from "../FloatingTools.tsx";
 import { createStarterStack } from "../starterStack.ts";
 import { createModalManager, System7Shell } from "../System7Shell.tsx";
 
@@ -313,6 +315,14 @@ function viewportElement(store: HexStore) {
   });
 }
 
+/** Content size and frame (border) width of the rendered `.hc-viewport`, in CSS px. */
+function viewportBox(html: string): { width: number; height: number; frame: number } {
+  const match = html.match(/<div class="hc-viewport" style="width:(\d+)px;height:(\d+)px;border-width:(\d+)px"/);
+  expect(match).not.toBeNull();
+  const [, width, height, frame] = match!.map(Number);
+  return { width, height, frame };
+}
+
 /** Renders `child` inside a System7Shell with a fixed UI scale k. */
 function renderInShell(store: HexStore, k: number, child: ReactNode): string {
   return renderToStaticMarkup(createElement(System7Shell, {
@@ -339,13 +349,45 @@ describe("CardViewport markup", () => {
 });
 
 describe("UI scale k (Requirement 2.10)", () => {
-  it("shows the canvas at 512k x 342k CSS pixels with the shell's k; the backing store stays 512x342", () => {
+  it("shows the canvas at 512k x 342k CSS pixels inside a CARD_FRAME_WIDTH * k frame; the backing store stays 512x342", () => {
     for (const k of [1, 3]) {
       const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
       const html = renderInShell(store, k, viewportElement(store));
       const size = `width:${512 * k}px;height:${342 * k}px`;
-      expect(html).toContain(`<div class="hc-viewport" style="${size}"`);
       expect(html).toMatch(new RegExp(`<canvas class="hc-card-canvas" width="512" height="342" style="${size}"`));
+      const box = viewportBox(html);
+      expect(box).toEqual({ width: 512 * k, height: 342 * k, frame: CARD_FRAME_WIDTH * k });
+      // Content-box sizing (asserted on the CSS below): the border adds to the canvas size.
+      expect(box.width + 2 * box.frame).toBe((512 + 4) * k);
+      expect(box.height + 2 * box.frame).toBe((342 + 4) * k);
+    }
+  });
+
+  it("the framed card plus the 20k menu bar exactly fills the exact-fit window of computeUiScale", () => {
+    const [windowWidth, windowHeight] = [1548, 1098];
+    const k = computeUiScale(windowWidth, windowHeight);
+    expect(k).toBe(3);
+    const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
+    const box = viewportBox(renderInShell(store, k, viewportElement(store)));
+    expect(box.width + 2 * box.frame).toBe(windowWidth);
+    expect(box.height + 2 * box.frame + menuBarHeight(k)).toBe(windowHeight);
+  });
+
+  it("draws the selection marquee as k-scaled crisp SVG pixel art at the selection rect", () => {
+    const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
+    const rect = { x: 10, y: 20, width: 80, height: 30 };
+    for (const k of [1, 3]) {
+      const html = renderInShell(store, k, createElement(SelectionMarquee, { rect }));
+      expect(html).toContain(`class="hc-marquee" style="left:${10 * k}px;top:${20 * k}px;width:${80 * k}px;height:${30 * k}px"`);
+      expect(html).toContain(`<svg class="hc-marquee-art" width="${80 * k}" height="${30 * k}" shape-rendering="crispEdges"`);
+      expect(html).toMatch(new RegExp(`<pattern [^>]*width="2" height="2" patternUnits="userSpaceOnUse" patternTransform="scale\\(${k}\\)"`));
+      expect(html).toContain('fill="var(--light-bit)"');
+      expect(html).toContain('fill="var(--dark-bit)"');
+      // Four 1x-wide edges: top, bottom, left, right.
+      expect(html).toContain(`<rect x="0" y="${29 * k}" width="${80 * k}" height="${k}"`);
+      expect(html).toContain(`<rect x="${79 * k}" y="0" width="${k}" height="${30 * k}"`);
+      expect(html.match(/fill="url\(#/g)).toHaveLength(4);
+      expect(html).not.toMatch(/dashed|dotted/);
     }
   });
 
@@ -371,15 +413,16 @@ describe("UI scale k (Requirement 2.10)", () => {
     expect(clientToCardPoint(3 * 10 + 2, 60 + 3 * 200 + 2, rect)).toEqual({ x: 10, y: 200 });
   });
 
-  it("expresses every .hc-* length in 1x pixels times var(--px)", () => {
-    const viewportRules = SHELL_CSS.slice(SHELL_CSS.indexOf("/* Card viewport"));
-    expect(viewportRules).toMatch(/\.hc-viewport \{/);
-    expect(viewportRules).toMatch(/outline: calc\(2 \* var\(--px\)\) solid var\(--dark-bit\);/);
+  it("keeps the .hc-* rules 1-bit: solid lines only, no blur, gradient, filter or partial opacity, lengths in var(--px)", () => {
+    const viewportRules = SHELL_CSS.slice(SHELL_CSS.indexOf("/* Card viewport")).replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(viewportRules).toMatch(/\.hc-viewport \{[^}]*box-sizing: content-box;[^}]*border: 0 solid var\(--dark-bit\);/);
+    expect(viewportRules).not.toMatch(/\boutline\b/);
+    expect(viewportRules).toMatch(/\.hc-card-canvas \{[^}]*image-rendering: pixelated;/);
     expect(viewportRules).toMatch(/\.hc-handle \{[^}]*border: calc\(1 \* var\(--px\)\) solid/);
-    expect(viewportRules).toMatch(/\.hc-marquee \{[^}]*border: calc\(1 \* var\(--px\)\) dashed/);
-    const bare = viewportRules
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .match(/\b\d+(\.\d+)?px\b/g) ?? [];
+    expect(viewportRules).toMatch(/\.hc-marquee-art \{[^}]*shape-rendering: crispEdges;/);
+    expect(viewportRules).not.toMatch(/dashed|dotted|border-radius|gradient|blur|filter|transform/);
+    for (const [, value] of viewportRules.matchAll(/opacity:\s*([\d.]+)/g)) expect(["0", "1"]).toContain(value);
+    const bare = viewportRules.match(/\b\d+(\.\d+)?px\b/g) ?? [];
     expect(bare.filter((value) => value !== "0px")).toEqual([]);
   });
 });

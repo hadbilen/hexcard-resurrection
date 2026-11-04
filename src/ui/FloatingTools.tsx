@@ -23,18 +23,19 @@ export const ICON_SIZE = 16;
 /**
  * SVG path data for rows of pixel art, `#` = dark pixel and anything else = light. Horizontal runs
  * become one `M x y h n v1 h-n z` rectangle each, so the path stays small and has no diagonals.
+ * `ink` selects another character, for pixel art with more than one fill (e.g. frame and face).
  */
-export function pixelRowsToPath(rows: readonly string[]): string {
+export function pixelRowsToPath(rows: readonly string[], ink = "#"): string {
   const commands: string[] = [];
   rows.forEach((row, y) => {
     let x = 0;
     while (x < row.length) {
-      if (row[x] !== "#") {
+      if (row[x] !== ink) {
         x++;
         continue;
       }
       const start = x;
-      while (x < row.length && row[x] === "#") x++;
+      while (x < row.length && row[x] === ink) x++;
       const length = x - start;
       commands.push(`M${start} ${y}h${length}v1h-${length}z`);
     }
@@ -376,18 +377,28 @@ export function menuBarHeight(scale: number): number {
 }
 
 /**
+ * Width at 1x of the frame the card viewport draws around the card, on every side. At UI scale k
+ * the frame is `CARD_FRAME_WIDTH * k` CSS pixels wide; `computeUiScale` reserves that space so the
+ * frame is never clipped, and the card viewport draws its frame inside it.
+ */
+export const CARD_FRAME_WIDTH = 2;
+
+/**
  * Requirement 2.10: the one integer scale factor k of the whole studio UI for a viewport of
  * `viewportWidth` x `viewportHeight` CSS pixels (normally `window.innerWidth` / `innerHeight`).
  *
- * k is the largest integer >= 1 for which the card (512k x 342k) fits in the space left below a
- * menu bar of 20k, i.e. `computeIntegerScale(width, height - 20k) >= k`. That condition is
- * monotone in k (512k <= width and 362k <= height), so the search starts at the scale the card
- * alone would get, `computeIntegerScale(width, height)`, an upper bound, and steps down until the
- * menu bar fits as well. Viewports too small for even the 1x UI give 1 (the desktop scrolls).
+ * k is the largest integer >= 1 for which the card (512k x 342k) plus its frame
+ * (`CARD_FRAME_WIDTH * k` on every side) fits in the space left below a menu bar of 20k:
+ * `(512 + 2 * 2)k <= width` and `(342 + 2 * 2)k + 20k <= height`, tested as
+ * `computeIntegerScale(width - 4k, height - 20k - 4k) >= k`. That condition is monotone in k, so
+ * the search starts at the scale the card alone would get, `computeIntegerScale(width, height)`,
+ * an upper bound, and steps down until the frame and the menu bar fit as well. Viewports too
+ * small for even the 1x UI give 1 (the desktop scrolls).
  */
 export function computeUiScale(viewportWidth: number, viewportHeight: number): number {
   for (let k = computeIntegerScale(viewportWidth, viewportHeight); k > 1; k--) {
-    if (computeIntegerScale(viewportWidth, viewportHeight - menuBarHeight(k)) >= k) return k;
+    const frame = 2 * CARD_FRAME_WIDTH * k;
+    if (computeIntegerScale(viewportWidth - frame, viewportHeight - menuBarHeight(k) - frame) >= k) return k;
   }
   return 1;
 }

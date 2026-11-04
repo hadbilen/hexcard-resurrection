@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { AuthoringTool } from "../../core/schema.ts";
 import { PATTERNS } from "../../engine/graphics/patterns.ts";
 import {
+  CARD_FRAME_WIDTH,
   FloatingTools,
   ICON_SIZE,
   MENU_BAR_BASE_HEIGHT,
@@ -68,6 +69,10 @@ describe("pixel paths", () => {
     expect(pixelRowsToPath(["##.#", "...."])).toBe("M0 0h2v1h-2zM3 0h1v1h-1z");
   });
 
+  it("can draw the runs of another character", () => {
+    expect(pixelRowsToPath(["#++#", ".+.."], "+")).toBe("M1 0h2v1h-2zM1 1h1v1h-1z");
+  });
+
   it("draws exactly the set bits of any pattern", () => {
     fc.assert(
       fc.property(fc.uint8Array({ minLength: 8, maxLength: 8 }), (bytes) => {
@@ -99,18 +104,39 @@ describe("computeUiScale (Requirement 2.10)", () => {
     expect([1, 2, 3, 4].map(menuBarHeight)).toEqual([20, 40, 60, 80]);
   });
 
-  it("fits the card (512k x 342k) plus the 20k menu bar in the viewport", () => {
-    expect(computeUiScale(512, 362)).toBe(1);
-    expect(computeUiScale(1024, 724)).toBe(2);
-    expect(computeUiScale(1536, 1086)).toBe(3); // 342*3 + 20*3 = 1086 exactly
-    expect(computeUiScale(3000, 3000)).toBe(5); // width-bound: 512*5 = 2560
+  it("reserves a 2-pixel card frame on every side", () => {
+    expect(CARD_FRAME_WIDTH).toBe(2);
   });
 
-  it("drops to a smaller k where the card alone would fit but the menu bar does not", () => {
-    expect(computeUiScale(1536, 1085)).toBe(2); // one pixel short of 1086
-    expect(computeUiScale(1536, 1026)).toBe(2); // 342*3: the card fits, the 60 px menu bar does not
+  it("fits the card (512k x 342k), its 2k frame on every side and the 20k menu bar", () => {
+    expect(computeUiScale(516, 366)).toBe(1);
+    expect(computeUiScale(1032, 732)).toBe(2); // (512 + 4) * 2, (342 + 4) * 2 + 40
+    expect(computeUiScale(1548, 1098)).toBe(3); // the new exact fit for k = 3
+    expect(computeUiScale(3000, 3000)).toBe(5); // width-bound: 516 * 5 = 2580
+  });
+
+  it("drops to a smaller k where the card fits but its frame or the menu bar does not", () => {
+    expect(computeUiScale(1536, 1086)).toBe(2); // the old exact fit for k = 3 leaves no room for the frame
+    expect(computeUiScale(1024, 724)).toBe(1); // the old exact fit for k = 2
+    expect(computeUiScale(1547, 1098)).toBe(2); // one pixel short in width
+    expect(computeUiScale(1548, 1097)).toBe(2); // one pixel short in height
     expect(computeUiScale(1920, 1080)).toBe(2); // the card alone would get 3
     expect(computeUiScale(2560, 1440)).toBe(3); // the card alone would get 4
+  });
+
+  it("always leaves room for the card, the frame and the menu bar at k > 1", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 8000 }), fc.integer({ min: 0, max: 8000 }), (width, height) => {
+        const k = computeUiScale(width, height);
+        const frame = 2 * CARD_FRAME_WIDTH;
+        if (k > 1) {
+          expect((512 + frame) * k).toBeLessThanOrEqual(width);
+          expect((342 + frame) * k + menuBarHeight(k)).toBeLessThanOrEqual(height);
+        }
+        // k is the largest such scale.
+        expect((512 + frame) * (k + 1) > width || (342 + frame) * (k + 1) + menuBarHeight(k + 1) > height).toBe(true);
+      }),
+    );
   });
 
   it("gives 1 for tiny or invalid viewports", () => {

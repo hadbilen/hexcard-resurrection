@@ -15,6 +15,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -34,6 +35,7 @@ import {
   clampPaletteOrigin,
   computeUiScale,
   menuBarHeight,
+  pixelRowsToPath,
   type Point,
 } from "./FloatingTools.tsx";
 import "./system7.css";
@@ -49,10 +51,13 @@ import "./system7.css";
  * Contract for consumers:
  * - Read it with `useUiScale()` inside the shell's subtree. Outside a shell it is 1.
  * - k is an integer >= 1, computed by `computeUiScale(window.innerWidth, window.innerHeight)`:
- *   the card at 512k x 342k CSS pixels plus the 20k menu bar fit in the window. It is recomputed
- *   on window `resize`, and consumers re-render when it changes.
+ *   the card at 512k x 342k CSS pixels, a card frame of `CARD_FRAME_WIDTH * k` (FloatingTools.tsx)
+ *   on every side and the 20k menu bar fit in the window. It is recomputed on window `resize`,
+ *   and consumers re-render when it changes.
  * - The card viewport draws the card at exactly 512k x 342k CSS pixels with this k, so the menu
  *   bar, menus, dialogs, tools palette and card share one scale. It must not derive its own scale.
+ *   It draws its frame, `CARD_FRAME_WIDTH * k` wide, inside the space k reserves around the card,
+ *   so the frame is never clipped, not even when the card exactly fills the desktop.
  * - In CSS the same value is available on `.s7-shell` and below as `--k` (unitless), `--px`
  *   (`k` CSS pixels, one 1x pixel) and `--menubar-height` (20k px).
  */
@@ -214,6 +219,165 @@ const BOMB_ICON: readonly string[] = [
   "................",
 ];
 
+// ---------------------------------------------------------------------------------------------
+// 1-bit pixel art for the chrome (steering tech.md, 1-Bit Fidelity Rules 6)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Menu check mark, 16x16 at 1x, sitting on the text baseline (row 13) like a glyph. The bundled
+ * fonts have no U+2713, and a fallback system font would draw it with anti-aliasing.
+ */
+export const CHECK_MARK: readonly string[] = [
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+  "...........##...",
+  "..........##....",
+  ".........##.....",
+  "...##...##......",
+  "....##.##.......",
+  ".....###........",
+  "......#.........",
+  "................",
+  "................",
+  "................",
+];
+
+/** Push button height at 1x (System 7 dialog buttons are 20 px high). */
+export const PUSH_BUTTON_HEIGHT = 20;
+/** Horizontal label padding and minimum width of a push button at 1x. */
+export const PUSH_BUTTON_PADDING = 12;
+export const PUSH_BUTTON_MIN_WIDTH = 64;
+/** The default button ring: 3 px thick, drawn around the button rect outset by 4 px at 1x. */
+export const DEFAULT_RING_OUTSET = 4;
+
+/**
+ * Top-left corner of a push button: QuickDraw `FrameRoundRect` with an 8x8 oval.
+ * `#` = frame (dark), `+` = face (light, dark while pressed), `.` = outside (not drawn).
+ */
+export const PUSH_BUTTON_CORNER: readonly string[] = [
+  "..##",
+  ".#++",
+  "#+++",
+  "#+++",
+];
+
+/**
+ * Top-left corner of the default button ring: `PenSize(3, 3)` and `FrameRoundRect` with a 16x16
+ * oval around the button rect outset by 4, as in Inside Macintosh. `#` = ring, `.` = not drawn.
+ */
+export const DEFAULT_RING_CORNER: readonly string[] = [
+  ".....###",
+  "...#####",
+  "..######",
+  ".#####..",
+  ".###....",
+  "####....",
+  "###.....",
+  "###.....",
+];
+
+const mirrorRows = (rows: readonly string[]): string[] => rows.map((row) => [...row].reverse().join(""));
+
+/** A full-height cap: the corner, the straight side repeated, and the corner flipped vertically. */
+function capRows(corner: readonly string[], height: number): string[] {
+  const side = corner[corner.length - 1];
+  return [...corner, ...Array<string>(height - 2 * corner.length).fill(side), ...[...corner].reverse()];
+}
+
+/** Left and right caps of a push button (4x20) and of the default ring (8x28), at 1x. */
+export const PUSH_BUTTON_LEFT_CAP: readonly string[] = capRows(PUSH_BUTTON_CORNER, PUSH_BUTTON_HEIGHT);
+export const PUSH_BUTTON_RIGHT_CAP: readonly string[] = mirrorRows(PUSH_BUTTON_LEFT_CAP);
+export const DEFAULT_RING_LEFT_CAP: readonly string[] = capRows(DEFAULT_RING_CORNER, PUSH_BUTTON_HEIGHT + 2 * DEFAULT_RING_OUTSET);
+export const DEFAULT_RING_RIGHT_CAP: readonly string[] = mirrorRows(DEFAULT_RING_LEFT_CAP);
+
+/** Pixel art with a frame (`#`, dark) and a face (`+`), on a 1x grid enlarged k times. */
+function PixelArt({ rows, scale }: { rows: readonly string[]; scale: number }) {
+  const width = rows[0].length;
+  const height = rows.length;
+  const face = pixelRowsToPath(rows, "+");
+  return (
+    <svg
+      className="s7-pixel-art"
+      width={width * scale}
+      height={height * scale}
+      viewBox={`0 0 ${width} ${height}`}
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {face ? <path className="s7-art-face" d={face} /> : null}
+      <path className="s7-art-frame" d={pixelRowsToPath(rows)} />
+    </svg>
+  );
+}
+
+/**
+ * The System 7 rounded push button frame (and the default ring), drawn under the label of a
+ * `.s7-button`. It must follow the label text node, so the label stays the button's first child.
+ */
+export function PushButtonArt({ isDefault }: { isDefault: boolean }) {
+  const k = useUiScale();
+  return (
+    <>
+      <span className="s7-button-art" aria-hidden="true">
+        <PixelArt rows={PUSH_BUTTON_LEFT_CAP} scale={k} />
+        <span className="s7-button-edge" />
+        <PixelArt rows={PUSH_BUTTON_RIGHT_CAP} scale={k} />
+      </span>
+      {isDefault ? (
+        <span className="s7-button-ring" aria-hidden="true">
+          <PixelArt rows={DEFAULT_RING_LEFT_CAP} scale={k} />
+          <span className="s7-button-edge" />
+          <PixelArt rows={DEFAULT_RING_RIGHT_CAP} scale={k} />
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Left and right padding (CSS px) that centre a label of `textWidth` CSS px in a push button at
+ * UI scale k, rounded down to whole 1x pixels, as QuickDraw centres button titles. CSS
+ * `text-align: center` would put an odd leftover half a CSS pixel off the grid, and Chrome draws
+ * text at a half-pixel x with grey anti-aliasing.
+ */
+export function pushButtonLabelPadding(textWidth: number, k: number): { left: number; right: number } {
+  const width = Math.ceil(textWidth);
+  const free = Math.max((PUSH_BUTTON_MIN_WIDTH - 2 * PUSH_BUTTON_PADDING) * k - width, 0);
+  const half = Math.floor(free / (2 * k)) * k;
+  return { left: PUSH_BUTTON_PADDING * k + half, right: PUSH_BUTTON_PADDING * k + free - half };
+}
+
+/** Offset (CSS px) that moves a box whose edge is at `position` onto the k-pixel grid. */
+export function gridSnapOffset(position: number, k: number): number {
+  return Math.floor(position / k) * k - position;
+}
+
+/**
+ * Puts all dialog text on whole pixels after layout: centres each push button label with
+ * `pushButtonLabelPadding`, then moves the (flex-centred) dialog onto the k-pixel grid.
+ */
+function snapModalLayout(dialog: HTMLElement, k: number): void {
+  for (const button of dialog.querySelectorAll<HTMLButtonElement>(".s7-button")) {
+    const label = button.firstChild;
+    if (!(label instanceof Text)) continue;
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const { left, right } = pushButtonLabelPadding(range.getBoundingClientRect().width, k);
+    button.style.paddingLeft = `${left}px`;
+    button.style.paddingRight = `${right}px`;
+  }
+  dialog.style.left = "0px";
+  dialog.style.top = "0px";
+  const box = dialog.getBoundingClientRect();
+  dialog.style.left = `${gridSnapOffset(box.left, k)}px`;
+  dialog.style.top = `${gridSnapOffset(box.top, k)}px`;
+}
+
 function focusables(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>("button, input")].filter((element) => !element.hasAttribute("disabled"));
 }
@@ -230,6 +394,16 @@ function ModalDialog({ request, modals }: { request: ModalRequest; modals: Modal
     if (request.kind === "ask") inputRef.current?.select();
     else defaultButtonRef.current?.focus();
   }, [request.kind]);
+
+  // Before the first paint and after every resize: labels and the dialog on whole pixels.
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const snap = (): void => snapModalLayout(dialog, k);
+    snap();
+    window.addEventListener("resize", snap);
+    return () => window.removeEventListener("resize", snap);
+  }, [k]);
 
   const cancelValue = request.kind === "ask" ? "" : undefined;
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -290,9 +464,11 @@ function ModalDialog({ request, modals }: { request: ModalRequest; modals: Modal
               <>
                 <button type="button" className="s7-button" onClick={() => modals.settle(request.id, "")}>
                   Cancel
+                  <PushButtonArt isDefault={false} />
                 </button>
                 <button type="button" className="s7-button s7-button-default" onClick={() => modals.settle(request.id, text)}>
                   OK
+                  <PushButtonArt isDefault />
                 </button>
               </>
             ) : (
@@ -307,6 +483,7 @@ function ModalDialog({ request, modals }: { request: ModalRequest; modals: Modal
                     onClick={() => modals.settle(request.id, label)}
                   >
                     {label}
+                    <PushButtonArt isDefault={isDefault} />
                   </button>
                 );
               })
@@ -533,6 +710,58 @@ function EditBackgroundStripes() {
 }
 
 /**
+ * The tear-off line at the top of the Tools menu: one 1x row of alternating dark and light
+ * pixels (a 2x1 tile enlarged k times), in currentColor.
+ */
+function TearOffStrip() {
+  const patternId = useId();
+  const k = useUiScale();
+  return (
+    <div className="s7-tear-strip" aria-hidden="true">
+      <svg className="s7-tear-strip-art" width="100%" height={k} shapeRendering="crispEdges" focusable="false" data-testid="tear-off-pattern">
+        <defs>
+          <pattern id={patternId} width={2} height={1} patternUnits="userSpaceOnUse" patternTransform={`scale(${k})`}>
+            <rect width={1} height={1} fill="currentColor" />
+          </pattern>
+        </defs>
+        <rect width="100%" height={k} fill={`url(#${patternId})`} />
+      </svg>
+    </div>
+  );
+}
+
+/** An open menu: its items, check marks drawn as pixel art, and the tear-off line for Tools. */
+export function MenuDropdown({ menu, onRun }: { menu: MenuModel; onRun: (command: ShellCommand) => void }) {
+  const k = useUiScale();
+  return (
+    <div className="s7-dropdown" role="menu" aria-label={menu.label}>
+      {menu.id === "tools" ? <TearOffStrip /> : null}
+      {menu.entries.map((entry, index) =>
+        entry.kind === "separator" ? (
+          <div key={index} className="s7-separator" role="separator" />
+        ) : (
+          <button
+            key={index}
+            type="button"
+            className="s7-menu-item"
+            role={entry.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+            aria-checked={entry.checked}
+            disabled={entry.disabled}
+            onClick={() => onRun(entry.command)}
+          >
+            <span className="s7-check" aria-hidden="true">
+              {entry.checked ? <PixelIcon rows={CHECK_MARK} scale={k} /> : null}
+            </span>
+            <span className="s7-menu-label">{entry.label}</span>
+            <span className="s7-shortcut">{entry.shortcut ?? ""}</span>
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
+/**
  * Keeps menu titles from taking focus on a pointer press (System 7 menus never take focus), so
  * a title can only be focused, and shown inverted through `:focus-visible`, from the keyboard.
  */
@@ -700,32 +929,7 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
               >
                 {menu.label}
               </button>
-              {open ? (
-                <div className="s7-dropdown" role="menu" aria-label={menu.label}>
-                  {menu.id === "tools" ? <div className="s7-tear-strip" aria-hidden="true" /> : null}
-                  {menu.entries.map((entry, index) =>
-                    entry.kind === "separator" ? (
-                      <div key={index} className="s7-separator" role="separator" />
-                    ) : (
-                      <button
-                        key={index}
-                        type="button"
-                        className="s7-menu-item"
-                        role={entry.checked === undefined ? "menuitem" : "menuitemcheckbox"}
-                        aria-checked={entry.checked}
-                        disabled={entry.disabled}
-                        onClick={() => runCommand(entry.command)}
-                      >
-                        <span className="s7-check" aria-hidden="true">
-                          {entry.checked ? "\u2713" : ""}
-                        </span>
-                        <span className="s7-menu-label">{entry.label}</span>
-                        <span className="s7-shortcut">{entry.shortcut ?? ""}</span>
-                      </button>
-                    ),
-                  )}
-                </div>
-              ) : null}
+              {open ? <MenuDropdown menu={menu} onRun={runCommand} /> : null}
             </div>
           );
         })}
