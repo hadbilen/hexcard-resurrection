@@ -1,6 +1,6 @@
 # Implementation Plan: 1-Bit Canvas, Codec, Text & Transitions
 
-- [ ] 1. Implement the bitmap codec
+- [x] 1. Implement the bitmap codec
   - Copy the reference implementation of `hexcard_design_spec.md` §5.4 into `src/engine/graphics/rleCodec.ts`
   - Port the round-trip, fuzz and corruption tests; add a fast-check round-trip property
   - _Requirements: 1.1, 1.2, 1.3, 1.4_
