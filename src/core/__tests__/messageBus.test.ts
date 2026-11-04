@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import fc from "fast-check";
 import type { HexStatementNode } from "../ast.ts";
 import {
   buildMessagePath,
   createMessageBus,
+  IDLE_INTERVAL_MS,
   isAbortShortcut,
+  MAX_QUEUE_LENGTH,
   resolveBrowseClick,
   resolveRelativeCard,
   type HandlerRunner,
@@ -12,7 +15,7 @@ import {
 } from "../messageBus.ts";
 import type { HexButtonPart, HexCard, HexFieldPart, HexStack } from "../schema.ts";
 import { createHexStore, readFieldText, type CompiledScript } from "../store.ts";
-import { resolveObjectTarget, runHandler, type DispatchContext, type HexHost } from "../vm.ts";
+import { resolveObjectTarget, runHandler, suspend, type DispatchContext, type HexHost } from "../vm.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Fixture: crd_1 and crd_2 use bkg_1, crd_3 uses bkg_2.
@@ -95,16 +98,25 @@ function makeStack(scripts: ScriptSet): HexStack {
 const answer: HexStatementNode = { kind: "ShowAnswerDialog", prompt: { kind: "Literal", value: "wait" }, buttons: [] };
 const pass = (eventName: string): HexStatementNode => ({ kind: "PassEvent", eventName });
 const goNext: HexStatementNode = { kind: "GoToCard", target: { type: "relative", dir: "next" } };
+const ask: HexStatementNode = { kind: "ShowAskDialog", prompt: { kind: "Literal", value: "Name?" } };
+const fetchJson: HexStatementNode = {
+  kind: "FetchJson", url: { kind: "Literal", value: "https://example.com" }, destination: { scope: "variable", name: "x" },
+};
+const wait: HexStatementNode = { kind: "Wait", amount: { kind: "Literal", value: 1 }, unit: "seconds" };
 
 interface SetupOptions {
   visible?: boolean;
   modal?: boolean;
+  /** `go` plays a visual-effect transition that stays suspended until released. */
+  transition?: boolean;
+  /** Use the bus's default `setInterval` scheduler instead of the manual idle tick. */
+  realInterval?: boolean;
 }
 
 /**
- * Real store and VM. The injected handler runner logs every handler call and executes `go`
- * through `host.goToCard` (the VM's `go` belongs to spec 02 task 5); all other statements run in
- * the real VM. `answer` suspends until `releaseAnswers()`.
+ * Real store and VM. The injected handler runner logs every handler call and executes `go` and
+ * `wait` itself (the VM's `go` and `wait` belong to spec 02 task 5); all other statements run in
+ * the real VM. `answer`, `ask`, `fetch`, `wait` and transitions suspend until `releaseAnswers()`.
  */
 function setup(scripts: ScriptSet, options: SetupOptions = {}) {
   const store = createHexStore({ stack: makeStack(scripts), compile });
@@ -113,10 +125,13 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
   const contexts = new Set<DispatchContext>();
   const errors: unknown[] = [];
   const warnings: string[] = [];
-  const pendingAnswers: ((value: string) => void)[] = [];
+  const pendingAnswers: (() => void)[] = [];
   const env = { visible: options.visible ?? true, modal: options.modal ?? false };
   let idleTick: (() => void) | undefined;
   let bus: MessageBus | undefined;
+
+  /** A host promise that settles with `value` once released. */
+  const hold = <T,>(value: T): Promise<T> => new Promise<T>((resolve) => pendingAnswers.push(() => resolve(value)));
 
   const host: HexHost = {
     readField: (ref) => readFieldText(store.getSnapshot().stack, ref.cardId, ref.layer, ref.partId),
@@ -124,12 +139,13 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
     resolveObject: (t, me) => resolveObjectTarget(store.getSnapshot(), t, me),
     goToCard: (target, _effect, ctx) => {
       if (target.type !== "relative" || target.dir === "back") throw new Error("unsupported in this test");
-      return bus!.changeCard(resolveRelativeCard(store.getSnapshot(), target.dir), ctx);
+      const transition = options.transition ? () => hold<void>(undefined) : undefined;
+      return bus!.changeCard(resolveRelativeCard(store.getSnapshot(), target.dir), ctx, transition);
     },
     playSound: () => undefined,
-    showAnswer: () => new Promise<string>((resolve) => pendingAnswers.push(resolve)),
-    showAsk: (_prompt, defaultAnswer) => Promise.resolve(defaultAnswer),
-    fetchJson: () => Promise.resolve({ ok: false, reason: "blocked url" }),
+    showAnswer: () => hold("OK"),
+    showAsk: (_prompt, defaultAnswer) => hold(defaultAnswer),
+    fetchJson: () => hold({ ok: false as const, reason: "blocked url" }),
     now: () => ({ date: "1/1/26", time: "12:00 PM", ticks: 0, seconds: 0, mouseH: 0, mouseV: 0 }),
   };
 
@@ -141,6 +157,10 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
       await h.goToCard(handler.body[0].target as { type: "relative"; dir: "next" }, null, ctx);
       return "handled";
     }
+    if (handler.body[0]?.kind === "Wait") {
+      await suspend(ctx, hold<void>(undefined));
+      return "handled";
+    }
     return runHandler(handler, params, me, ctx, h);
   };
 
@@ -150,19 +170,21 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
     runHandler: runner,
     isPageVisible: () => env.visible,
     isModalOpen: () => env.modal,
-    scheduleInterval: (callback) => {
-      idleTick = callback;
-      return () => {
-        idleTick = undefined;
-      };
-    },
+    scheduleInterval: options.realInterval
+      ? undefined
+      : (callback) => {
+        idleTick = callback;
+        return () => {
+          idleTick = undefined;
+        };
+      },
     onError: (error) => errors.push(error),
     warn: (message) => warnings.push(message),
   });
 
   const releaseAnswers = async (): Promise<void> => {
     while (pendingAnswers.length > 0) {
-      pendingAnswers.shift()!("OK");
+      pendingAnswers.shift()!();
       await settle();
     }
   };
@@ -210,6 +232,24 @@ describe("message path", () => {
     bus.post(msg("mouseUp", "prt_btn", "a", 1));
     await settle();
     expect(log).toEqual(["prt_btn.mouseUp(a,1)", "crd_1.mouseUp(a,1)", "stk_1.mouseUp(a,1)"]);
+  });
+
+  it("ends the passing handler immediately: statements after pass never run", async () => {
+    const { bus, log, pendingAnswers } = setup({ prt_btn: { mouseUp: [pass("mouseUp"), answer] }, crd_1: { mouseUp: [] } });
+    bus.post(msg("mouseUp", "prt_btn"));
+    await settle();
+    expect(log).toEqual(["prt_btn.mouseUp", "crd_1.mouseUp"]);
+    expect(pendingAnswers).toHaveLength(0); // the answer after pass was never shown
+    expect(bus.isRunning()).toBe(false);
+  });
+
+  it("delivers background-part messages through the current card", async () => {
+    const { bus, store, log } = setup({ crd_2: { mouseUp: [pass("mouseUp")] }, bkg_1: { mouseUp: [] } });
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    expect(bus.buildPath("prt_lbl")).toEqual(["prt_lbl", "crd_2", "bkg_1", "stk_1"]);
+    bus.post(msg("mouseUp", "prt_lbl"));
+    await settle();
+    expect(log).toEqual(["crd_2.mouseUp", "bkg_1.mouseUp"]);
   });
 
   it("ignores messages nobody handles", async () => {
@@ -344,6 +384,42 @@ describe("dispatch queue", () => {
     expect(bus.isRunning()).toBe(false);
   });
 
+  it.each([
+    ["ask", ask],
+    ["fetch", fetchJson],
+    ["wait", wait],
+  ] as const)("keeps a dispatch suspended in %s running and queues new messages", async (_label, statement) => {
+    const { bus, log, releaseAnswers } = setup({ crd_1: { mouseUp: [statement], keyDown: [] } });
+    bus.post(msg("mouseUp", "crd_1"));
+    await settle();
+    bus.post(msg("keyDown", "crd_1", "a"));
+    await settle();
+    expect(bus.isRunning()).toBe(true);
+    expect(bus.pendingCount()).toBe(1);
+    expect(log).toEqual(["crd_1.mouseUp"]);
+
+    await releaseAnswers();
+    expect(log).toEqual(["crd_1.mouseUp", "crd_1.keyDown(a)"]);
+    expect(bus.isRunning()).toBe(false);
+  });
+
+  it("keeps a dispatch suspended in a visual-effect transition running", async () => {
+    const { bus, store, log, releaseAnswers } = setup(
+      { prt_btn: { mouseUp: [goNext] }, crd_2: { openCard: [] }, crd_1: { keyDown: [] } },
+      { transition: true },
+    );
+    bus.post(msg("mouseUp", "prt_btn"));
+    bus.post(msg("keyDown", "crd_1", "a"));
+    await settle();
+    expect(store.getSnapshot().currentCardId).toBe("crd_2"); // card changed, effect still playing
+    expect(log).toEqual(["prt_btn.mouseUp"]);
+    expect(bus.isRunning()).toBe(true);
+    expect(bus.pendingCount()).toBe(1);
+
+    await releaseAnswers();
+    expect(log).toEqual(["prt_btn.mouseUp", "crd_2.openCard", "crd_1.keyDown(a)"]);
+  });
+
   it("keeps at most 32 entries, dropping the oldest with a warning", async () => {
     const { bus, log, warnings, releaseAnswers } = setup({ crd_1: { mouseUp: [answer], mouseDown: [] } });
     bus.post(msg("mouseUp", "crd_1"));
@@ -378,7 +454,66 @@ describe("dispatch queue", () => {
   });
 });
 
+describe("dispatch queue model (Requirements 3.1, 3.3, 3.4)", () => {
+  const DISCRETE = ["mouseDown", "mouseUp", "keyDown"] as const;
+  const CONTINUOUS = ["mouseStillDown", "mouseWithin", "idle"] as const;
+  const handlers: Scripts = Object.fromEntries([...DISCRETE, ...CONTINUOUS].map((name) => [name, []]));
+
+  it("delivers any burst posted during a running dispatch in FIFO order with coalescing and overflow", async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.array(fc.constantFrom(...DISCRETE, ...CONTINUOUS), { maxLength: 80 }), async (names) => {
+        const { bus, log, warnings, releaseAnswers } = setup({ crd_1: { ...handlers, suspend: [answer] } });
+        bus.post(msg("suspend", "crd_1"));
+
+        // Model of §3.2: FIFO, one pending entry per continuous kind (newest params, old position),
+        // at most MAX_QUEUE_LENGTH entries with the oldest dropped on overflow.
+        const model: { name: string; i: number }[] = [];
+        let overflows = 0;
+        names.forEach((name, i) => {
+          bus.post(msg(name, "crd_1", i));
+          const pending = (CONTINUOUS as readonly string[]).includes(name) ? model.findIndex((m) => m.name === name) : -1;
+          if (pending >= 0) {
+            model[pending] = { name, i };
+            return;
+          }
+          model.push({ name, i });
+          if (model.length > MAX_QUEUE_LENGTH) {
+            model.shift();
+            overflows += 1;
+          }
+        });
+        expect(bus.pendingCount()).toBe(model.length);
+        expect(warnings).toHaveLength(overflows);
+
+        await releaseAnswers();
+        expect(log).toEqual(["crd_1.suspend", ...model.map((m) => `crd_1.${m.name}(${m.i})`)]);
+        expect(bus.isRunning()).toBe(false);
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
 describe("idle timer (Requirement 3.5)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("posts idle every 200 ms with the default interval scheduler", async () => {
+    vi.useFakeTimers();
+    const { bus, log } = setup({ crd_1: { idle: [] } }, { realInterval: true });
+    await vi.advanceTimersByTimeAsync(IDLE_INTERVAL_MS - 1);
+    expect(log).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(log).toEqual(["crd_1.idle"]);
+    await vi.advanceTimersByTimeAsync(IDLE_INTERVAL_MS * 2);
+    expect(log).toEqual(["crd_1.idle", "crd_1.idle", "crd_1.idle"]);
+
+    bus.dispose();
+    await vi.advanceTimersByTimeAsync(IDLE_INTERVAL_MS * 5);
+    expect(log).toHaveLength(3);
+  });
+
   it("posts idle to the current card only while every condition holds", async () => {
     const { bus, store, log, env, tickIdle, releaseAnswers } = setup({ crd_1: { idle: [], mouseUp: [answer] } });
     tickIdle();
@@ -432,6 +567,24 @@ describe("abort", () => {
     bus.post(msg("keyDown", "crd_1", "b"));
     await settle();
     expect(log).toEqual(["crd_1.mouseUp", "crd_1.keyDown(b)"]);
+  });
+
+  it("aborts a dispatch suspended in a visual-effect transition before openCard runs", async () => {
+    const { bus, log, errors, pendingAnswers } = setup(
+      { prt_btn: { mouseUp: [goNext] }, crd_2: { openCard: [] }, crd_1: { keyDown: [] } },
+      { transition: true },
+    );
+    bus.post(msg("mouseUp", "prt_btn"));
+    bus.post(msg("keyDown", "crd_1", "a"));
+    await settle();
+    bus.abort();
+    await settle();
+    pendingAnswers.splice(0).forEach((release) => release()); // a late transition end changes nothing
+    await settle();
+    expect(log).toEqual(["prt_btn.mouseUp"]);
+    expect(errors).toEqual([]);
+    expect(bus.isRunning()).toBe(false);
+    expect(bus.pendingCount()).toBe(0);
   });
 
   it("aborts when switching from Browse to an authoring tool", async () => {

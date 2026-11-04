@@ -80,6 +80,28 @@
         "chatSessionId": "sess_15f60131-7048-4933-a70d-672e240ea5d6",
         "timestamp": 1793781239537
       }
+    ],
+    "6. Core test suite": [
+      {
+        "executionId": "351993b2-19b1-4983-9b9c-649517f8fd29",
+        "chatSessionId": "sess_56c47559-ce74-4e6a-843f-438e1e3fc7e3",
+        "timestamp": 1793784934817
+      },
+      {
+        "executionId": "968d51b5-b7ba-4260-9b4c-7150dc0eb748",
+        "chatSessionId": "sess_56c47559-ce74-4e6a-843f-438e1e3fc7e3",
+        "timestamp": 1793785036137
+      },
+      {
+        "executionId": "10aa63bc-6a4a-4c47-892d-dff6961808dd",
+        "chatSessionId": "sess_6a45fbf5-cd14-4b72-b7e7-e79868c794ac",
+        "timestamp": 1793785136274
+      },
+      {
+        "executionId": "10aa63bc-6a4a-4c47-892d-dff6961808dd",
+        "chatSessionId": "sess_6a45fbf5-cd14-4b72-b7e7-e79868c794ac",
+        "timestamp": 1793785433978
+      }
     ]
   }
 }

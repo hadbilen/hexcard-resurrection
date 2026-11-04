@@ -8,9 +8,15 @@ import {
   type HexCommand,
   type PixelState,
 } from "../history.ts";
-import type { HexStack } from "../schema.ts";
+import type { HexButtonPart, HexPart, HexStack } from "../schema.ts";
 import { validateStack } from "../stackValidator.ts";
-import { createHexStore, HexMutationError, type CompiledScript } from "../store.ts";
+import {
+  createHexStore,
+  HexMutationError,
+  resolveEditTarget,
+  type CompiledScript,
+  type HexEditTarget,
+} from "../store.ts";
 
 const WIDTH = 512;
 const HEIGHT = 342;
@@ -258,6 +264,55 @@ describe("PaintStrokeCommand (Requirement 5.3)", () => {
     after.fill(0);
     const pixels = fakeCodec.decode(command.apply(makeStack()).cards[0].bitmap.rleData, 0);
     expect(pixelAt(pixels, 511, 341)).toBe(2);
+  });
+});
+
+describe("Edit Background routing of authoring commands (Requirement 1.4)", () => {
+  /** Part creation as an authoring tool would build it: the part goes to resolveEditTarget's owner. */
+  function newButtonCommand(target: HexEditTarget): HexCommand {
+    const part: HexButtonPart = {
+      id: "prt_new", name: "New", type: "button", layerScope: target.layer, rect: { x: 0, y: 0, width: 80, height: 20 },
+      visible: true, enabled: true, scriptSource: "", style: "roundRect", title: "New", showName: true,
+      autoHilite: true, hilite: false,
+    };
+    const add = <T extends { id: string; parts: HexPart[] }>(owner: T): T =>
+      owner.id === target.owner.id ? { ...owner, parts: [...owner.parts, part] } : owner;
+    const remove = <T extends { id: string; parts: HexPart[] }>(owner: T): T =>
+      owner.id === target.owner.id ? { ...owner, parts: owner.parts.filter((p) => p.id !== part.id) } : owner;
+    return {
+      label: "New Button",
+      apply: (stack) => ({ ...stack, cards: stack.cards.map(add), backgrounds: stack.backgrounds.map(add) }),
+      revert: (stack) => ({ ...stack, cards: stack.cards.map(remove), backgrounds: stack.backgrounds.map(remove) }),
+    };
+  }
+
+  it("sends paint strokes and new parts to the current card's background in Edit Background mode", () => {
+    const { store, history } = setup();
+    store.setEditLayer("background");
+    const target = resolveEditTarget(store.getSnapshot());
+    const before = store.getSnapshot().stack;
+
+    history.execute(new PaintStrokeCommand(
+      { layer: target.layer, layerOwnerId: target.owner.id, rect: { x: 0, y: 0, width: 1, height: 1 }, before: Uint8Array.of(1), after: Uint8Array.of(2) },
+      fakeCodec,
+    ));
+    history.execute(newButtonCommand(target));
+
+    const { stack } = store.getSnapshot();
+    expect(fakeCodec.decode(stack.backgrounds[0].bitmap.rleData, 1)[0]).toBe(2);
+    expect(stack.cards[0].bitmap).toBe(before.cards[0].bitmap);
+    expect(stack.backgrounds[0].parts.map((p) => [p.id, p.layerScope])).toEqual([["prt_new", "background"]]);
+    expect(stack.cards[0].parts).toEqual([]);
+    expect(validateStack(structuredClone(stack)).ok).toBe(true);
+  });
+
+  it("sends them to the card when Edit Background is off", () => {
+    const { store, history } = setup();
+    history.execute(newButtonCommand(resolveEditTarget(store.getSnapshot())));
+    const { stack } = store.getSnapshot();
+    expect(stack.cards[0].parts.map((p) => [p.id, p.layerScope])).toEqual([["prt_new", "card"]]);
+    expect(stack.backgrounds[0].parts).toEqual([]);
+    expect(validateStack(structuredClone(stack)).ok).toBe(true);
   });
 });
 

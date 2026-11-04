@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fc from "fast-check";
 import type { HexScriptAST } from "../ast.ts";
 import type { HexButtonPart, HexFieldPart, HexStack } from "../schema.ts";
 import { validateStack } from "../stackValidator.ts";
@@ -187,6 +188,36 @@ describe("setFieldText / readFieldText sharedText matrix (Requirements 1.2, 1.3)
     expect(readFieldText(stack, "crd_2", "background", "prt_shared")).toBe("Hi all");
     expect(stack.cards[0].bgFieldContents).toEqual({ prt_unshared: "One" });
     expect(stack.cards[1].bgFieldContents).toEqual({});
+  });
+
+  it("matches a per-card / per-background model for any sequence of writes", () => {
+    const write = fc.record({
+      cardId: fc.constantFrom("crd_1", "crd_2"),
+      partId: fc.constantFrom("prt_unshared", "prt_shared"),
+      text: fc.string({ maxLength: 8 }),
+    });
+    fc.assert(
+      fc.property(fc.array(write, { maxLength: 30 }), (writes) => {
+        const { store } = setup();
+        let shared = "Shared";
+        const unshared: Record<string, string> = { crd_1: "One", crd_2: "" };
+        for (const w of writes) {
+          store.applyRuntime({ type: "setFieldText", layer: "background", ...w });
+          if (w.partId === "prt_shared") shared = w.text;
+          else unshared[w.cardId] = w.text;
+        }
+        const { stack } = store.getSnapshot();
+        for (const cardId of ["crd_1", "crd_2"]) {
+          expect(readFieldText(stack, cardId, "background", "prt_shared")).toBe(shared);
+          expect(readFieldText(stack, cardId, "background", "prt_unshared")).toBe(unshared[cardId]);
+          expect(Object.keys(stack.cards.find((c) => c.id === cardId)!.bgFieldContents)).not.toContain("prt_shared");
+        }
+        expect(stack.backgrounds[0].parts[0]).toMatchObject({ content: "ignored" }); // unshared content untouched
+        expect(stack.backgrounds[0].parts[1]).toMatchObject({ content: shared });
+        expect(validateStack(structuredClone(stack)).ok).toBe(true);
+      }),
+      { numRuns: 100 },
+    );
   });
 
   it("rejects unknown fields, buttons and fields of another background without changing state", () => {
