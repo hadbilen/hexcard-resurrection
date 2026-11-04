@@ -1,6 +1,8 @@
 /**
- * HexTalk parser: `parseHexTalk(source) -> { ast, errors }`.
- * Canonical contracts: grammar hexcard_design_spec.md §4.1, AST §4.2 (`ast.ts`).
+ * HexTalk parser and printer: `parseHexTalk(source) -> { ast, errors }` and
+ * `printHexTalk(ast) -> source`.
+ * Canonical contracts: grammar hexcard_design_spec.md §4.1, AST and parser/printer contract §4.2
+ * (`ast.ts`).
  *
  * - Lexer: hand-written and line-aware. Words are case-folded (the original spelling is kept for
  *   handler names), `--` comments are dropped, blank lines are ignored, and every token carries a
@@ -16,6 +18,10 @@
  * `HEX_RESERVED_WORDS`, and the parser also reports what the validator would reject (a tempo outside
  * 20..400, more than 3 answer buttons, number literals that a JS number cannot print as plain
  * decimals).
+ *
+ * - Printer: prints the canonical form of §4.2 (synonyms normalised, block `if`, explicit layer
+ *   words, 2-space indentation, only the parentheses precedence requires), so that
+ *   `parseHexTalk(printHexTalk(A))` deep-equals `A` (ignoring `loc`) for every valid AST.
  *
  * Pure TypeScript: no DOM, no React, no dynamic code execution.
  */
@@ -203,6 +209,8 @@ const BUTTON_WORDS: ReadonlySet<string> = new Set(["button", "btn"]);
 const PREC_OR = 1;
 const PREC_COMPARE = 3;
 const PREC_CONCAT = 4;
+const PREC_UNARY = 7;
+const PREC_PRIMARY = 8;
 const PRECEDENCE: Readonly<Record<HexBinaryOp, number>> = {
   or: PREC_OR,
   and: 2,
@@ -1052,4 +1060,257 @@ class Parser {
  */
 export function parseHexTalk(source: string): HexParseResult {
   return new Parser(source).parse();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Printer
+// ---------------------------------------------------------------------------------------------
+
+/** One indentation level (§4.2: the printer indents with 2 spaces). */
+const INDENT = "  ";
+
+/** Explicit layer words; §4.2 normalises `bkgnd`/`background` to `bg` (and `cd` prints as `card`). */
+const LAYER_WORDS: Readonly<Record<Layer, string>> = { card: "card", background: "bg" };
+
+const EFFECT_WORDS: Readonly<Record<VisualEffectType, string>> = {
+  cut: "cut",
+  dissolve: "dissolve",
+  venetianBlinds: "venetian blinds",
+  checkerboard: "checkerboard",
+  irisOpen: "iris open",
+  irisClose: "iris close",
+  wipeLeft: "wipe left",
+  wipeRight: "wipe right",
+  wipeUp: "wipe up",
+  wipeDown: "wipe down",
+  barnDoorOpen: "barn door open",
+  barnDoorClose: "barn door close",
+};
+
+const SPEED_WORDS: Readonly<Record<VisualEffectSpeed, string>> = {
+  verySlow: "very slow", slow: "slow", normal: "normal", fast: "fast",
+};
+
+const BUILT_IN_WORDS: Readonly<Record<BuiltInName, string>> = {
+  date: "the date",
+  time: "the time",
+  ticks: "the ticks",
+  seconds: "the seconds",
+  mouseH: "the mouseH",
+  mouseV: "the mouseV",
+  numberOfCards: "the number of cards",
+  cardNumber: "the number of this card",
+};
+
+type SimpleStatement = Exclude<HexStatementNode, { kind: "IfCondition" | "RepeatLoop" }>;
+
+function precedenceOf(e: HexExprNode): number {
+  if (e.kind === "BinaryOp") return PRECEDENCE[e.op];
+  if (e.kind === "UnaryOp") return PREC_UNARY;
+  return PREC_PRIMARY;
+}
+
+/**
+ * Prints `e` where the grammar expects an expression of precedence `minPrecedence` or higher
+ * (e.g. `PREC_PRIMARY` for a PartSelector, `PREC_CONCAT` for an answer button), adding parentheses
+ * only when `e` binds more loosely than that.
+ */
+function printOperand(e: HexExprNode, minPrecedence: number): string {
+  const text = printExpr(e);
+  return precedenceOf(e) < minPrecedence ? `(${text})` : text;
+}
+
+function printExpr(e: HexExprNode): string {
+  switch (e.kind) {
+    case "Literal":
+      // Valid ASTs hold no `"`/newline in strings and only plain non-negative decimals (validateAst).
+      return typeof e.value === "string" ? `"${e.value}"` : String(e.value);
+    case "Constant":
+    case "Variable":
+      return e.name;
+    case "BuiltIn":
+      return BUILT_IN_WORDS[e.name];
+    case "FunctionCall":
+      // Always the call form; `the random of 6` parses to the same node as `random(6)`.
+      return `${e.name}(${e.args.map(printExpr).join(", ")})`;
+    case "ReadContainer":
+      return printFieldRef(e.source);
+    case "ReadProperty":
+      return `the ${e.property} of ${printObjectRef(e.target)}`;
+    case "BinaryOp": {
+      const precedence = PRECEDENCE[e.op];
+      // Left-associative levels accept an equal-precedence left operand. Comparison is
+      // non-associative, so both of its operands must bind tighter.
+      const leftMin = precedence === PREC_COMPARE ? precedence + 1 : precedence;
+      return `${printOperand(e.left, leftMin)} ${e.op} ${printOperand(e.right, precedence + 1)}`;
+    }
+    case "UnaryOp": {
+      const operand = printOperand(e.operand, PREC_UNARY);
+      if (e.op === "not") return `not ${operand}`;
+      return operand.startsWith("-") ? `- ${operand}` : `-${operand}`; // "--" would start a comment
+    }
+  }
+}
+
+function printSelector(selector: HexPartSelector): string {
+  const value = printOperand(selector.value, PREC_PRIMARY);
+  return selector.by === "id" ? `id ${value}` : value;
+}
+
+function printFieldRef(ref: FieldTarget): string {
+  return `${LAYER_WORDS[ref.layer]} field ${printSelector(ref.selector)}`;
+}
+
+function printContainer(container: HexContainerTarget): string {
+  return container.scope === "variable" ? container.name : printFieldRef(container);
+}
+
+function printObjectRef(target: HexObjectTarget): string {
+  switch (target.objectType) {
+    case "me":
+      return "me";
+    case "button":
+    case "field":
+      return `${LAYER_WORDS[target.layer]} ${target.objectType} ${printSelector(target.selector)}`;
+    case "card":
+      // A selector value always prints with its layer word (`card bg field 1`), so it can never
+      // be read back as the card-layer part `card field 1` (§4.1 grammar notes).
+      return target.selector === undefined ? "this card" : `card ${printSelector(target.selector)}`;
+    case "background":
+      return "this bg";
+    case "stack":
+      return "this stack";
+  }
+}
+
+function printCardTarget(target: HexCardTarget): string {
+  switch (target.type) {
+    case "relative":
+      return target.dir === "back" ? "go back" : `go to ${target.dir} card`;
+    case "id":
+      return `go to card id ${printOperand(target.value, PREC_PRIMARY)}`;
+    case "auto":
+      return `go to card ${printOperand(target.value, PREC_PRIMARY)}`;
+  }
+}
+
+function printRepeatHead(head: HexRepeatHead): string {
+  switch (head.type) {
+    case "forever":
+      return "repeat forever";
+    case "count":
+      return `repeat ${printExpr(head.times)} times`;
+    case "while":
+      return `repeat while ${printExpr(head.condition)}`;
+    case "until":
+      return `repeat until ${printExpr(head.condition)}`;
+    case "range": {
+      const to = head.direction === "up" ? "to" : "down to";
+      return `repeat with ${head.varName} = ${printExpr(head.start)} ${to} ${printExpr(head.end)}`;
+    }
+  }
+}
+
+/** One-line statements. `pass` and `exit` print the enclosing handler's spelling of its name. */
+function printSimpleStatement(s: SimpleStatement, handler: HexHandlerNode): string {
+  switch (s.kind) {
+    case "GoToCard":
+      return printCardTarget(s.target);
+    case "QueueVisualEffect":
+      return `visual effect ${EFFECT_WORDS[s.effect]} ${SPEED_WORDS[s.speed]}`;
+    case "PutValue":
+      return `put ${printExpr(s.value)} ${s.mode} ${printContainer(s.destination)}`;
+    case "GetValue":
+      return `get ${printExpr(s.value)}`;
+    case "MathMutation": {
+      const amount = printExpr(s.amount);
+      const destination = printContainer(s.destination);
+      switch (s.op) {
+        case "add": return `add ${amount} to ${destination}`;
+        case "subtract": return `subtract ${amount} from ${destination}`;
+        case "multiply": return `multiply ${destination} by ${amount}`;
+        case "divide": return `divide ${destination} by ${amount}`;
+      }
+      break;
+    }
+    case "SetProperty":
+      return `set the ${s.property} of ${printObjectRef(s.target)} to ${printExpr(s.value)}`;
+    case "PlaySound":
+      return `play ${s.voice} tempo ${String(s.tempo)} "${s.notes}"`;
+    case "ShowAnswerDialog": {
+      const prompt = `answer ${printExpr(s.prompt)}`;
+      if (s.buttons.length === 0) return prompt;
+      // Buttons are ConcatExpr-level (Requirement 1.5): looser expressions need parentheses.
+      return `${prompt} with ${s.buttons.map((button) => printOperand(button, PREC_CONCAT)).join(" or ")}`;
+    }
+    case "ShowAskDialog":
+      return s.defaultAnswer === undefined
+        ? `ask ${printExpr(s.prompt)}`
+        : `ask ${printExpr(s.prompt)} with ${printExpr(s.defaultAnswer)}`;
+    case "Wait":
+      return `wait ${printExpr(s.amount)} ${s.unit}`;
+    case "FetchJson": {
+      const at = s.jsonPath === undefined ? "" : ` at "${s.jsonPath}"`;
+      return `fetch ${printExpr(s.url)}${at} into ${printContainer(s.destination)}`;
+    }
+    case "DeclareGlobal":
+      return `global ${s.names.join(", ")}`;
+    case "PassEvent":
+      return `pass ${s.eventName === handler.eventName.toLowerCase() ? handler.eventName : s.eventName}`;
+    case "ExitHandler":
+      return `exit ${handler.eventName}`;
+    case "ExitRepeat":
+      return "exit repeat";
+    case "NextRepeat":
+      return "next repeat";
+  }
+}
+
+function printStatements(
+  statements: readonly HexStatementNode[],
+  indent: string,
+  handler: HexHandlerNode,
+  out: string[],
+): void {
+  for (const s of statements) {
+    if (s.kind === "IfCondition") {
+      // Always the block form (§4.2), even for a single-line `if` in the source.
+      out.push(`${indent}if ${printExpr(s.condition)} then`);
+      printStatements(s.thenBranch, indent + INDENT, handler, out);
+      if (s.elseBranch !== undefined) {
+        out.push(`${indent}else`);
+        printStatements(s.elseBranch, indent + INDENT, handler, out);
+      }
+      out.push(`${indent}end if`);
+    } else if (s.kind === "RepeatLoop") {
+      out.push(indent + printRepeatHead(s.head));
+      printStatements(s.body, indent + INDENT, handler, out);
+      out.push(`${indent}end repeat`);
+    } else {
+      out.push(indent + printSimpleStatement(s, handler));
+    }
+  }
+}
+
+/**
+ * Prints a HexScriptAST as canonical HexTalk (§4.2 parser/printer contract): synonyms are
+ * normalised (`is` -> `=`, `previous` -> `prev`, `bkgnd` -> `bg`, `fld` -> `field`, ...), `if` is
+ * always printed in block form, layer words are always explicit, blocks are indented with 2 spaces
+ * and only the parentheses that precedence requires are added. Every line ends with `\n` and
+ * handlers are separated by one blank line; an AST without handlers prints as `""`. `loc` is ignored.
+ *
+ * The input must be an AST accepted by `validateAst` (every AST `parseHexTalk` returns is). For
+ * those, `parseHexTalk(printHexTalk(ast))` returns no errors and an AST deep-equal to `ast`,
+ * ignoring `loc`. Handlers are printed from their `eventName`; the record keys are not read.
+ */
+export function printHexTalk(ast: HexScriptAST): string {
+  const out: string[] = [];
+  for (const handler of Object.values(ast.handlers)) {
+    if (out.length > 0) out.push("");
+    const params = handler.params.length === 0 ? "" : ` ${handler.params.join(", ")}`;
+    out.push(`on ${handler.eventName}${params}`);
+    printStatements(handler.body, INDENT, handler, out);
+    out.push(`end ${handler.eventName}`);
+  }
+  return out.map((line) => `${line}\n`).join("");
 }

@@ -12,7 +12,7 @@
   - Reuse `HEX_RESERVED_WORDS` from `astValidator.ts`; test that every AST `parseHexTalk` returns without errors passes `validateAst`
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-- [ ] 3. Implement the printer and round-trip tests
+- [x] 3. Implement the printer and round-trip tests
   - `printHexTalk` with the normalisation table and minimal parentheses
   - fast-check generators for valid ASTs; both round-trip properties
   - _Requirements: 2.1, 2.2, 2.3_
