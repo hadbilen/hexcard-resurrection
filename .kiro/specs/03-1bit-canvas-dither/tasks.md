@@ -15,11 +15,11 @@
   - `renderCrisp1BitText` with threshold, deterministic wrapping and pixel-based text styles
   - _Requirements: 4.1, 4.3, 4.4_
 
-- [ ] 4. Implement part rendering and hit testing
+- [x] 4. Implement part rendering and hit testing
   - Draw functions for all button and field styles, highlight inversion, `showLines`
   - Hidden-textarea editing support: caret and selection drawing from editing state
   - Geometric `hitTest`
-  - _Requirements: 3.1, 3.2, 3.3, 4.2_
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 4.2_
 
 - [ ] 5. Implement Atkinson image import
   - Scale-to-fit, luminance conversion and the §5.1 dithering function

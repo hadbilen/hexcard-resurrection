@@ -12,6 +12,7 @@
 
 import type { HexCard, HexID, HexPart, HexStack } from "../../core/schema.ts";
 import { BITMAP_HEIGHT, BITMAP_WIDTH, TOTAL_PIXELS, decodeBitmapRLE } from "./rleCodec.ts";
+import { rasterizePart as defaultPartRasterizer } from "./partRenderer.ts";
 
 export interface EditingState {
   partId: HexID;
@@ -42,9 +43,6 @@ export interface PartDrawContext {
 
 /** Draws one visible part into the frame (states 1/2 only). Implemented by partRenderer.ts. */
 export type PartRasterizer = (frame: Uint8Array, part: HexPart, ctx: PartDrawContext) => void;
-
-/** Placeholder until partRenderer.ts (spec 03 task 4) supplies the real rasterizer. */
-const noPartRasterizer: PartRasterizer = () => {};
 
 // ---------------------------------------------------------------------------------------------
 // Decoded-layer cache
@@ -119,14 +117,15 @@ function drawParts(
  * are only 1 (light) or 2 (dark). Throws if the card or its background does not exist, or if a
  * layer's rleData is corrupt.
  *
- * `rasterizePart` defaults to a no-op until partRenderer.ts exists; it is exposed so the part
- * steps of the layer order can be exercised independently of the renderer.
+ * `rasterizePart` defaults to partRenderer.ts's rasterizer (shared canvas text backend, no field
+ * scroll offsets). Pass `createPartRasterizer({ scrollOffset, textBackend })` to supply UI scroll
+ * state or a different text backend, or another rasterizer to exercise the layer order alone.
  */
 export function composeFrame(
   stack: HexStack,
   cardId: HexID,
   opts: ComposeOptions = {},
-  rasterizePart: PartRasterizer = noPartRasterizer,
+  rasterizePart: PartRasterizer = defaultPartRasterizer,
 ): Uint8Array {
   const card = stack.cards.find((c) => c.id === cardId);
   if (!card) throw new Error(`composeFrame: card ${cardId} not found`);

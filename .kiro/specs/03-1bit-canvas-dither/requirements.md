@@ -27,8 +27,9 @@ This spec covers everything that turns stack data into 1-bit pixels: the bitmap 
 
 #### Acceptance Criteria
 1. WHEN a visible part is composed, THE SYSTEM SHALL rasterize its style (every `ButtonStyle` and `FieldStyle` in design spec §2.1), title or text, and `showLines` rules into the frame.
-2. WHEN a button with `autoHilite` is pressed, or a checkbox/radio has `hilite = true`, THE SYSTEM SHALL draw the highlighted state by inverting the part's pixels.
+2. WHEN a button with `autoHilite` is pressed, or a button has `hilite = true`, THE SYSTEM SHALL draw the highlighted state by inversion: checkboxes and radio buttons by inverting their mark only, other buttons by inverting the area inside their border. While a checkbox or radio button is pressed, its box shows a pressed ring instead; the mark changes on release.
 3. WHEN a pointer position is tested, THE SYSTEM SHALL return the topmost visible part containing it (card parts before background parts, later array entries first), after dividing by the integer scale factor.
+4. WHEN a part has `enabled = false`, THE SYSTEM SHALL draw its title or text through a 50% checkerboard mask (classic dimmed look) while drawing its frame normally.
 
 ### Requirement 4: Crisp 1-Bit Text & Fonts
 **User Story:** As a retro computing enthusiast, I want card text to be truly 1-bit on every operating system, and as the maintainer I want only legally redistributable fonts.

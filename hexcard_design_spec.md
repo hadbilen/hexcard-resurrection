@@ -725,6 +725,7 @@ Per frame, into one `Uint8Array(175,104)` of pixel states:
 
 - **Hit testing** is geometric (`partRenderer.hitTest(x, y)`): card parts topmost-first, then background parts. Pointer coordinates are divided by the integer scale factor.
 - **Highlighting:** `autoHilite` and radio/checkbox states are drawn by inverting the part's pixels in the frame.
+- Button icons (`iconId`, `customIcons`) are kept in the schema for forward compatibility but are not rendered in schema 2.0.0.
 - **Transitions:** visual effects (§5.2) receive two fully composed frames (old card, new card), so every part moves with the effect.
 - **DOM overlay** is limited to the hidden textarea of §5.5 and, in authoring tools, the selection marquee and resize handles (crisp 1 px borders).
 - A full recomposition touches 175,104 bytes; recompose the whole frame on every change unless profiling shows a problem.

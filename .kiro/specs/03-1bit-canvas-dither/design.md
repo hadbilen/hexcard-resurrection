@@ -28,12 +28,13 @@ export function frameToImageData(frame: Uint8Array, palette: { darkBitHex: strin
 
 - Decoded layers are cached per `(layerOwnerId, rleData)` so that unchanged bitmaps are not re-decoded on every frame.
 - Integer scale factor `k = max(1, floor(min(availableWidth / 512, availableHeight / 342)))`; the canvas CSS size is `512k x 342k`.
-- `rasterizePart` is called once per part at steps 2 and 4 of the §5.6 order (background parts, then card parts, each in array order). It receives `{ stack, card, text, pressed, editing? }`: `text` is the field text from the §5.6 rule (`sharedText ? part.content : card.bgFieldContents[part.id] ?? ""` for background fields, `part.content` for card fields) or the button's `title`; `pressed` is `opts.pressedPartId === part.id`; `editing` is `opts.editing` only for the part it refers to. When omitted, it defaults to a placeholder that draws nothing.
+- `rasterizePart` is called once per part at steps 2 and 4 of the §5.6 order (background parts, then card parts, each in array order). It receives `{ stack, card, text, pressed, editing? }`: `text` is the field text from the §5.6 rule (`sharedText ? part.content : card.bgFieldContents[part.id] ?? ""` for background fields, `part.content` for card fields) or the button's `title`; `pressed` is `opts.pressedPartId === part.id`; `editing` is `opts.editing` only for the part it refers to. When omitted, it defaults to `rasterizePart` from `partRenderer.ts` (§3).
 
 ## 3. Part Rendering (`partRenderer.ts`)
 - `partRenderer.ts` provides the real `PartRasterizer` (§2); task 4 makes it the default `rasterizePart` of `composeFrame`.
 - One draw function per `ButtonStyle` and `FieldStyle`, drawing into the frame with 1-px lines; `roundRect` uses a fixed 1-bit corner mask; `shadow` adds a solid 1/2-px offset; `default` draws the double border.
 - `scrolling` fields draw a 1-bit scrollbar and keep a per-field scroll offset in UI state (not persisted).
+- Button icons (`iconId`, `customIcons`) are kept in the schema for forward compatibility but are not rendered in schema 2.0.0.
 - `hitTest(stack, cardId, x, y) -> HexPart | null` (Requirement 3.3).
 
 ## 4. Text (`textRaster.ts`)

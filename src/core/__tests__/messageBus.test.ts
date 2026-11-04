@@ -322,6 +322,80 @@ describe("Browse clicks in unlocked fields (Requirement 2.6)", () => {
   });
 });
 
+describe("mouse messages to disabled parts (Requirement 2.8)", () => {
+  const mouseMessages = ["mouseDown", "mouseStillDown", "mouseUp", "mouseDoubleClick", "mouseEnter", "mouseWithin", "mouseLeave"];
+  const handlersFor = (names: string[]): Scripts => Object.fromEntries(names.map((name) => [name, []]));
+  const everyLevel = (handlers: Scripts): ScriptSet => ({ prt_btn: handlers, crd_1: handlers, bkg_1: handlers, stack: handlers });
+  const disable = (store: ReturnType<typeof setup>["store"], partId: string, value = false): void =>
+    store.applyRuntime({ type: "setPartProperty", partId, property: "enabled", value });
+
+  it("delivers no mouse message of a disabled button to the part, card, background or stack", async () => {
+    const { bus, store, log } = setup(everyLevel(handlersFor(mouseMessages)));
+    disable(store, "prt_btn");
+    for (const name of mouseMessages) bus.post(msg(name, "prt_btn"));
+    await settle();
+    expect(log).toEqual([]);
+    expect(bus.pendingCount()).toBe(0);
+  });
+
+  it("delivers mouseUp to an enabled button, including one enabled again", async () => {
+    const { bus, store, log } = setup(everyLevel(handlersFor(["mouseUp"])));
+    bus.post(msg("mouseUp", "prt_btn"));
+    await settle();
+    disable(store, "prt_btn");
+    disable(store, "prt_btn", true);
+    bus.post(msg("mouseUp", "prt_btn"));
+    await settle();
+    expect(log).toEqual(["prt_btn.mouseUp", "prt_btn.mouseUp"]);
+  });
+
+  it("lets a disabled part capture the click: nothing reaches the part underneath or the card", async () => {
+    const { bus, store, log } = setup({ crd_1: { mouseUp: [] } });
+    const { stack } = store.getSnapshot();
+    const under: HexButtonPart = { ...button(script({ mouseUp: [] })), id: "prt_under", name: "Under" };
+    store.applyAuthoring({
+      ...stack,
+      cards: stack.cards.map((c) => (c.id === "crd_1" ? { ...c, parts: [under, ...c.parts] } : c)), // prt_btn stays on top
+    });
+    disable(store, "prt_btn");
+    const click = resolveBrowseClick(store.getSnapshot(), "prt_btn"); // hit testing returned the disabled top part
+    expect(click).toEqual({ action: "send", targetId: "prt_btn" });
+    if (click.action === "send") bus.post(msg("mouseUp", click.targetId));
+    await settle();
+    expect(log).toEqual([]);
+  });
+
+  it("gives a disabled unlocked field no caret and drops its mouse messages", async () => {
+    const { bus, store, log } = setup({ crd_1: { mouseUp: [] } });
+    disable(store, "prt_in");
+    expect(resolveBrowseClick(store.getSnapshot(), "prt_in")).toEqual({ action: "send", targetId: "prt_in" });
+    bus.post(msg("mouseUp", "prt_in"));
+    await settle();
+    expect(log).toEqual([]);
+  });
+
+  it("drops a queued mouse message whose part was disabled before its dispatch started", async () => {
+    const { bus, store, log, releaseAnswers } = setup({ crd_2: { openCard: [answer] }, prt_btn: { mouseUp: [] } });
+    bus.post(msg("keyDown", "crd_1", "ArrowRight")); // -> crd_2, whose openCard suspends in answer
+    await settle();
+    bus.post(msg("mouseUp", "prt_btn"));
+    expect(bus.pendingCount()).toBe(1);
+    disable(store, "prt_btn");
+    await releaseAnswers();
+    expect(log).toEqual(["crd_2.openCard"]);
+  });
+
+  it("leaves non-mouse messages and nested (script/host) sends to a disabled part unaffected", async () => {
+    const { bus, store, log } = setup(everyLevel({ keyDown: [], doIt: [], mouseUp: [] }));
+    disable(store, "prt_btn");
+    bus.post(msg("keyDown", "prt_btn", "x"));
+    bus.post(msg("doIt", "prt_btn"));
+    await settle();
+    await bus.sendNested(msg("mouseUp", "prt_btn"), createDispatchContext({ abortSignal: new AbortController().signal, globals: new Map() }));
+    expect(log).toEqual(["prt_btn.keyDown(x)", "prt_btn.doIt", "prt_btn.mouseUp"]);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------
 // Nested lifecycle dispatch (Requirements 2.4, 3.6)
 // ---------------------------------------------------------------------------------------------

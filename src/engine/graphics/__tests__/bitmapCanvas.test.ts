@@ -158,7 +158,7 @@ describe("decoded-layer cache", () => {
   it("does not let a part rasterizer write into cached layers", () => {
     const stack = makeStack({ bgParts: [button("prt_bg", "background", 0, 0)] });
     composeFrame(stack, "crd_1", {}, fillingRasterizer([]));
-    expect(composeFrame(stack, "crd_1")[idx(0, 0)]).toBe(1);
+    expect(composeFrame(stack, "crd_1", {}, () => {})[idx(0, 0)]).toBe(1);
   });
 });
 

@@ -225,7 +225,8 @@ export function createCanvasTextBackend(): TextRasterBackend {
 
 let defaultBackend: TextRasterBackend | null = null;
 
-function getDefaultBackend(): TextRasterBackend {
+/** The shared canvas backend, created on first use (throws where no canvas exists, e.g. in Node). */
+export function getDefaultBackend(): TextRasterBackend {
   defaultBackend ??= createCanvasTextBackend();
   return defaultBackend;
 }

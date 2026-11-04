@@ -26,6 +26,7 @@ This spec covers the persisted data model, the runtime store and its two write p
 5. IF no object handles `keyDown` with the Left or Right arrow key, THEN THE SYSTEM SHALL go to the previous or next card respectively.
 6. WHEN the user clicks inside an unlocked field with the Browse tool, THE SYSTEM SHALL place the text caret and SHALL NOT send mouse messages.
 7. WHEN the current card changes by any means other than `go back`, THE SYSTEM SHALL push the departing card's id onto a back history of at most 64 entries (dropping the oldest); WHEN `go back` runs, THE SYSTEM SHALL go to the most recent entry that still exists and is not the current card, removing it and any skipped entries above it; IF none exists, THEN `go back` SHALL do nothing. Replacing the stack SHALL clear the history.
+8. WHEN a mouse message targets a part with `enabled = false`, THE SYSTEM SHALL NOT deliver it to that part or any object on its path; the disabled part still captures the hit.
 
 ### Requirement 3: Single-Threaded Runtime Concurrency
 **User Story:** As a stack author, I want predictable script execution when users click during waits, dialogs or network calls, so that my stacks behave the same every time.

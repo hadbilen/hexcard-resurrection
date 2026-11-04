@@ -60,6 +60,8 @@ export const IDLE_INTERVAL_MS = 200;
 const CONTINUOUS_MESSAGES: ReadonlySet<string> = new Set(["mousestilldown", "mousewithin", "idle"]);
 /** Click messages that a Browse-tool click inside an unlocked field never sends (§3, Requirement 2.6). */
 const CLICK_MESSAGES: ReadonlySet<string> = new Set(["mousedown", "mousestilldown", "mouseup", "mousedoubleclick"]);
+/** Every mouse message of §3.1; none of them reaches a disabled part's path (Requirement 2.8). */
+const MOUSE_MESSAGES: ReadonlySet<string> = new Set([...CLICK_MESSAGES, "mouseenter", "mousewithin", "mouseleave"]);
 
 /** Runs one handler; production passes `runHandler` from vm.ts (spec 02). */
 export type HandlerRunner = (
@@ -189,18 +191,30 @@ function asUnlockedField(state: HexRuntimeState, partId: HexID): { part: HexFiel
   return { part: found.part, layer: found.layer };
 }
 
+/**
+ * Requirement 2.8: true for a mouse message whose target is a disabled part. Such a message is
+ * dropped whole; it is never retargeted to a part underneath or to the card.
+ */
+function isDisabledMouseTarget(state: HexRuntimeState, msg: HexMessage): boolean {
+  if (!MOUSE_MESSAGES.has(msg.name.toLowerCase())) return false;
+  const found = findPart(state, msg.targetId);
+  return found !== undefined && !found.part.enabled;
+}
+
 export type BrowseClick =
   | { action: "editField"; partId: HexID; layer: HexLayer } // place the caret, send no mouse messages
   | { action: "send"; targetId: HexID };                     // send mouse messages to targetId
 
 /**
- * Message target of a Browse-tool click (§3, Requirement 2.6): an unlocked field takes the caret
- * and receives no mouse messages; any other part receives them; no hit means the current card.
+ * Message target of a Browse-tool click (§3, Requirement 2.6): an enabled unlocked field takes
+ * the caret and receives no mouse messages; any other part receives them; no hit means the
+ * current card. A disabled part, including a disabled unlocked field, still captures the click
+ * and is returned as the target (no caret); the bus then drops its mouse messages (Requirement 2.8).
  */
 export function resolveBrowseClick(state: HexRuntimeState, hitPartId: HexID | null): BrowseClick {
   if (hitPartId === null) return { action: "send", targetId: state.currentCardId };
   const field = asUnlockedField(state, hitPartId);
-  if (field) return { action: "editField", partId: hitPartId, layer: field.layer };
+  if (field && field.part.enabled) return { action: "editField", partId: hitPartId, layer: field.layer };
   return { action: "send", targetId: hitPartId };
 }
 
@@ -286,7 +300,9 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
     controller = own;
     const ctx = createDispatchContext({ abortSignal: own.signal, globals });
     try {
-      await deliver(msg, ctx);
+      // Requirement 2.8, checked again at dequeue: a script may disable the part while its mouse
+      // message waits in the queue (for example a mouseUp that disables its own button).
+      if (!isDisabledMouseTarget(store.getSnapshot(), msg)) await deliver(msg, ctx);
     } catch (error) {
       if (!(error instanceof HexAbortError)) onError(error, msg);
     } finally {
@@ -333,6 +349,8 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
   const bus: MessageBus = {
     post(msg) {
       if (isSuppressedClick(msg)) return;
+      // Requirement 2.8: dropped before it takes a queue slot or replaces a pending entry.
+      if (isDisabledMouseTarget(store.getSnapshot(), msg)) return;
       enqueue(msg);
       if (!running) void drain();
     },
