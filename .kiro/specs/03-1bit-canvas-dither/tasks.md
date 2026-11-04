@@ -25,7 +25,7 @@
   - Scale-to-fit, luminance conversion and the §5.1 dithering function
   - _Requirements: 5.1_
 
-- [ ] 6. Implement visual effects
+- [x] 6. Implement visual effects
   - `lfsrDissolve.ts` from §5.2 with the four speed settings
   - Remaining effects in `transitions.ts` operating on full composed frames
   - _Requirements: 6.1, 6.2, 6.3_

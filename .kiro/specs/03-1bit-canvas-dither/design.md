@@ -54,7 +54,7 @@ export function frameToImageData(frame: Uint8Array, palette: { darkBitHex: strin
   | 24 | 32 | Pixel Operator Bold, 32 px (2x) | Pixel Operator (Bold), 32 px (2x) | Pixel Operator Mono (Mono Bold), 32 px (2x) | Fairfax Serif, 24 px (2x) |
 
 ## 5. Transitions (`transitions.ts`, `lfsrDissolve.ts`)
-- `playEffect(effect, speed, from: Uint32Array, to: Uint32Array, present: (buf) => void): Promise<void>` drives frames with `requestAnimationFrame` and resolves when the destination frame is fully shown. It rejects on abort (spec 01 Requirement 3.7) after presenting the destination frame.
+- `playEffect(effect, speed, from: Uint32Array, to: Uint32Array, present: (buf) => void, options?: { signal?: AbortSignal; requestFrame?: (callback: () => void) => void }): Promise<void>` drives frames with `options.requestFrame` (default: `requestAnimationFrame`, or a 16 ms timer where it does not exist) and resolves when the destination frame is fully shown. If `options.signal` aborts (spec 01 Requirement 3.7), before or during playback, it presents the destination frame and rejects with `HexAbortError`.
 - `dissolve` uses the §5.2 reference code. Wipes, iris, barn door, venetian blinds and checkerboard copy rectangles/rows/8x8 cells from `to` into the displayed buffer over a fixed number of frames per speed (`verySlow` 48, `slow` 24, `normal` 12, `fast` 6).
 
 ## 6. Paint Tools (`paintTools.ts`, `patterns.ts`)
