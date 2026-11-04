@@ -8,6 +8,9 @@ This is the canonical directory tree. Create files only where this tree says; if
 
 ~~~text
 hexcard/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml         # GitHub Pages: npm ci, typecheck, test, build (BASE_PATH=/hexcard-resurrection/), deploy dist/
 ├── .kiro/
 │   ├── steering/              # Always-included guardrails (product.md, tech.md, structure.md)
 │   ├── specs/                 # 01-core-stack-engine, 02-hextalk-ast-vm, 03-1bit-canvas-dither, 04-ui-audio-showcase
@@ -58,7 +61,7 @@ hexcard/
 ├── index.html                 # Studio HTML entry (Vite)
 ├── package.json               # Scripts: dev, build, typecheck, test (vitest --run)
 ├── tsconfig.json              # Project references: tsconfig.app.json (src, strict) + tsconfig.node.json (vite config)
-├── vite.config.ts             # Studio build + Vitest config (Node environment)
+├── vite.config.ts             # Studio build (base from BASE_PATH, default "/") + Vitest config (Node environment)
 ├── vite.player.config.ts      # Player build (single IIFE, imported by htmlExporter via ?raw)
 ├── LICENSE                    # MIT (required: OSI open-source licence file in the repo)
 └── hexcard_design_spec.md     # Master reference specification (canonical shared contracts)
