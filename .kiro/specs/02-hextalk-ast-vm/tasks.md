@@ -1,6 +1,6 @@
 # Implementation Plan: HexTalk Language, AST & Sandboxed VM
 
-- [ ] 1. Define AST types and the AST validator
+- [x] 1. Define AST types and the AST validator
   - Implement `src/core/ast.ts` exactly as `hexcard_design_spec.md` §4.2
   - Implement `src/core/astValidator.ts` (Zod) with the extra rejection rules
   - _Requirements: 3.1, 3.2_

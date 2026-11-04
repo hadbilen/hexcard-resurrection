@@ -11,7 +11,7 @@
   - Unit-test valid stacks, each rejection reason, and that rejection leaves the current stack unchanged
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
 
-- [ ] 3. Implement the runtime store
+- [] 3. Implement the runtime store
   - Implement `src/core/store.ts` with `subscribe`, `getSnapshot`, `applyRuntime`, `replaceStack`, `getCompiled`
   - Implement `setFieldText` sharedText semantics and the Edit Background `editLayer` routing
   - Wire `ScriptCache` recompilation through an injected `compile` function (spec 02 provides `parseHexTalk`)
