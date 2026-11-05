@@ -21,6 +21,7 @@ import {
   conjureScript,
   findGrimoireEntry,
   handlerHint,
+  mergeSpell,
   suggestGrimoire,
 } from "../spellcaster.ts";
 import { TIER1_CORPUS } from "./tier1Corpus.ts";
@@ -83,6 +84,43 @@ describe("acceptance pipeline (Requirement 4.2)", () => {
         expect(result.suggestions.length).toBeGreaterThan(0);
       }
     }), { numRuns: 300 });
+  });
+});
+
+describe("merging a spell into the current script (Apply)", () => {
+  const existing = [
+    "",
+    "on mouseUp\n  go next\nend mouseUp",
+    "-- notes\non openCard\n  answer \"Hi\"\nend openCard\n",
+    "on MouseUp -- old\n  if field \"A\" = 1 then\n    go prev\n  end if\nend MouseUp\n\n-- trailing comment\non idle\n  put the time into field \"Clock\"\nend idle\n",
+  ];
+
+  it("keeps every other handler, swaps same-named ones, and the result passes the acceptance pipeline", () => {
+    for (const source of existing) {
+      const current = parseHexTalk(source);
+      expect(current.errors).toEqual([]);
+      for (const entry of GRIMOIRE) {
+        const merge = mergeSpell(source, entry.ast);
+        if (!merge.ok) throw new Error(`${entry.prompt}: ${merge.reason}`);
+        const reparsed = parseHexTalk(merge.source);
+        expect(reparsed.errors).toEqual([]);
+        expect(astEqual(reparsed.ast, { handlers: { ...current.ast.handlers, ...entry.ast.handlers } })).toBe(true);
+        expect(acceptAst(merge.ast).ok).toBe(true);
+      }
+    }
+  });
+
+  it("keeps the text of the other handlers character for character", () => {
+    const source = existing[3];
+    const merge = mergeSpell(source, script("mouseUp", [play("boing", "c4q")]));
+    if (!merge.ok) throw new Error(merge.reason);
+    expect(merge.source).toBe('on mouseUp\n  play boing tempo 120 "c4q"\nend mouseUp\n\n-- trailing comment\non idle\n  put the time into field "Clock"\nend idle\n');
+    expect(merge).toMatchObject({ replaced: ["MouseUp"], added: [], kept: ["idle"] });
+  });
+
+  it("refuses a script that does not compile", () => {
+    const merge = mergeSpell("on mouseUp\n  go\nend mouseUp\n", script("idle", []));
+    expect(merge.ok).toBe(false);
   });
 });
 

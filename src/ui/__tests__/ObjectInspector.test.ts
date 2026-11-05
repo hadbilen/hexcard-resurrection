@@ -33,6 +33,7 @@ import {
   createSpellCommand,
   SpellcasterView,
   spellStateFor,
+  UNSAVED_DRAFT_NOTE,
   type SpellState,
   createStudioWindows,
   describeObject,
@@ -44,7 +45,7 @@ import {
   visualColumn,
 } from "../ObjectInspector.tsx";
 import { UiScaleContext, createModalManager } from "../System7Shell.tsx";
-import { conjureScript } from "../../ai/spellcaster.ts";
+import { conjureScript, mergeSpell } from "../../ai/spellcaster.ts";
 
 const emptyBitmap = { width: 512, height: 342, rleData: "" };
 
@@ -388,26 +389,91 @@ describe("ObjectInspector rendering", () => {
 });
 
 describe("Spellcaster preview and Apply (Requirements 4.2, 4.3)", () => {
-  const view = (state: SpellState, replacesScript = true) => renderToStaticMarkup(
+  /** Renders the tab the way ObjectInspector does: the preview merged into `saved`. */
+  const view = (state: SpellState, saved = "", unsavedDraft = false) => renderToStaticMarkup(
     createElement(UiScaleContext, { value: 1 },
       createElement(SpellcasterView, {
-        prompt: "hide this button", state, replacesScript,
+        prompt: "hide this button", state,
+        merge: state.status === "preview" ? mergeSpell(saved, state.ast) : undefined,
+        hadScript: saved.trim() !== "", unsavedDraft,
         onPromptChange: () => {}, onConjure: () => {}, onApply: () => {}, onDiscard: () => {},
       })),
   );
+  const conjured = async (prompt: string): Promise<Extract<SpellState, { status: "preview" }>> => {
+    const state = spellStateFor(prompt, await conjureScript(prompt, { objectKind: "button" }), "button");
+    if (state.status !== "preview") throw new Error(`not a preview: ${prompt}`);
+    return state;
+  };
+  /** A button script with a comment and two handlers. */
+  const twoHandlers = "-- door button\non mouseEnter\n  set the hilite of me to true -- glow\nend mouseEnter\n\non mouseUp\n  go next\nend mouseUp\n";
+  const setButtonScript = (ctx: ReturnType<typeof setup>, source: string): void =>
+    ctx.history.execute(createScriptCommand("prt_go", source));
+  const buttonScript = (ctx: ReturnType<typeof setup>): string =>
+    (findObject(ctx.store.getSnapshot().stack, "prt_go")?.object as HexButtonPart).scriptSource;
 
   it("previews the printed HexTalk with Apply, and changes no script while doing so", async () => {
     const { store } = setup();
     const before = store.getSnapshot().stack;
-    const result = await conjureScript("hide this button", { objectKind: "button" });
-    const state = spellStateFor("hide this button", result, "button");
-    expect(state.status).toBe("preview");
+    const state = await conjured("hide this button");
     expect(store.getSnapshot().stack).toBe(before);
     const html = view(state);
     expect(html).toContain("on mouseUp\n  set the visible of me to false\nend mouseUp\n");
     expect(html).toContain(">Apply");
-    expect(html).toContain("Apply replaces the current script.");
-    expect(view(state, false)).not.toContain("Apply replaces");
+    expect(html).toContain("Preview of the whole script");
+    expect(html).not.toContain("Apply replaces");
+  });
+
+  it("previews the merged script: the same-named handler is replaced, every other line kept", async () => {
+    const state = await conjured("hide this button");
+    const html = view(state, twoHandlers);
+    const merged = "-- door button\non mouseEnter\n  set the hilite of me to true -- glow\nend mouseEnter\n\non mouseUp\n  set the visible of me to false\nend mouseUp\n";
+    expect(html).toContain(`aria-label="Spell preview">${merged}</pre>`);
+    expect(html).toContain("Apply replaces the mouseUp handler of the current script. Its other handler (mouseEnter) stays as it is.");
+    expect(html).not.toContain("go next");
+    expect(view(state, twoHandlers, true)).toContain(UNSAVED_DRAFT_NOTE);
+  });
+
+  it("Apply merges into the script as one undoable step: other handlers kept, same-named one replaced", async () => {
+    const ctx = setup();
+    setButtonScript(ctx, twoHandlers);
+    const state = await conjured("when the mouse leaves, unhilite this button");
+    const merge = mergeSpell(buttonScript(ctx), state.ast);
+    if (!merge.ok) throw new Error(merge.reason);
+    expect(merge).toMatchObject({ replaced: [], added: ["mouseLeave"], kept: ["mouseEnter", "mouseUp"] });
+    ctx.history.execute(createSpellCommand("prt_go", merge.source, state.prompt, true));
+    const after = buttonScript(ctx);
+    expect(after.startsWith(twoHandlers)).toBe(true);
+    expect(after).toBe(`${twoHandlers}\non mouseLeave\n  set the hilite of me to false\nend mouseLeave\n`);
+    expect(Object.keys(ctx.store.getCompiled("prt_go").ast.handlers).sort()).toEqual(["mouseenter", "mouseleave", "mouseup"]);
+
+    const replace = mergeSpell(after, (await conjured("go to the previous card")).ast);
+    if (!replace.ok) throw new Error(replace.reason);
+    expect(replace).toMatchObject({ replaced: ["mouseUp"], added: [], kept: ["mouseEnter", "mouseLeave"] });
+    ctx.history.execute(createSpellCommand("prt_go", replace.source, "go to the previous card", true));
+    const compiled = ctx.store.getCompiled("prt_go");
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.ast.handlers.mouseup.body).toMatchObject([{ kind: "GoToCard", target: { type: "relative", dir: "prev" } }]);
+    expect(buttonScript(ctx)).toContain("on mouseEnter\n  set the hilite of me to true -- glow\nend mouseEnter\n");
+    expect(validateStack(ctx.store.getSnapshot().stack).ok).toBe(true);
+
+    ctx.history.undo();
+    expect(buttonScript(ctx)).toBe(after);
+    ctx.history.undo();
+    expect(buttonScript(ctx)).toBe(twoHandlers);
+    const restored = findObject(ctx.store.getSnapshot().stack, "prt_go");
+    expect(restored?.kind === "part" && restored.object.naturalLanguagePrompt).toBeUndefined();
+  });
+
+  it("refuses to merge into a script that does not compile, keeps its text and offers no Apply", async () => {
+    const broken = "on mouseUp\n  put 1 into\nend mouseUp\n\non mouseEnter\n  beep\nend mouseEnter\n";
+    const state = await conjured("hide this button");
+    const merge = mergeSpell(broken, state.ast);
+    expect(merge.ok).toBe(false);
+    if (!merge.ok) expect(merge.reason).toMatch(/^The current script does not compile \(line 2: .+\), so the spell cannot be merged into it\./);
+    const html = view(state, broken);
+    expect(html).toContain('role="alert">The current script does not compile');
+    expect(html).toContain("The spell on its own:");
+    expect(html).not.toContain(">Apply");
   });
 
   it("warns when a handler can never reach a button", async () => {
@@ -432,7 +498,11 @@ describe("Spellcaster preview and Apply (Requirements 4.2, 4.3)", () => {
     const { store, history } = setup();
     const result = await conjureScript("beep 5 times", { objectKind: "button" });
     if (!result.ok) throw new Error(result.reason);
-    history.execute(createSpellCommand("prt_go", result.hexTalk, "beep 5 times", true));
+    // The fixture button has only a mouseUp handler, so the merge is the spell alone.
+    const merge = mergeSpell(button.scriptSource, result.ast);
+    if (!merge.ok) throw new Error(merge.reason);
+    expect(merge.source).toBe(result.hexTalk);
+    history.execute(createSpellCommand("prt_go", merge.source, "beep 5 times", true));
     const part = findObject(store.getSnapshot().stack, "prt_go");
     expect(part?.object.scriptSource).toBe(result.hexTalk);
     expect(part?.kind === "part" && part.object.naturalLanguagePrompt).toBe("beep 5 times");

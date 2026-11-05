@@ -130,6 +130,105 @@ export const TIER1_CORPUS: readonly CorpusEntry[] = [
     prompt: "fetch https://api.open-meteo.com/v1/forecast?latitude=48.85&longitude=2.35&current=temperature_2m at path current.temperature_2m into field 'Temp'",
     expect: click('fetch "https://api.open-meteo.com/v1/forecast?latitude=48.85&longitude=2.35&current=temperature_2m" at "current.temperature_2m" into field "Temp"'),
   },
+  // ===== Families added with the generalised rules (task 5.1 rework) =====
+
+  // ----- family 1: show / display / pop up / say a message (saying / that says) X -----
+  { prompt: "show a message saying You found the treasure!", expect: click('answer "You found the treasure!"') },
+  { prompt: "pop up an alert that says the door is locked", expect: click('answer "the door is locked"') },
+  { prompt: "display a mesage: Welcome to the haunted house", expect: click('answer "Welcome to the haunted house"') },
+  { prompt: "when the card opens, say a message saying Good evening", kind: "card", expect: on("openCard", 'answer "Good evening"') },
+  { prompt: "popup a dialog reading 'Level complete' and go to the next card", expect: click('answer "Level complete"', "go next") },
+  { prompt: "tell the player that the bridge is out", expect: click('answer "the bridge is out"') },
+  { prompt: "show 'Saved!' in a dialog", expect: click('answer "Saved!"') },
+  { prompt: "display a dialog with the text Hello there, then wait 1 second", expect: click('answer "Hello there"', "wait 1 seconds") },
+  { prompt: "say 'Watch out' to the player", expect: click('answer "Watch out"') },
+  { prompt: "show a message You win", expect: click('answer "You win"') },
+  // must refuse: no marker and not a value; "that" after show is not a message; the comma cuts the message
+  { prompt: "display the score in a popup", expect: null },
+  { prompt: "show that the door is open", expect: null },
+  { prompt: "pop up a message: Hello, world", expect: null },
+
+  // ----- family 2: set the <property> of <objects> to <value>, every §4.1 property -----
+  { prompt: "set the title of this button to 'Start'", expect: click('set the title of me to "Start"') },
+  { prompt: "set the style of me to shadow", expect: click('set the style of me to "shadow"') },
+  { prompt: "set the text style of field 'Title' to bold and italic", expect: click('set the textStyle of field "Title" to "bold,italic"') },
+  {
+    prompt: "change the auto hilite of button 'Go' and button 'Stop' to false",
+    expect: click('set the autoHilite of button "Go" to false', 'set the autoHilite of button "Stop" to false'),
+  },
+  { prompt: "set the rect of field 'Map' to 10,20,200,120", expect: click('set the rect of field "Map" to "10,20,200,120"') },
+  { prompt: "set the show name of me to off", expect: click("set the showName of me to false") },
+  { prompt: "set the lock text of field Notes to true", expect: click('set the lockText of field "Notes" to true') },
+  { prompt: "set the textFont of field 'Log' to mono", expect: click('set the textFont of field "Log" to "Mono"') },
+  { prompt: "set my name to Start Game", expect: click('set the name of me to "Start Game"') },
+  { prompt: "set the text size of field 'A' to twelve", expect: click('set the textSize of field "A" to 12') },
+  { prompt: "set this button's title to 'Play'", expect: click('set the title of me to "Play"') },
+  { prompt: "set the name of this card to The End", kind: "card", expect: on("openCard", 'set the name of this card to "The End"') },
+  { prompt: "set the visibel of button 'Door' to false", expect: click('set the visible of button "Door" to false') },
+  {
+    prompt: "set the location of button 'Ghost' and field 'Note' to 100,50",
+    expect: click('set the location of button "Ghost" to "100,50"', 'set the location of field "Note" to "100,50"'),
+  },
+  // must refuse: not a property; scrolling is a field style; 13 is not a text size
+  { prompt: "set the color of this button to red", expect: null },
+  { prompt: "set the style of this button to scrolling", expect: null },
+  { prompt: "set the text size of field 'A' to 13", expect: null },
+
+  // ----- family 3: subtract / lose / take away / decrease, number words, multi-word names -----
+  { prompt: "lose 1 life", expect: click('subtract 1 from field "lives"') },
+  { prompt: "the player loses a life", expect: click('subtract 1 from field "lives"') },
+  { prompt: "take away 5 from Health", expect: click('subtract 5 from field "Health"') },
+  { prompt: "take 3 away from field 'Gold'", expect: click('subtract 3 from field "Gold"') },
+  { prompt: "remove two from field 'Coins'", expect: click('subtract 2 from field "Coins"') },
+  { prompt: "decrease Health by three", expect: click('subtract 3 from field "Health"') },
+  { prompt: "lose 10 health when the card opens", kind: "card", expect: on("openCard", 'subtract 10 from field "health"') },
+  { prompt: "deduct 2 coins from field 'Purse'", expect: click('subtract 2 from field "Purse"') },
+  { prompt: "substract 4 from the score", expect: click('subtract 4 from field "score"') },
+  { prompt: "subtract twenty one from field 'Time'", expect: click('subtract 21 from field "Time"') },
+  { prompt: "put 0 into field High Score", expect: click('put 0 into field "High Score"') },
+  { prompt: "put 0 into the High Score field", expect: click('put 0 into field "High Score"') },
+  { prompt: "go to card Game Over", expect: click('go to card "Game Over"') },
+  { prompt: "go to card Game Over with a dissolve", expect: click("visual effect dissolve", 'go to card "Game Over"') },
+  { prompt: "if field Lives is less than one go to card Game Over", expect: click('if field "Lives" < 1 then go to card "Game Over"') },
+  // must refuse: the name has no certain end; "points" names no counter; "take" without away/from
+  { prompt: "go to card Game over", expect: null },
+  { prompt: "put 0 into field High Score points", expect: null },
+  { prompt: "lose 10 points", expect: null },
+  { prompt: "take 2 life", expect: null },
+
+  // ----- family 4: yes or no questions -> answer Q with "Yes" or "No" -----
+  { prompt: "ask a yes or no question: Are you ready?", expect: click('answer "Are you ready?" with "Yes" or "No"') },
+  { prompt: "ask 'Do you want to save?' with yes and no", expect: click('answer "Do you want to save?" with "Yes" or "No"') },
+  { prompt: "ask are you sure with yes or no", expect: click('answer "Are you sure?" with "Yes" or "No"') },
+  { prompt: "ask the player a yes/no question: Shall we enter the crypt?", expect: click('answer "Shall we enter the crypt?" with "Yes" or "No"') },
+  {
+    prompt: "ask a yes or no question: Continue? If the user clicks Yes go to the next card",
+    expect: click('answer "Continue?" with "Yes" or "No"', 'if it = "Yes" then go next'),
+  },
+  { prompt: "when the card opens ask a yes or no question: Is anybody there?", kind: "card", expect: on("openCard", 'answer "Is anybody there?" with "Yes" or "No"') },
+  { prompt: "ask 'Ready?' as a yes or no question", expect: click('answer "Ready?" with "Yes" or "No"') },
+  { prompt: "ask do you like ghosts with yes and no", expect: click('answer "Do you like ghosts?" with "Yes" or "No"') },
+  { prompt: "ask teh player a yes or no question: Is it late?", expect: click('answer "Is it late?" with "Yes" or "No"') },
+  // must refuse: "whether" does not start a question; no question given
+  { prompt: "ask whether the player is ready with yes or no", expect: null },
+  { prompt: "ask a yes or no question", expect: null },
+
+  // ----- family 5: make a sound like X / sounds like X -----
+  { prompt: "make a sound like a bell", expect: click('play harpsichord "e5e c5h"') },
+  { prompt: "play a sound like a bouncing ball", expect: click('play boing "c4q"') },
+  { prompt: "make a noise that sounds like an alarm", expect: click('play square8bit "a5e"') },
+  { prompt: "play something that sounds like a ticking clock", expect: click('play click "c4q"') },
+  { prompt: "when clicked, make it sound like the wind", expect: click('play flute "c4q"') },
+  { prompt: "play a bell-like sound twice", expect: click("repeat 2 times", '  play harpsichord "e5e c5h"', "  wait 15 ticks", "end repeat") },
+  { prompt: "make a sound like a spring and go to the next card", expect: click('play boing "c4q"', "go next") },
+  { prompt: "play a whistling sound", expect: click('play flute "c4q"') },
+  { prompt: "make a sound lik a chime", expect: click('play harpsichord "e5e c5h"') },
+  // must refuse: unknown sounds (also one typo away from "wind"), two different voices
+  { prompt: "make a sound like a dragon", expect: null },
+  { prompt: "play a sound like a bouncing dragon", expect: null },
+  { prompt: "make a sound like a wand", expect: null },
+  { prompt: "play a flute sound like a bell", expect: null },
+
   // ----- not understood: out of scope, ambiguous or incomplete -----
   { prompt: "make the game harder every level", expect: null },
   { prompt: "sort the cards alphabetically", expect: null },

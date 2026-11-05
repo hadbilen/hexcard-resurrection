@@ -135,6 +135,105 @@ export function acceptAst(output: unknown): AcceptResult {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Merging a spell into an existing script (Apply)
+// ---------------------------------------------------------------------------------------------
+
+export type SpellMerge =
+  | {
+    ok: true;
+    /** The whole script Apply writes as `scriptSource`. */
+    source: string;
+    /** Its AST; it passed the acceptance pipeline. */
+    ast: HexScriptAST;
+    /** Handlers of the current script that the spell replaces (their spelling in the script). */
+    replaced: string[];
+    /** Handlers the spell adds. */
+    added: string[];
+    /** Handlers of the current script kept as they are. */
+    kept: string[];
+  }
+  | { ok: false; reason: string };
+
+const LINE_BREAK = /\r\n|\r|\n/;
+
+/**
+ * Merges an accepted spell into `existing` (the object's `scriptSource`): every handler the spell
+ * defines replaces the handler of the same name (names compare case-insensitively), or is
+ * appended after the script when there is none; everything else in the text (other handlers,
+ * comments, blank lines, formatting) is kept character for character. A blank script becomes the
+ * spell's printed HexTalk.
+ *
+ * A script that does not compile is never merged: the reason names its first compile error, and
+ * its text stays untouched. The merged text must compile to exactly the expected AST (current
+ * handlers with the spell's handlers swapped in) and that AST must pass `acceptAst`; otherwise
+ * the merge is refused too. Never throws.
+ */
+export function mergeSpell(existing: string, spell: HexScriptAST): SpellMerge {
+  const spellHandlers = Object.entries(spell.handlers);
+  const printHandler = (key: string, handler: HexScriptAST["handlers"][string]): string[] =>
+    printHexTalk({ handlers: { [key]: handler } }).split("\n").filter((line, index, lines) => line !== "" || index < lines.length - 1);
+  if (existing.trim() === "") {
+    const accepted = acceptAst(spell);
+    if (!accepted.ok) return { ok: false, reason: accepted.reason };
+    return { ok: true, source: accepted.hexTalk, ast: accepted.ast, replaced: [], added: spellHandlers.map(([, h]) => h.eventName), kept: [] };
+  }
+  const current = parseHexTalk(existing);
+  if (current.errors.length > 0) {
+    const error = current.errors[0];
+    return {
+      ok: false,
+      reason: `The current script does not compile (line ${error.line}: ${error.message}), so the spell cannot be merged into it. `
+        + "Fix or clear the script in the HexTalk Script tab first; it was not changed.",
+    };
+  }
+  const lines = existing.split(LINE_BREAK);
+  const spans: { start: number; end: number; key: string }[] = [];
+  for (const [key] of spellHandlers) {
+    const handler = current.ast.handlers[key];
+    if (!handler) continue;
+    const start = (handler.loc?.line ?? 0) - 1;
+    if (start < 0 || start >= lines.length) return { ok: false, reason: "The current script could not be merged (handler position unknown)." };
+    // The first line after `on <name>` that starts with `end <name>` closes the handler: no
+    // statement starts with "end", and `end if` / `end repeat` use reserved words.
+    const closing = new RegExp(`^[ \\t]*end[ \\t]+${key}(?![A-Za-z0-9_])`, "i");
+    let end = start + 1;
+    while (end < lines.length && !closing.test(lines[end])) end++;
+    if (end >= lines.length) return { ok: false, reason: `The current script could not be merged (no "end ${handler.eventName}" found).` };
+    spans.push({ start, end, key });
+  }
+  const out = [...lines];
+  for (const span of [...spans].sort((a, b) => b.start - a.start)) {
+    out.splice(span.start, span.end - span.start + 1, ...printHandler(span.key, spell.handlers[span.key]));
+  }
+  const addedKeys = spellHandlers.filter(([key]) => !current.ast.handlers[key]);
+  if (addedKeys.length > 0) {
+    while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+    for (const [key, handler] of addedKeys) {
+      if (out.length > 0) out.push("");
+      out.push(...printHandler(key, handler));
+    }
+  }
+  while (out.length > 0 && out[out.length - 1] === "") out.pop();
+  const source = `${out.join("\n")}\n`;
+  const expected: HexScriptAST = { handlers: { ...current.ast.handlers, ...spell.handlers } };
+  const merged = parseHexTalk(source);
+  if (merged.errors.length > 0 || !astEqual(merged.ast, expected)) {
+    return { ok: false, reason: "The spell could not be merged into the current script without changing its other handlers." };
+  }
+  const accepted = acceptAst(merged.ast);
+  if (!accepted.ok) return { ok: false, reason: accepted.reason };
+  const replacedKeys = new Set(spans.map((span) => span.key));
+  return {
+    ok: true,
+    source,
+    ast: accepted.ast,
+    replaced: spans.map((span) => current.ast.handlers[span.key].eventName),
+    added: addedKeys.map(([, handler]) => handler.eventName),
+    kept: Object.entries(current.ast.handlers).filter(([key]) => !replacedKeys.has(key)).map(([, handler]) => handler.eventName),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------------------------
 
@@ -179,6 +278,19 @@ const VOCAB = new Set<string>();
 function words(list: string): ReadonlySet<string> {
   const set = new Set(list.trim().split(/\s+/));
   for (const word of set) VOCAB.add(word);
+  return set;
+}
+
+/**
+ * Exact-only keywords: never names, but also never the target of typo correction, so that an
+ * unknown word such as "pose" or "wand" is not "corrected" into "lose" or "wind" and compiled
+ * into a script the user did not ask for. Words added for the generalised rules live here.
+ */
+const KNOWN = new Set<string>();
+
+function known(list: string): ReadonlySet<string> {
+  const set = new Set(list.trim().split(/\s+/));
+  for (const word of set) if (!VOCAB.has(word)) KNOWN.add(word);
   return set;
 }
 
@@ -230,21 +342,31 @@ for (const word of ORDINAL_WORDS.keys()) VOCAB.add(word);
 // Tokenizer
 // ---------------------------------------------------------------------------------------------
 
-type Token =
+type TokenBody =
   | { type: "word"; word: string; raw: string }
   | { type: "number"; value: number; raw: string }
   | { type: "string"; value: string }
   | { type: "url"; value: string }
   | { type: "point"; value: string }
+  | { type: "rect"; value: string }
   | { type: "op"; value: string }
   | { type: "sep"; value: string }
+  | { type: "colon"; value: ":" }
   | { type: "other"; value: string };
+
+/**
+ * `at` / `to`: offsets of the token in the prompt (unquoted message text is cut from the prompt
+ * with them); `n`: index in the token list before trigger removal, so that a phrase can check
+ * that two tokens were neighbours in the prompt.
+ */
+type Token = TokenBody & { at: number; to: number; n: number };
 
 type Toks = readonly Token[];
 
 const WORD = /^[A-Za-z0-9_#]+(?:[\u2019'\-.][A-Za-z0-9_#]+|\[\d+\])*/;
 const NUMBER = /^\d+(?:\.\d+)?(?![A-Za-z0-9_#])/;
 const POINT = /^(\d+) ?, ?(\d+)(?![\d.])/;
+const RECT = /^(\d+) ?, ?(\d+) ?, ?(\d+) ?, ?(\d+)(?![\d.])/;
 const URL = /^https?:\/\/[^\s"<>\u201c\u201d]+/i;
 const OPERATORS = [">=", "<=", "<>", "!=", "==", "=", ">", "<"];
 
@@ -254,6 +376,9 @@ function normalizeWord(raw: string): string {
 
 function tokenize(text: string): Token[] {
   const tokens: Token[] = [];
+  const emit = (body: TokenBody, at: number, to: number): void => {
+    tokens.push({ ...body, at, to, n: tokens.length });
+  };
   let i = 0;
   while (i < text.length) {
     const rest = text.slice(i);
@@ -265,17 +390,17 @@ function tokenize(text: string): Token[] {
     const url = URL.exec(rest);
     if (url) {
       const value = url[0].replace(/[.,;:!?)]+$/, "");
-      tokens.push({ type: "url", value });
+      emit({ type: "url", value }, i, i + value.length);
       i += value.length;
       continue;
     }
     if (c === '"' || c === "\u201c" || c === "\u201d") {
       const close = rest.slice(1).search(/["\u201c\u201d\n]/);
       if (close >= 0 && rest[close + 1] !== "\n") {
-        tokens.push({ type: "string", value: rest.slice(1, close + 1) });
+        emit({ type: "string", value: rest.slice(1, close + 1) }, i, i + close + 2);
         i += close + 2;
       } else {
-        tokens.push({ type: "other", value: c });
+        emit({ type: "other", value: c }, i, i + 1);
         i++;
       }
       continue;
@@ -283,42 +408,58 @@ function tokenize(text: string): Token[] {
     if ((c === "'" || c === "\u2018") && (i === 0 || /[\s(,:;]/.test(text[i - 1]))) {
       const match = /^['\u2018]([^'\u2019\n]*)['\u2019](?=$|[\s.,;:!?)])/.exec(rest);
       if (match) {
-        tokens.push({ type: "string", value: match[1] });
+        emit({ type: "string", value: match[1] }, i, i + match[0].length);
         i += match[0].length;
         continue;
       }
     }
+    const rect = RECT.exec(rest);
+    if (rect) {
+      emit({ type: "rect", value: `${rect[1]},${rect[2]},${rect[3]},${rect[4]}` }, i, i + rect[0].length);
+      i += rect[0].length;
+      continue;
+    }
     const point = POINT.exec(rest);
     if (point) {
-      tokens.push({ type: "point", value: `${point[1]},${point[2]}` });
+      emit({ type: "point", value: `${point[1]},${point[2]}` }, i, i + point[0].length);
       i += point[0].length;
       continue;
     }
     const word = WORD.exec(rest);
     const number = NUMBER.exec(rest);
     if (number && (!word || word[0] === number[0])) {
-      tokens.push({ type: "number", value: Number(number[0]), raw: number[0] });
+      emit({ type: "number", value: Number(number[0]), raw: number[0] }, i, i + number[0].length);
       i += number[0].length;
       continue;
     }
     if (word) {
-      tokens.push({ type: "word", word: normalizeWord(word[0]), raw: word[0] });
+      emit({ type: "word", word: normalizeWord(word[0]), raw: word[0] }, i, i + word[0].length);
       i += word[0].length;
       continue;
     }
     const op = OPERATORS.find((candidate) => rest.startsWith(candidate));
     if (op) {
-      tokens.push({ type: "op", value: op === "!=" ? "<>" : op === "==" ? "=" : op });
+      emit({ type: "op", value: op === "!=" ? "<>" : op === "==" ? "=" : op }, i, i + op.length);
       i += op.length;
       continue;
     }
-    if (",;:.!?".includes(c)) tokens.push({ type: "sep", value: c });
-    else if (c === "-" || c === "\u2013" || c === "\u2014") tokens.push({ type: "sep", value: "," });
-    else if (c !== "'" && c !== "\u2019" && c !== "(" && c !== ")") tokens.push({ type: "other", value: c });
+    // "yes/no": a slash between two letters reads as "or".
+    if (c === "/" && /[A-Za-z]/.test(text[i - 1] ?? "") && /[A-Za-z]/.test(text[i + 1] ?? "")) {
+      emit({ type: "word", word: "or", raw: "or" }, i, i + 1);
+      i++;
+      continue;
+    }
+    if (c === ":") emit({ type: "colon", value: ":" }, i, i + 1);
+    else if (",;.!?".includes(c)) emit({ type: "sep", value: c }, i, i + 1);
+    else if (c === "-" || c === "\u2013" || c === "\u2014") emit({ type: "sep", value: "," }, i, i + 1);
+    else if (c !== "'" && c !== "\u2019" && c !== "(" && c !== ")") emit({ type: "other", value: c }, i, i + 1);
     i++;
   }
   return tokens;
 }
+
+/** Numbers the tokens again (after compounds were joined). */
+const renumber = (tokens: Token[]): Token[] => tokens.map((token, n) => ({ ...token, n }));
 
 /** Optimal-string-alignment distance (adjacent transpositions count 1), capped at `limit + 1`. */
 function editDistance(a: string, b: string, limit: number): number {
@@ -357,7 +498,7 @@ function correctWords(tokens: Token[]): Token[] {
   return tokens.map((token, index) => {
     if (token.type !== "word") return token;
     const { word, raw } = token;
-    if (VOCAB.has(word) || STOPWORDS.has(word) || PROTECTED.has(word) || /\d|_|#|\./.test(word)) return token;
+    if (VOCAB.has(word) || STOPWORDS.has(word) || KNOWN.has(word) || PROTECTED.has(word) || /\d|_|#|\./.test(word)) return token;
     const initial = index === 0 || tokens[index - 1].type === "sep";
     if (/^[A-Z]/.test(raw) && !initial) return token;
     if (word.length < 3) return token;
@@ -368,6 +509,10 @@ function correctWords(tokens: Token[]): Token[] {
     for (const candidate of known) {
       // 3 letters: only a swap ("teh") or one missing letter ("nxt").
       if (word.length === 3 && !isTransposition(word, candidate) && candidate.length !== 4) continue;
+      // A filler word is skipped by every rule, so "correcting" into one silently drops a word
+      // ("world" -> "would"): only a swap or a missing letter ("teh", "pleas") may become one.
+      if (STOPWORDS.has(candidate) && !VOCAB.has(candidate) && !isTransposition(word, candidate)
+        && !(candidate.length === word.length + 1 && editDistance(word, candidate, 1) === 1)) continue;
       const distance = editDistance(word, candidate, limit);
       if (distance < bestDistance) {
         best = candidate;
@@ -391,7 +536,7 @@ function mergeCompounds(tokens: Token[]): Token[] {
     const bw = b?.type === "word" ? b.word : undefined;
     const joined = aw !== undefined && bw !== undefined ? COMPOUNDS.get(`${aw} ${bw}`) : undefined;
     if (joined !== undefined) {
-      out.push({ type: "word", word: joined, raw: joined });
+      out.push({ type: "word", word: joined, raw: joined, at: a.at, to: b.to, n: a.n });
       i++;
     } else {
       out.push(a);
@@ -443,7 +588,8 @@ const IDENTIFIER_RAW = /^[A-Za-z][A-Za-z0-9_]*$/;
 /** A word that can be a field or card name on its own: not a keyword, not a filler word. */
 function isNameWord(t: Toks, i: number): boolean {
   const token = t[i];
-  return token?.type === "word" && IDENTIFIER_RAW.test(token.raw) && !VOCAB.has(token.word) && !STOPWORDS.has(token.word);
+  return token?.type === "word" && IDENTIFIER_RAW.test(token.raw) && !VOCAB.has(token.word) && !STOPWORDS.has(token.word)
+    && !KNOWN.has(token.word);
 }
 
 /** After an explicit `field` / `button` / `card` word: any identifier that is not structural. */
@@ -464,6 +610,11 @@ function readNumber(t: Toks, i: number): { value: number; end: number } | null {
   const value = NUMBER_WORDS.get(word);
   if (value === undefined) return null;
   if (value < 10 && wordAt(t, i + 1) === "hundred") return { value: value * 100, end: i + 2 };
+  // "twenty one" (two words) like "twentyone" / "twenty-one"
+  const unit = NUMBER_WORDS.get(wordAt(t, i + 1) ?? "");
+  if (value >= 20 && value < 100 && value % 10 === 0 && unit !== undefined && unit >= 1 && unit <= 9) {
+    return { value: value + unit, end: i + 2 };
+  }
   return { value, end: i + 1 };
 }
 
@@ -606,31 +757,58 @@ function splitSentences(tokens: Toks): Token[][][] {
   const endClause = (): void => {
     if (clause.length > 0) clauses.push(clause);
     clause = [];
+    setState = "none";
   };
   const endSentence = (): void => {
     endClause();
     if (clauses.length > 0) sentences.push(clauses);
     clauses = [];
   };
+  // "set the visible of button 'A' and button 'B' to false": inside an open `set ... of ... to`
+  // list, "and" and "," join objects instead of ending the clause.
+  let setState = "none" as "none" | "verb" | "open" | "closed";
+  const trackSet = (token: Token): void => {
+    if (token.type !== "word") return;
+    if (setState === "none" && (token.word === "set" || token.word === "change")
+      && clause.every((earlier) => earlier.type === "word" && STOPWORDS.has(earlier.word))) setState = "verb";
+    else if (setState === "verb" && token.word === "of") setState = "open";
+    else if (setState === "open" && token.word === "to" && token.raw === "to") setState = "closed";
+  };
+  /** Words of one value class: "and" / "," between two of them is a list, not a clause boundary. */
+  const listClass = (x: Token | undefined): string | undefined => {
+    if (x?.type === "number" || x?.type === "string") return "literal";
+    if (x?.type !== "word") return undefined;
+    if (LABEL_WORDS.has(x.word)) return "literal";
+    if (TEXT_STYLE_WORDS.has(x.word)) return "textStyle";
+    return undefined;
+  };
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
+    const prevClass = listClass(tokens[i - 1]);
+    const joinsList = prevClass !== undefined && prevClass === listClass(tokens[i + 1]);
     if (token.type === "sep") {
-      if (SENTENCE_END.has(token.value)) endSentence();
-      else endClause();
+      if (SENTENCE_END.has(token.value)) {
+        endSentence();
+        setState = "none";
+      } else if (token.value === "," && (setState === "open" || (joinsList && prevClass === "textStyle"))) {
+        clause.push(token);
+      } else {
+        endClause();
+        setState = "none";
+      }
       continue;
     }
     if (token.type === "word" && CLAUSE_WORDS.has(token.word)) {
-      const prev = tokens[i - 1];
-      const next = tokens[i + 1];
-      // "between 1 and 6", "'Yes' and 'No'": not a clause boundary.
-      const literal = (x: Token | undefined): boolean => x?.type === "number" || x?.type === "string";
-      if (token.word === "and" && literal(prev) && literal(next)) {
+      // "between 1 and 6", "'Yes' and 'No'", "yes and no", "bold and italic": not a boundary.
+      if (token.word === "and" && (joinsList || setState === "open")) {
         clause.push(token);
         continue;
       }
       endClause();
+      setState = "none";
       continue;
     }
+    trackSet(token);
     // "if X go next otherwise go back": "otherwise" / "else" starts its own clause.
     if (token.type === "word" && (token.word === "otherwise" || token.word === "else") && clause.length > 0
       && !(token.word === "else" && wordAt(tokens, i - 1) === "or")) {
@@ -661,6 +839,73 @@ interface Ctx {
   kind: SpellObjectKind;
   /** Whether a statement so far wrote `it` (ask, answer, get, fetch). */
   itWritten: boolean;
+  /** The prompt, for cutting unquoted message text out of it (token offsets). */
+  source: string;
+}
+
+/** `t[k]` directly followed `t[k - 1]` in the prompt (no trigger phrase was removed between them). */
+const adjacent = (t: Toks, k: number): boolean => t[k] !== undefined && t[k - 1] !== undefined && t[k].n === t[k - 1].n + 1;
+
+const isCapitalized = (t: Toks, k: number): boolean => {
+  const token = t[k];
+  return token?.type === "word" && IDENTIFIER_RAW.test(token.raw) && /^[A-Z]/.test(token.raw);
+};
+
+/** End of the run of Capitalised words starting at `i` (neighbours in the prompt). */
+function capitalRun(t: Toks, i: number): number {
+  let k = i;
+  while (isCapitalized(t, k) && (k === i || adjacent(t, k))) k++;
+  return k;
+}
+
+/**
+ * Words that may follow an unquoted multi-word name, so that its end is certain: the next slot
+ * of some phrase ("with" an effect, "by" an amount, "to" a value, a comparison...).
+ */
+const NAME_FOLLOW = new Set(
+  ("with by to into from when whenever if then and or in on at of for times twice thrice once is are was after before " +
+    "using via slowly quickly fast slow gently very contains equals").split(" "),
+);
+
+/**
+ * An unquoted name of two or more Capitalised words ("Game Over", "High Score") after a part or
+ * card noun. Its end is certain only when the run ends the clause, is followed by a lowercase
+ * word from NAME_FOLLOW, by an operator or by a removed trigger phrase; anything else after it
+ * ("card Game over", "field High Score points") makes the name ambiguous: `undefined`.
+ * Returns null when there is no multi-word name at `i` (a single word is handled by the caller).
+ */
+function readMultiWordName(t: Toks, i: number): Parsed<string> | null | undefined {
+  const end = capitalRun(t, i);
+  if (end - i < 2) return null;
+  const next = t[end];
+  const certain = next === undefined || !adjacent(t, end) || next.type === "op"
+    || (next.type === "word" && NAME_FOLLOW.has(next.word) && /^[a-z]/.test(next.raw));
+  if (!certain) return undefined;
+  const name = t.slice(i, end).map((token) => (token as { raw: string }).raw).join(" ");
+  return { value: name, end };
+}
+
+/**
+ * Unquoted text from `i` to the end of the clause, or up to the first index where `stop` holds.
+ * Only words and numbers that were neighbours in the prompt, and no command verb (so "say hi go
+ * next" is never one message). The text is cut from the prompt as written, with a "?" or "!"
+ * that directly follows it at the end of the clause.
+ */
+function readFreeText(t: Toks, i: number, ctx: Ctx, stop?: (k: number) => boolean): Parsed<string> | null {
+  let k = i;
+  while (k < t.length && !(k > i && stop?.(k))) {
+    const token = t[k];
+    if (token.type !== "word" && token.type !== "number") return null;
+    if (token.type === "word" && PHRASE_VERBS.has(token.word)) return null;
+    if (k > i && !adjacent(t, k)) return null;
+    k++;
+  }
+  if (k === i) return null;
+  const last = t[k - 1];
+  let text = ctx.source.slice(t[i].at, last.to);
+  const after = ctx.source[last.to];
+  if (k === t.length && (after === "?" || after === "!")) text += after;
+  return printable(text) ? { value: text, end: k } : null;
 }
 
 interface Parsed<T> {
@@ -706,15 +951,28 @@ function readContainer(t: Toks, i: number, allowBare: boolean): Parsed<HexContai
     return { value: fieldTarget(token.value), end: j + 2 };
   }
   if (isNameWord(t, j) && isAt(t, j + 1, FIELD_WORDS)) return { value: fieldTarget((t[j] as { raw: string }).raw), end: j + 2 };
+  // "the High Score field": the noun ends the name, so it is certain.
+  const before = nameBeforeNoun(t, j, FIELD_WORDS);
+  if (before) return { value: fieldTarget(before.value), end: before.end };
   if (!allowBare) return null;
   if (token?.type === "string" && printable(token.value) && token.value !== "") return { value: fieldTarget(token.value), end: j + 1 };
   if (isNameWord(t, j)) return { value: fieldTarget((t[j] as { raw: string }).raw), end: j + 1 };
   return null;
 }
 
+/** Two or more Capitalised words directly followed by a noun from `nouns` ("the Game Over card"). */
+function nameBeforeNoun(t: Toks, i: number, nouns: ReadonlySet<string>): Parsed<string> | null {
+  const end = capitalRun(t, i);
+  if (end - i < 2 || !isAt(t, end, nouns) || !adjacent(t, end)) return null;
+  return { value: t.slice(i, end).map((token) => (token as { raw: string }).raw).join(" "), end: end + 1 };
+}
+
 function fieldTargetOf(name: string | number, layer: "card" | "background"): FieldTarget {
   return fieldTarget(name, layer);
 }
+
+/** After these, a number word counts something ("flash the button three times"), it is no selector. */
+const COUNT_UNITS = words("times second seconds tick ticks minute minutes");
 
 /** Part or card selector after its noun: a string, a number, `named X`, `number N` or a name word. */
 function readSelector(t: Toks, i: number): Parsed<string | number> | null {
@@ -723,6 +981,16 @@ function readSelector(t: Toks, i: number): Parsed<string | number> | null {
   const token = t[j];
   if (token?.type === "string") return printable(token.value) && token.value !== "" ? { value: token.value, end: j + 1 } : null;
   if (token?.type === "number" && Number.isInteger(token.value)) return { value: token.value, end: j + 1 };
+  // "card three", "field twenty one": a number word is a position, like a digit.
+  const numberWord = readNumber(t, j);
+  if (numberWord && token?.type === "word" && Number.isInteger(numberWord.value) && numberWord.value >= 1
+    && !isAt(t, numberWord.end, COUNT_UNITS)) {
+    return { value: numberWord.value, end: numberWord.end };
+  }
+  // "card Game Over", "field High Score": several Capitalised words, only with a certain end.
+  const multi = readMultiWordName(t, j);
+  if (multi === undefined) return null;
+  if (multi) return multi;
   if (isSelectorWord(t, j) && !NUMBER_WORDS.has(wordAt(t, j) as string)) return { value: (token as { raw: string }).raw, end: j + 1 };
   return null;
 }
@@ -878,6 +1146,16 @@ function readObject(t: Toks, i: number, ctx: Ctx): Parsed<ObjectRef> | null {
       };
     }
   }
+  // "the Big Red button", "the High Score field"
+  for (const [nouns, kind] of [[BUTTON_WORDS, "button"], [FIELD_WORDS, "field"]] as const) {
+    const before = nameBeforeNoun(t, j, nouns);
+    if (before) {
+      return {
+        value: { target: { objectType: kind, layer: kind === "field" ? "background" : "card", selector: { by: "auto", value: lit(before.value) } }, kind },
+        end: before.end,
+      };
+    }
+  }
   return null;
 }
 
@@ -916,6 +1194,7 @@ const statements = (end: number, ...list: HexStatementNode[]): Phrase => ({ end,
 
 // ----- go ------------------------------------------------------------------------------------
 
+const CARD_NOUNS = words("card page");
 const GO_VERBS = words("go goto navigate jump flip head advance proceed switch move return travel skip turn take bring show open visit");
 const GO_FILLER = words("to me us on over onto towards toward into");
 
@@ -956,6 +1235,8 @@ function readCardTarget(t: Toks, i: number, afterVerb: boolean): Parsed<HexCardT
   if (isNameWord(t, j) && /^[A-Z]/.test((token as { raw: string }).raw) && isAt(t, j + 1, words("card page"))) {
     return { value: { type: "auto", value: lit((token as { raw: string }).raw) }, end: j + 2 };
   }
+  const before = nameBeforeNoun(t, j, CARD_NOUNS);
+  if (before) return { value: { type: "auto", value: lit(before.value) }, end: before.end };
   return null;
 }
 
@@ -1084,7 +1365,39 @@ for (const word of MOODS.keys()) VOCAB.add(word);
 const SOUND_VERBS = words("play plays playing sound make emit produce");
 const SOUND_NOUNS = words("sound sounds noise noises sfx music notes");
 const SOUND_LINKS = words("on with using");
+const SOUND_SOUNDS = words("sound sounds");
 const NOTE_WORD = /^([a-g][#b]?[1-7]|r)[whqes]?\.?$/;
+
+/**
+ * "Sounds like X": what X sounds like, as a voice and the melody used when the prompt names
+ * none. Only these words; anything else after "like" ("like a dragon") is not understood.
+ */
+type SoundLike = { voice: HexVoice; melody: MelodyName };
+const SOUND_LIKE: ReadonlyMap<string, SoundLike> = (() => {
+  const map = new Map<string, SoundLike>();
+  const add = (list: string, voice: HexVoice, melody: MelodyName): void => {
+    for (const word of known(list)) map.set(word, { voice, melody });
+  };
+  add("bounce bounces bouncing bouncy spring springs springy boing sproing", "boing", "note");
+  add("bell bells chime chimes ding ringing", "harpsichord", "chime");
+  add("beep beeps beeping alarm alarms buzzer siren", "square8bit", "beep");
+  add("click clicks clicking tick ticks ticking", "click", "note");
+  add("whistle whistles whistling wind breeze", "flute", "note");
+  return map;
+})();
+/** Nouns that may follow the sound-like word: "like a bouncing ball", "like a ticking clock". */
+const SOUND_LIKE_TAIL = known("ball balls clock sound noise");
+const LIKE_ARTICLES = words("a an the some");
+
+/** `X` or `X Y` after "like": both words must describe the same voice, or Y is a plain noun. */
+function readSoundLike(t: Toks, i: number): Parsed<SoundLike> | null {
+  const first = SOUND_LIKE.get(wordAt(t, i) ?? "");
+  if (!first) return null;
+  const second = wordAt(t, i + 1);
+  if (second !== undefined && SOUND_LIKE.get(second)?.voice === first.voice) return { value: SOUND_LIKE.get(second) as SoundLike, end: i + 2 };
+  if (second !== undefined && SOUND_LIKE_TAIL.has(second)) return { value: first, end: i + 2 };
+  return { value: first, end: i + 1 };
+}
 
 const parseSound: PhraseParser = (t, i, ctx) => {
   let j = i;
@@ -1092,6 +1405,7 @@ const parseSound: PhraseParser = (t, i, ctx) => {
   if (verb !== undefined) j++;
   let voice: HexVoice | undefined;
   let melody: MelodyName | undefined;
+  let likeMelody: MelodyName | undefined;
   let mood: MelodyName | undefined;
   let notes: string | undefined;
   let tempo: number | undefined;
@@ -1112,6 +1426,36 @@ const parseSound: PhraseParser = (t, i, ctx) => {
     if (word !== undefined && SOUND_LINKS.has(word) && VOICE_WORDS.has(wordAt(t, skip(t, j + 1, ARTICLES)) ?? "")) {
       j = skip(t, j + 1, ARTICLES);
       continue;
+    }
+    // "play something that sounds like a bell", "make it sound like a spring"
+    if (word === "something" && j > i) {
+      j++;
+      continue;
+    }
+    if ((word === "that" || word === "which" || (word === "it" && verb === "make")) && isAt(t, j + 1, SOUND_SOUNDS)
+      && wordAt(t, j + 2) === "like") {
+      noun = true;
+      j += 2;
+      continue;
+    }
+    // "a sound like a bell", "sounds like an alarm": the voice comes from what it sounds like.
+    if (word === "like" && (noun || verb !== undefined)) {
+      const like = readSoundLike(t, skip(t, j + 1, LIKE_ARTICLES));
+      if (!like || !setVoice(like.value.voice)) return null;
+      likeMelody ??= like.value.melody;
+      j = like.end;
+      continue;
+    }
+    // "a bell sound", "an alarm noise", "a bell-like sound"
+    {
+      const likeRaw = token?.type === "word" ? /^([a-z]+)-?like$/i.exec(token.raw) : null;
+      const attributive = likeRaw ? SOUND_LIKE.get(likeRaw[1].toLowerCase()) : word !== undefined && isAt(t, j + 1, SOUND_NOUNS) ? SOUND_LIKE.get(word) : undefined;
+      if (attributive && !VOICE_WORDS.has(word ?? "") && !MELODY_NOUNS.has(word ?? "")) {
+        if (!setVoice(attributive.voice)) return null;
+        likeMelody ??= attributive.melody;
+        j++;
+        continue;
+      }
     }
     if (word === "click" || word === "clicks") {
       // The click voice only when the phrase is clearly about sound.
@@ -1193,7 +1537,7 @@ const parseSound: PhraseParser = (t, i, ctx) => {
   }
   if (verb !== undefined && voice === undefined && melody === undefined && mood === undefined && notes === undefined && !noun) return null;
   if (mood !== undefined && melody === undefined && !noun && voice === undefined) return null;
-  const tune = mood ?? melody;
+  const tune = mood ?? melody ?? likeMelody;
   const finalVoice = voice ?? (tune === "beep" || tune === "victory" ? "square8bit" : "harpsichord");
   const finalNotes = notes ?? MELODIES[tune ?? "note"];
   const finalTempo = tempo ?? (soundSpeed === undefined ? 120 : SOUND_SPEED_TEMPO[soundSpeed]);
@@ -1209,36 +1553,92 @@ const ANSWER_VERBS = words("answer say says alert tell display show popup announ
 const AUDIENCE = words("user player me them us him her everyone");
 const DIALOG_NOUNS = words("message alert dialog dialogue popup box notice greeting");
 const SAYING = words("saying says reading that which");
+const SAYS_WORDS = known("says reads said");
+/** Verbs that announce what is said, so "that ..." after them is the message ("tell the player that ..."). */
+const TELL_VERBS = words("answer say says alert tell announce notify warn greet");
+/** "with the text X", "with the message X" */
+const TEXT_NOUNS = known("text message words");
 const LABEL_WORDS = words("yes no ok okay cancel maybe continue quit retry later sure nope stop");
 const PHRASE_VERBS = words("go play put add subtract hide show ask answer say wait fetch set store save beep visual dissolve");
+const BUTTON_LIST_NOUNS = words("buttons button options choices answers");
+const OR_AND = words("or and");
+const DIALOG_LINKS = words("in as on with into");
+const YES_NO_LINKS = words("with as using");
+const YES_NO_NOUNS = known("question questions buttons button options choices choice answers");
+known("yesorno yesno");
+
+/** A button label: as written, except that a lowercase label word is capitalised ("yes" -> "Yes", "ok" -> "OK"). */
+function labelOf(token: Extract<Token, { type: "word" }>): string {
+  if (!LABEL_WORDS.has(token.word) || !/^[a-z]+$/.test(token.raw)) return token.raw;
+  return token.word === "ok" ? "OK" : token.raw.charAt(0).toUpperCase() + token.raw.slice(1);
+}
 
 function readButtons(t: Toks, i: number): Parsed<HexExprNode[]> | null {
   if (wordAt(t, i) !== "with") return null;
   let j = i + 1;
-  if (isAt(t, j, words("buttons button options choices answers"))) j++;
+  if (isAt(t, j, BUTTON_LIST_NOUNS)) j++;
   const labels: HexExprNode[] = [];
   for (;;) {
     const token = t[j];
     if (token?.type === "string" && printable(token.value) && token.value !== "") labels.push(lit(token.value));
-    else if (token?.type === "word" && (LABEL_WORDS.has(token.word) || (/^[A-Z][A-Za-z]*$/.test(token.raw) && isNameWord(t, j)))) labels.push(lit(token.raw));
+    else if (token?.type === "word" && (LABEL_WORDS.has(token.word) || (/^[A-Z][A-Za-z]*$/.test(token.raw) && isNameWord(t, j)))) labels.push(lit(labelOf(token)));
     else break;
     j++;
-    if (labels.length === 3 || !isAt(t, j, words("or and"))) break;
+    if (labels.length === 3 || !isAt(t, j, OR_AND)) break;
     j++;
   }
   if (labels.length === 0) return null;
-  if (isAt(t, j - 1, words("or and"))) return null;
+  if (isAt(t, j - 1, OR_AND)) return null;
   return { value: labels, end: j };
 }
 
+/** `[with|as] [a] yes or no [question]` (also "yes/no", "yes-or-no"): the buttons "Yes" and "No". */
+function readYesNo(t: Toks, i: number): Parsed<HexExprNode[]> | null {
+  let j = i;
+  if (isAt(t, j, YES_NO_LINKS)) j++;
+  j = skip(t, j, ARTICLES);
+  const word = wordAt(t, j);
+  if (word === "yesorno" || word === "yesno") j++;
+  else if (word === "yes" && isAt(t, j + 1, OR_AND) && wordAt(t, j + 2) === "no") j += 3;
+  else return null;
+  if (isAt(t, j, YES_NO_NOUNS)) j++;
+  return { value: [lit("Yes"), lit("No")], end: j };
+}
+
+/** "... in a dialog", "... as an alert", "... to the player" after the message: skipped. */
+function readDialogTail(t: Toks, i: number): number {
+  let j = i;
+  let k = i;
+  if (isAt(t, k, DIALOG_LINKS)) k++;
+  k = skip(t, k, ARTICLES);
+  if (isAt(t, k, DIALOG_NOUNS)) {
+    while (isAt(t, k, DIALOG_NOUNS)) k++;
+    j = k;
+  }
+  if (wordAt(t, j) === "to") {
+    const audience = skip(t, j + 1, ARTICLES);
+    if (isAt(t, audience, AUDIENCE)) j = audience + 1;
+  }
+  return j;
+}
+
+/**
+ * Message dialogs: "say X", "show a message (saying | that says) X", "pop up an alert: X",
+ * "display a dialog with the text X", "tell the player that X", "show 'X' in a dialog".
+ * Unquoted X runs to the end of the clause (or to "with" and its buttons). It is accepted after
+ * an explicit marker ("saying", "that says", "reading", "with the text", ":"), after say / tell /
+ * greet / answer (not when it starts with an article: "say the score" is not a message), or after
+ * a dialog noun when it starts with a Capitalised word ("show a message You win").
+ */
 const parseAnswer: PhraseParser = (t, i, ctx) => {
-  if (!isAt(t, i, ANSWER_VERBS)) {
+  const explicitVerb = isAt(t, i, ANSWER_VERBS);
+  if (!explicitVerb) {
     // "a message saying 'Hi'"
     const j = skip(t, i, ARTICLES);
     if (!isAt(t, j, words("message alert dialog popup"))) return null;
   }
-  const verb = wordAt(t, i) as string;
-  let j = isAt(t, i, ANSWER_VERBS) ? i + 1 : i;
+  const verb = explicitVerb ? (wordAt(t, i) as string) : "";
+  let j = explicitVerb ? i + 1 : i;
   j = skip(t, j, ARTICLES);
   if (isAt(t, j, AUDIENCE)) j++;
   j = skip(t, j, ARTICLES);
@@ -1255,13 +1655,23 @@ const parseAnswer: PhraseParser = (t, i, ctx) => {
     dialog = true;
     j++;
   }
-  if (isAt(t, j, SAYING)) {
+  let marker = false;
+  const lead = wordAt(t, j);
+  if (lead === "saying" || lead === "reading" || lead === "says"
+    || ((lead === "that" || lead === "which") && (dialog || TELL_VERBS.has(verb) || isAt(t, j + 1, SAYS_WORDS)))) {
+    marker = true;
     j++;
-    if (isAt(t, j, words("says reads"))) j++;
+    if (isAt(t, j, SAYS_WORDS)) j++;
   }
-  if (wordAt(t, j) === "with" && wordAt(t, j + 1) === "the" && wordAt(t, j + 2) === "text") j += 3;
-  const explicitVerb = isAt(t, i, ANSWER_VERBS);
-  if ((verb === "show" || verb === "display") && !dialog && t[j]?.type !== "string") {
+  if (wordAt(t, j) === "with" && wordAt(t, j + 1) === "the" && isAt(t, j + 2, TEXT_NOUNS)) {
+    j += 3;
+    marker = true;
+  }
+  if (t[j]?.type === "colon") {
+    j++;
+    marker = true;
+  }
+  if ((verb === "show" || verb === "display") && !dialog && !marker && t[j]?.type !== "string") {
     // "show the date": only values that cannot be a part.
     const value = readValue(t, j, ctx, false);
     if (!value || value.value.kind === "ReadContainer") return null;
@@ -1272,34 +1682,53 @@ const parseAnswer: PhraseParser = (t, i, ctx) => {
   let content: HexExprNode | undefined;
   let end = j;
   const value = readValue(t, j, ctx, false);
-  if (value) {
+  // After a marker the message runs to the end of the clause: "saying the time is up" is text.
+  const valueEnds = (k: number): boolean => k >= t.length || wordAt(t, k) === "with" || readDialogTail(t, k) > k;
+  if (value && (!marker || valueEnds(value.end))) {
     content = value.value;
     end = value.end;
-  } else if (explicitVerb && (verb === "say" || verb === "tell" || verb === "greet" || verb === "answer" || verb === "says")
-    && !isAt(t, j - 1, ARTICLES) && !isAt(t, j, ARTICLES)) {
-    // Plain words ("say hello there"), but never a noun phrase such as "say the score".
-    const run: string[] = [];
-    let k = j;
-    while (t[k]?.type === "word" && wordAt(t, k) !== "with" && !PHRASE_VERBS.has(wordAt(t, k) as string)) run.push((t[k] as { raw: string }).raw), k++;
-    if (run.length > 0 && (t[k] === undefined || wordAt(t, k) === "with")) {
-      content = lit(run.join(" "));
-      end = k;
-    } else if (run.length === 0 && verb === "greet") {
+  } else {
+    const sayVerb = verb === "say" || verb === "tell" || verb === "greet" || verb === "answer" || verb === "says";
+    const allowed = marker
+      || (sayVerb && !isAt(t, j - 1, ARTICLES) && !isAt(t, j, ARTICLES))
+      || (dialog && isCapitalized(t, j));
+    const free = allowed ? readFreeText(t, j, ctx, (k) => wordAt(t, k) === "with") : null;
+    if (free) {
+      content = lit(free.value);
+      end = free.end;
+    } else if (verb === "greet" && (j >= t.length || wordAt(t, j) === "with")) {
       content = lit("Hello!");
-      end = k;
+      end = j;
     }
   }
   if (content === undefined) return null;
   if (content.kind === "Literal" && typeof content.value === "string" && !printable(content.value)) return null;
-  const buttons = readButtons(t, end);
+  const buttons = readButtons(t, end) ?? readYesNo(t, end);
+  const after = readDialogTail(t, buttons ? buttons.end : end);
   ctx.itWritten = true;
-  return statements(buttons ? buttons.end : end, answer(content, buttons?.value ?? []));
+  return statements(after, answer(content, buttons?.value ?? []));
 };
 
 const ASK_VERBS = words("ask asks prompt request query");
 const ASK_DETERMINERS = words("the their your his her its my our player user players users visitor");
 const ASK_STOP = words("store save keep put and then with into in");
+const ASK_TO_VERBS = words("enter type give provide input tell");
+/** First words of an unquoted question ("ask are you ready with yes or no"). */
+const QUESTION_WORDS = known("are is am do does did can could will would should shall have has may might must what who whose where which how why");
 
+/** An unquoted question as shown in the dialog: first letter capitalised, ending with "?". */
+function questionText(text: string): string {
+  const trimmed = text.replace(/[.!]+$/, "");
+  const question = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  return question.endsWith("?") ? question : `${question}?`;
+}
+
+/**
+ * Ask dialogs ("ask for the player's name", "ask 'Name?'") and yes/no questions, which are answer
+ * dialogs with the buttons "Yes" and "No": "ask a yes or no question: Q", "ask 'Q' with yes or
+ * no", "ask Q with yes and no" (unquoted Q must start with a question word and end at the
+ * buttons).
+ */
 const parseAsk: PhraseParser = (t, i, ctx) => {
   if (!isAt(t, i, ASK_VERBS)) return null;
   let j = i + 1;
@@ -1307,20 +1736,46 @@ const parseAsk: PhraseParser = (t, i, ctx) => {
     j = skip(t, j, ARTICLES);
     if (isAt(t, j, AUDIENCE)) j++;
   }
+  const choice = (question: HexExprNode, buttons: HexExprNode[], end: number): Phrase => {
+    ctx.itWritten = true;
+    return statements(end, answer(question, buttons));
+  };
+  // "ask (the player) a yes or no question: Are you ready?"
+  const lead = isAt(t, j, YES_NO_LINKS) ? null : readYesNo(t, j);
+  if (lead) {
+    let k = lead.end;
+    if (t[k]?.type === "colon") k++;
+    if (isAt(t, k, SAYING)) {
+      k++;
+      if (isAt(t, k, SAYS_WORDS)) k++;
+    }
+    const token = t[k];
+    if (token?.type === "string") {
+      return printable(token.value) && token.value !== "" ? choice(lit(token.value), lead.value, k + 1) : null;
+    }
+    const free = readFreeText(t, k, ctx);
+    return free ? choice(lit(questionText(free.value)), lead.value, free.end) : null;
+  }
   const token = t[j];
   if (token?.type === "string") {
     if (!printable(token.value) || token.value === "") return null;
-    const buttons = readButtons(t, j + 1);
-    if (buttons) {
-      // "ask 'Are you sure?' with Yes or No": a choice, which is an answer dialog.
-      ctx.itWritten = true;
-      return statements(buttons.end, answer(lit(token.value), buttons.value));
-    }
+    const buttons = readButtons(t, j + 1) ?? readYesNo(t, j + 1);
+    // "ask 'Are you sure?' with Yes or No": a choice, which is an answer dialog.
+    if (buttons) return choice(lit(token.value), buttons.value, buttons.end);
     ctx.itWritten = true;
     return statements(j + 1, ask(lit(token.value)));
   }
+  // "ask are you ready with yes and no": the buttons end the question.
+  if (isAt(t, j, QUESTION_WORDS)) {
+    for (let k = j + 1; k < t.length; k++) {
+      const buttons = readButtons(t, k) ?? readYesNo(t, k);
+      if (!buttons) continue;
+      const free = readFreeText(t, j, ctx, (m) => m === k);
+      return free && free.end === k ? choice(lit(questionText(free.value)), buttons.value, buttons.end) : null;
+    }
+  }
   if (wordAt(t, j) === "for") j++;
-  else if (wordAt(t, j) === "to" && isAt(t, j + 1, words("enter type give provide input tell"))) j += 2;
+  else if (wordAt(t, j) === "to" && isAt(t, j + 1, ASK_TO_VERBS)) j += 2;
   else if (wordAt(t, i) !== "ask" && wordAt(t, i) !== "prompt") return null;
   j = skip(t, j, ASK_DETERMINERS);
   const noun: string[] = [];
@@ -1515,6 +1970,69 @@ function countLoop(t: Toks, i: number): Phrase | null {
   return statements(j, repeat({ type: "range", varName: "i", start: lit(start), end: lit(end), direction: down ? "down" : "up" }, body));
 }
 
+const LOSE_VERBS = known("lose loses loose");
+const LOSE_SUBJECTS = words("player user hero");
+const A_AN = words("a an");
+const HUNDRED = words("hundred");
+/** take is a subtract verb only with "away" ("take 5 away from Health") or "from". */
+const SUBTRACT_VERBS: ReadonlySet<string> = new Set([...words("subtract deduct remove take"), ...LOSE_VERBS]);
+
+/**
+ * Singular counters after "a" / "one" / "1" name the field in the plural ("lose a life" ->
+ * field "lives"), so that "lose 1 life" and "lose 2 lives" change the same field. Any other noun
+ * names the field as written ("lose 5 health" -> field "health").
+ */
+const COUNTER_PLURALS: ReadonlyMap<string, string> = new Map([
+  ["life", "lives"], ["coin", "coins"], ["heart", "hearts"], ["star", "stars"], ["gem", "gems"], ["key", "keys"],
+  ["token", "tokens"], ["credit", "credits"], ["ticket", "tickets"], ["bullet", "bullets"], ["arrow", "arrows"],
+  ["potion", "potions"],
+]);
+
+/** `a` / `an` as the amount 1, else `readAmount`. */
+function readCount(t: Toks, i: number, ctx: Ctx): Parsed<HexExprNode> | null {
+  if (isAt(t, i, A_AN) && !isAt(t, i + 1, HUNDRED)) return { value: lit(1), end: i + 1 };
+  return readAmount(t, i, ctx);
+}
+
+/**
+ * subtract / deduct / remove / lose / take away N [unit] from <container>, and the same without
+ * "from" when the unit names the counter: "lose 1 life", "take away 5 health", "deduct 2 coins".
+ */
+function parseSubtract(t: Toks, i: number, ctx: Ctx): Phrase | null {
+  const verb = wordAt(t, i) as string;
+  let j = i + 1;
+  if (verb === "take" && wordAt(t, j) === "away") j++;
+  const amount = readCount(t, j, ctx);
+  if (!amount) return null;
+  let k = amount.end;
+  if (verb === "take" && wordAt(t, k) === "away") k++;
+  else if (verb === "take" && j === i + 1 && wordAt(t, k) !== "from") return null;
+  if (wordAt(t, k) === "from") {
+    const destination = readContainer(t, k + 1, true);
+    return destination ? statements(destination.end, math("subtract", amount.value, destination.value)) : null;
+  }
+  // A unit word, then "from": "remove 2 coins from field 'Purse'".
+  if (isNameWord(t, k) && adjacent(t, k) && wordAt(t, k + 1) === "from") {
+    const destination = readContainer(t, k + 2, true);
+    return destination ? statements(destination.end, math("subtract", amount.value, destination.value)) : null;
+  }
+  // The counter itself: "lose 1 life", "subtract 3 Health", "lose 2 'Coins'".
+  const counter = t[k];
+  if (counter?.type === "string" && printable(counter.value) && counter.value !== "" && adjacent(t, k)) {
+    return statements(k + 1, math("subtract", amount.value, fieldTarget(counter.value)));
+  }
+  if (isNameWord(t, k) && adjacent(t, k) && !isAt(t, k, POINT_WORDS)) {
+    const raw = (counter as { raw: string }).raw;
+    const one = amount.value.kind === "Literal" && amount.value.value === 1;
+    const plural = one ? COUNTER_PLURALS.get(raw.toLowerCase()) : undefined;
+    const name = plural === undefined ? raw : /^[A-Z]/.test(raw) ? plural.charAt(0).toUpperCase() + plural.slice(1) : plural;
+    return statements(k + 1, math("subtract", amount.value, fieldTarget(name)));
+  }
+  const explicit = readContainer(t, k, false);
+  if (explicit && adjacent(t, k)) return statements(explicit.end, math("subtract", amount.value, explicit.value));
+  return null;
+}
+
 const parseMath: PhraseParser = (t, i, ctx) => {
   const verb = wordAt(t, i);
   if (verb === undefined) return null;
@@ -1524,14 +2042,9 @@ const parseMath: PhraseParser = (t, i, ctx) => {
     const destination = readContainer(t, amount.end + 1, true);
     return destination ? statements(destination.end, math("add", amount.value, destination.value)) : null;
   }
-  if (verb === "subtract" || verb === "deduct" || verb === "remove" || verb === "take") {
-    let j = i + 1;
-    if (verb === "take" && wordAt(t, j) === "away") j++;
-    const amount = readAmount(t, j, ctx);
-    if (!amount || wordAt(t, amount.end) !== "from") return null;
-    const destination = readContainer(t, amount.end + 1, true);
-    return destination ? statements(destination.end, math("subtract", amount.value, destination.value)) : null;
-  }
+  // "the player loses a life"
+  if (isAt(t, i, LOSE_SUBJECTS) && isAt(t, i + 1, LOSE_VERBS)) return parseMath(t, i + 1, ctx);
+  if (SUBTRACT_VERBS.has(verb)) return parseSubtract(t, i, ctx);
   if (INCREASE.has(verb) || DECREASE.has(verb)) {
     const destination = readContainer(t, i + 1, true);
     if (!destination) return null;
@@ -1594,8 +2107,23 @@ const PROPERTY_PHRASES: readonly [string[], HexPropertyName][] = [
 ];
 for (const [phrase] of PROPERTY_PHRASES) for (const word of phrase) VOCAB.add(word);
 
+/**
+ * The rest of the §4.1 PropertyName list for `set the <property> of <object> to <value>`, exact
+ * words only (KNOWN): every property name in its HexTalk spelling ("textStyle" -> textstyle) and
+ * the usual English forms. Longest phrases first.
+ */
+const MORE_PROPERTY_PHRASES: readonly [string[], HexPropertyName][] = [
+  [["text", "style"], "textStyle"], [["font", "style"], "textStyle"], [["show", "name"], "showName"],
+  [["auto", "hilite"], "autoHilite"], [["auto", "highlight"], "autoHilite"], [["lock", "text"], "lockText"],
+  [["textsize"], "textSize"], [["textfont"], "textFont"], [["textalign"], "textAlign"], [["textstyle"], "textStyle"],
+  [["showname"], "showName"], [["autohilite"], "autoHilite"], [["autohighlight"], "autoHilite"], [["locktext"], "lockText"],
+  [["rect"], "rect"], [["rectangle"], "rect"], [["bounds"], "rect"], [["style"], "style"], [["marked"], "marked"],
+  [["visibility"], "visible"], [["loc"], "location"],
+];
+for (const [phrase] of MORE_PROPERTY_PHRASES) for (const word of phrase) known(word);
+
 function readPropertyName(t: Toks, i: number): Parsed<HexPropertyName> | null {
-  for (const [phrase, property] of PROPERTY_PHRASES) {
+  for (const [phrase, property] of [...MORE_PROPERTY_PHRASES.filter(([p]) => p.length > 1), ...PROPERTY_PHRASES, ...MORE_PROPERTY_PHRASES]) {
     if (phrase.every((word, k) => wordAt(t, i + k) === word)) return { value: property, end: i + phrase.length };
   }
   return null;
@@ -1608,11 +2136,69 @@ const BOOLEAN_WORDS: ReadonlyMap<string, boolean> = new Map([
   ["true", true], ["false", false], ["on", true], ["off", false], ["yes", true], ["no", false],
 ]);
 
-/** The value of `set <property> of <object> to ...`, checked so that the store will accept it. */
-function readPropertyValue(t: Toks, i: number, property: HexPropertyName, ctx: Ctx): Parsed<HexExprNode> | null {
+const BUTTON_STYLE_VALUES: ReadonlyMap<string, string> = new Map([
+  ["transparent", "transparent"], ["opaque", "opaque"], ["rectangle", "rectangle"], ["roundrect", "roundRect"],
+  ["shadow", "shadow"], ["checkbox", "checkBox"], ["radiobutton", "radioButton"], ["default", "default"],
+]);
+const FIELD_STYLE_VALUES: ReadonlyMap<string, string> = new Map([
+  ["transparent", "transparent"], ["opaque", "opaque"], ["rectangle", "rectangle"], ["shadow", "shadow"], ["scrolling", "scrolling"],
+]);
+const TEXT_STYLE_WORDS = known("plain bold italic underline outline shadow condense");
+known("transparent opaque roundrect default scrolling center sans mono serif system round rounded");
+const RECT_WORDS = known("rect rectangle");
+
+/** `bold`, `bold and italic`, `bold, italic and underline`, `plain` -> "bold,italic,underline". */
+function readTextStyles(t: Toks, i: number): Parsed<string> | null {
+  const styles: string[] = [];
+  let j = i;
+  for (;;) {
+    const word = wordAt(t, j);
+    if (word === undefined || !TEXT_STYLE_WORDS.has(word)) return null;
+    styles.push(word);
+    j++;
+    const comma = t[j]?.type === "sep";
+    if (comma) j++;
+    if (wordAt(t, j) === "and") j++;
+    else if (!comma) break;
+  }
+  if (styles.includes("plain") && styles.length > 1) return null;
+  return { value: [...new Set(styles)].join(","), end: j };
+}
+
+/**
+ * The value of `set <property> of <object> to ...`, checked so that the store will accept it
+ * for an object of `kind` (style values differ between buttons and fields).
+ */
+function readPropertyValue(t: Toks, i: number, property: HexPropertyName, ctx: Ctx, kind: ObjectKind = ctx.kind): Parsed<HexExprNode> | null {
   const token = t[i];
   const word = wordAt(t, i);
   switch (property) {
+    case "showName": case "autoHilite": case "lockText": case "marked": {
+      const flag = word === undefined ? undefined : BOOLEAN_WORDS.get(word);
+      return flag === undefined ? null : { value: lit(flag), end: i + 1 };
+    }
+    case "rect": {
+      if (token?.type !== "rect") return null;
+      const [left, top, right, bottom] = token.value.split(",").map(Number);
+      return right >= left && bottom >= top ? { value: lit(token.value), end: i + 1 } : null;
+    }
+    case "style": {
+      const values = kind === "button" ? BUTTON_STYLE_VALUES : kind === "field" ? FIELD_STYLE_VALUES : undefined;
+      const name = token?.type === "string" ? token.value.toLowerCase().replace(/\s+/g, "") : word;
+      // "round rect", "rounded rectangle"
+      const roundRect = (word === "round" || word === "rounded") && isAt(t, i + 1, RECT_WORDS);
+      const style = roundRect ? values?.get("roundrect") : name === undefined ? undefined : values?.get(name);
+      return style ? { value: lit(style), end: i + (roundRect ? 2 : 1) } : null;
+    }
+    case "textStyle": {
+      if (token?.type === "string") {
+        const list = token.value.trim().toLowerCase().split(/\s*,\s*(?:and\s+)?|\s+and\s+/);
+        const valid = list.every((style) => TEXT_STYLE_WORDS.has(style)) && !(list.includes("plain") && list.length > 1);
+        return valid ? { value: lit([...new Set(list)].join(",")), end: i + 1 } : null;
+      }
+      const styles = readTextStyles(t, i);
+      return styles ? { value: lit(styles.value), end: styles.end } : null;
+    }
     case "textSize": {
       const n = readNumber(t, i);
       return n && TEXT_SIZES.has(n.value) ? { value: lit(n.value), end: n.end } : null;
@@ -1634,7 +2220,12 @@ function readPropertyValue(t: Toks, i: number, property: HexPropertyName, ctx: C
       return token?.type === "point" ? { value: lit(token.value), end: i + 1 } : null;
     case "name": case "title": {
       const value = readValue(t, i, ctx, false);
-      return value && value.value.kind !== "ReadContainer" ? value : null;
+      if (value && value.value.kind !== "ReadContainer") return value;
+      if (value) return null;
+      // Unquoted, to the end of the clause: "to Start Game" (not "to the winner": that could be a field).
+      if (isAt(t, i, ARTICLES) && !isCapitalized(t, i)) return null;
+      const free = readFreeText(t, i, ctx);
+      return free ? { value: lit(free.value), end: free.end } : null;
     }
     default:
       return null;
@@ -1657,6 +2248,68 @@ function readTimes(t: Toks, i: number): Parsed<number> | null {
     return { value: n.value, end };
   }
   return null;
+}
+
+/** `<object> { ("," | "and" | ", and") <object> }`: "button 'A', button 'B' and this card". */
+function readObjectList(t: Toks, i: number, ctx: Ctx): Parsed<ObjectRef[]> | null {
+  const first = readObject(t, i, ctx);
+  if (!first) return null;
+  const list = [first.value];
+  let end = first.end;
+  for (;;) {
+    let j = end;
+    const comma = t[j];
+    if (comma?.type === "sep" && comma.value === ",") j++;
+    if (wordAt(t, j) === "and") j++;
+    if (j === end) break;
+    const next = readObject(t, j, ctx);
+    if (!next) return null;
+    list.push(next.value);
+    end = next.end;
+  }
+  return { value: list, end };
+}
+
+/**
+ * `set|change the <property> of <objects> to <value>` for every §4.3 property, also
+ * `set my <property> to ...` and `set this button's <property> to ...`. The value is typed per
+ * property (booleans, sizes, fonts, alignments, styles, "x,y", "l,t,r,b", text) and every object
+ * must accept the property; otherwise nothing is compiled.
+ */
+function parseSetProperty(t: Toks, i: number, ctx: Ctx): Phrase | null {
+  const j = skip(t, i + 1, ARTICLES);
+  let objects: ObjectRef[] | undefined;
+  let property: Parsed<HexPropertyName> | null = null;
+  if (wordAt(t, i + 1) === "my") {
+    property = readPropertyName(t, i + 2);
+    objects = [{ target: me(), kind: ctx.kind }];
+  } else {
+    property = readPropertyName(t, j);
+    if (property && wordAt(t, property.end) === "of") {
+      const list = readObjectList(t, property.end + 1, ctx);
+      if (!list) return null;
+      objects = list.value;
+      property = { value: property.value, end: list.end };
+    } else {
+      // "set this button's title to ..."
+      const object = readObject(t, i + 1, ctx);
+      const last = object ? t[object.end - 1] : undefined;
+      if (!object || last?.type !== "word" || !/['\u2019]s$/i.test(last.raw)) return null;
+      property = readPropertyName(t, object.end);
+      objects = [object.value];
+    }
+  }
+  if (!property || !objects || wordAt(t, property.end) !== "to") return null;
+  let value: Parsed<HexExprNode> | null = null;
+  for (const object of objects) {
+    if (!propertyAllowed(property.value, object.kind)) return null;
+    const read = readPropertyValue(t, property.end + 1, property.value, ctx, object.kind);
+    if (!read || (value && !astEqual(read.value, value.value))) return null;
+    value = read;
+  }
+  if (!value) return null;
+  const result = value;
+  return statements(result.end, ...objects.map((object) => setProperty(property.value, object.target, result.value)));
 }
 
 const parseProperty: PhraseParser = (t, i, ctx) => {
@@ -1716,16 +2369,7 @@ const parseProperty: PhraseParser = (t, i, ctx) => {
     if (!value) return null;
     return setChecked("name", object.value, value.value, value.end);
   }
-  if (verb === "set" || verb === "change") {
-    const j = skip(t, i + 1, ARTICLES);
-    const property = readPropertyName(t, j);
-    if (!property || wordAt(t, property.end) !== "of") return null;
-    const object = objectAfter(property.end + 1);
-    if (!object || wordAt(t, object.end) !== "to") return null;
-    const value = readPropertyValue(t, object.end + 1, property.value, ctx);
-    if (!value) return null;
-    return setChecked(property.value, object.value, value.value, value.end);
-  }
+  if (verb === "set" || verb === "change") return parseSetProperty(t, i, ctx);
   if (verb === "mark" || verb === "unmark") {
     const object = objectAfter(i + 1);
     if (!object) return null;
@@ -2005,7 +2649,8 @@ function compileClause(t: Toks, ctx: Ctx): ClauseResult {
   let repeatCount: number | undefined;
   let speed: VisualEffectSpeed | undefined;
   while (i < t.length) {
-    if (isAt(t, i, STOPWORDS)) {
+    // A colon no phrase used ("First: go next") separates like a comma.
+    if (isAt(t, i, STOPWORDS) || t[i].type === "colon") {
       i++;
       continue;
     }
@@ -2106,12 +2751,12 @@ type Compiled = { ok: true; ast: HexScriptAST } | { ok: false; reason: string };
 
 /** The Tier 1 local compiler (no Grimoire lookup, no acceptance pipeline). */
 export function compileTier1(prompt: string, context: SpellContext): Compiled {
-  const tokens = mergeCompounds(correctWords(tokenize(prompt)));
+  const tokens = renumber(mergeCompounds(correctWords(tokenize(prompt))));
   const other = tokens.find((token) => token.type === "other");
   if (other) return { ok: false, reason: `I did not understand "${rawAt([other], 0)}" in that spell.` };
   const trigger = extractTrigger(tokens);
   if ("error" in trigger) return { ok: false, reason: trigger.error };
-  const ctx: Ctx = { kind: context.objectKind, itWritten: false };
+  const ctx: Ctx = { kind: context.objectKind, itWritten: false, source: prompt };
   const body: HexStatementNode[] = [];
   let open: { node: Extract<HexStatementNode, { kind: "IfCondition" }>; branch: "then" | "else"; sentence: number } | null = null;
   const sentences = splitSentences(trigger.tokens);

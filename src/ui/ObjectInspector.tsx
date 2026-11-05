@@ -21,7 +21,7 @@ import {
   useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import type { HexCompileError } from "../core/ast.ts";
+import type { HexCompileError, HexScriptAST } from "../core/ast.ts";
 import type { HexCommand, HexHistory } from "../core/history.ts";
 import type { HexMessage } from "../core/messageBus.ts";
 import type {
@@ -37,7 +37,7 @@ import type {
 } from "../core/schema.ts";
 import { HexRuntimeError, HexVmGasLimitError } from "../core/vm.ts";
 import { GRIMOIRE, type GrimoireEntry } from "../ai/grimoire.ts";
-import { conjureScript, handlerHint, type SpellObjectKind, type SpellResult } from "../ai/spellcaster.ts";
+import { conjureScript, handlerHint, mergeSpell, type SpellMerge, type SpellObjectKind, type SpellResult } from "../ai/spellcaster.ts";
 import { PixelIcon } from "./FloatingTools.tsx";
 import { PushButtonArt, System7Window, useUiScale, type ModalManager, type UiStore } from "./System7Shell.tsx";
 
@@ -245,8 +245,9 @@ export function createScriptCommand(objectId: HexID, source: string): HexCommand
 }
 
 /**
- * Requirement 4.2: Apply in the Spellcaster tab stores the previewed HexTalk as `scriptSource`
- * (Edit > Undo Spell). For parts the prompt is kept as `naturalLanguagePrompt` in the same step.
+ * Requirement 4.2: Apply in the Spellcaster tab stores the previewed HexTalk (the spell merged into
+ * the current script by `mergeSpell`) as `scriptSource` (Edit > Undo Spell). For parts the prompt
+ * is kept as `naturalLanguagePrompt` in the same step.
  */
 export function createSpellCommand(objectId: HexID, hexTalk: string, prompt: string, isPart: boolean): HexCommand {
   return createObjectEditCommand(objectId, "Spell", isPart ? { scriptSource: hexTalk, naturalLanguagePrompt: prompt } : { scriptSource: hexTalk });
@@ -754,7 +755,8 @@ export function ScriptEditor({ text, dirty, errors, onChange, onSave, onRevert, 
 export type SpellState =
   | { status: "idle" }
   | { status: "working"; prompt: string }
-  | { status: "preview"; prompt: string; hexTalk: string; hint?: string }
+  /** `ast` / `hexTalk`: the accepted spell alone; the preview shows it merged into the current script. */
+  | { status: "preview"; prompt: string; ast: HexScriptAST; hexTalk: string; hint?: string }
   | { status: "failed"; prompt: string; reason: string; suggestions: readonly GrimoireEntry[] }
   | { status: "applied" };
 
@@ -764,8 +766,31 @@ export const SPELL_IDLE: SpellState = { status: "idle" };
 export function spellStateFor(prompt: string, result: SpellResult, objectKind: SpellObjectKind): SpellState {
   if (!result.ok) return { status: "failed", prompt, reason: result.reason, suggestions: result.suggestions };
   const hint = handlerHint(result.ast, objectKind);
-  return hint === undefined ? { status: "preview", prompt, hexTalk: result.hexTalk } : { status: "preview", prompt, hexTalk: result.hexTalk, hint };
+  const preview = { status: "preview" as const, prompt, ast: result.ast, hexTalk: result.hexTalk };
+  return hint === undefined ? preview : { ...preview, hint };
 }
+
+/**
+ * What Apply does to a non-empty script, e.g. "Apply replaces the mouseUp handler of the current
+ * script. Its other handlers (openCard) stay as they are." Undefined for an empty script.
+ */
+export function mergeNote(merge: Extract<SpellMerge, { ok: true }>, hadScript: boolean): string | undefined {
+  if (!hadScript) return undefined;
+  const names = (list: readonly string[]): string => `${list.join(", ")} handler${list.length === 1 ? "" : "s"}`;
+  const sentences: string[] = [];
+  if (merge.replaced.length > 0 && merge.added.length > 0) {
+    sentences.push(`Apply replaces the ${names(merge.replaced)} of the current script and adds the ${names(merge.added)}.`);
+  } else if (merge.replaced.length > 0) {
+    sentences.push(`Apply replaces the ${names(merge.replaced)} of the current script.`);
+  } else {
+    sentences.push(`Apply adds the ${names(merge.added)} to the current script.`);
+  }
+  if (merge.kept.length === 1) sentences.push(`Its other handler (${merge.kept[0]}) stays as it is.`);
+  if (merge.kept.length > 1) sentences.push(`Its other handlers (${merge.kept.join(", ")}) stay as they are.`);
+  return sentences.join(" ");
+}
+
+export const UNSAVED_DRAFT_NOTE = "Apply merges into the saved script; unsaved edits in the HexTalk Script tab are discarded.";
 
 export function spellObjectKind(found: InspectedObject): SpellObjectKind {
   return found.kind === "part" ? found.object.type : found.kind;
@@ -776,8 +801,12 @@ export const APPLIED_MESSAGE = "Applied to the script. Edit > Undo Spell reverts
 export interface SpellcasterViewProps {
   prompt: string;
   state: SpellState;
-  /** The object has a script that Apply would replace. */
-  replacesScript: boolean;
+  /** For a preview: the spell merged into the object's saved script (`mergeSpell`). */
+  merge?: SpellMerge;
+  /** The object's saved script was not blank when the preview was merged. */
+  hadScript?: boolean;
+  /** The HexTalk Script tab holds unsaved edits, which Apply discards. */
+  unsavedDraft?: boolean;
   onPromptChange: (prompt: string) => void;
   /** Conjures `prompt` (a Grimoire or suggestion click passes its own prompt). */
   onConjure: (prompt: string) => void;
@@ -786,7 +815,7 @@ export interface SpellcasterViewProps {
 }
 
 /** The Spellcaster tab: prompt, preview / reason, Apply, and the Grimoire Preset Library. */
-export function SpellcasterView({ prompt, state, replacesScript, onPromptChange, onConjure, onApply, onDiscard }: SpellcasterViewProps) {
+export function SpellcasterView({ prompt, state, merge, hadScript = false, unsavedDraft = false, onPromptChange, onConjure, onApply, onDiscard }: SpellcasterViewProps) {
   const spellList = (entries: readonly GrimoireEntry[], label: string) => (
     <ul className="s7-spell-list" aria-label={label}>
       {entries.map((entry) => (
@@ -822,12 +851,13 @@ export function SpellcasterView({ prompt, state, replacesScript, onPromptChange,
         </button>
       </div>
       {state.status === "working" ? <p className="s7-spell-status" role="status">Conjuring...</p> : null}
-      {state.status === "preview" ? (
+      {state.status === "preview" && merge?.ok ? (
         <div className="s7-spell-result">
-          <p className="s7-spell-status" role="status">Preview (not applied yet):</p>
-          <pre className="s7-spell-preview" aria-label="Spell preview">{state.hexTalk}</pre>
+          <p className="s7-spell-status" role="status">Preview of the whole script (not applied yet):</p>
+          <pre className="s7-spell-preview" aria-label="Spell preview">{merge.source}</pre>
           {state.hint ? <p className="s7-spell-status">{state.hint}</p> : null}
-          {replacesScript ? <p className="s7-spell-status">Apply replaces the current script.</p> : null}
+          {mergeNote(merge, hadScript) ? <p className="s7-spell-status">{mergeNote(merge, hadScript)}</p> : null}
+          {unsavedDraft ? <p className="s7-spell-status">{UNSAVED_DRAFT_NOTE}</p> : null}
           <div className="s7-dialog-buttons">
             <button type="button" className="s7-button" onClick={onDiscard}>
               Discard
@@ -836,6 +866,19 @@ export function SpellcasterView({ prompt, state, replacesScript, onPromptChange,
             <button type="button" className="s7-button s7-button-default" onClick={onApply}>
               Apply
               <PushButtonArt isDefault />
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {state.status === "preview" && merge && !merge.ok ? (
+        <div className="s7-spell-result">
+          <p className="s7-spell-status" role="alert">{merge.reason}</p>
+          <p className="s7-spell-status">The spell on its own:</p>
+          <pre className="s7-spell-preview" aria-label="Spell preview">{state.hexTalk}</pre>
+          <div className="s7-dialog-buttons">
+            <button type="button" className="s7-button" onClick={onDiscard}>
+              Discard
+              <PushButtonArt isDefault={false} />
             </button>
           </div>
         </div>
@@ -916,10 +959,13 @@ export function ObjectInspector({ store, history, request, onClose }: ObjectInsp
       if (ticket === spellTicket.current) setSpell(spellStateFor(prompt, result, objectKind));
     });
   };
+  // Merged on every render against the saved script, so the preview always shows exactly what
+  // Apply writes, even if the script was saved or undone after conjuring.
+  const merge = spell.status === "preview" ? mergeSpell(saved, spell.ast) : undefined;
   const applySpell = (): void => {
-    if (spell.status !== "preview") return;
+    if (spell.status !== "preview" || !merge?.ok) return;
     // Requirement 4.2: scriptSource changes here and only here, as one undoable authoring step.
-    history.execute(createSpellCommand(objectId, spell.hexTalk, spell.prompt, found.kind === "part"));
+    history.execute(createSpellCommand(objectId, merge.source, spell.prompt, found.kind === "part"));
     setDraft(null);
     setSpell({ status: "applied" });
   };
@@ -966,7 +1012,9 @@ export function ObjectInspector({ store, history, request, onClose }: ObjectInsp
           <SpellcasterView
             prompt={spellPrompt}
             state={spell}
-            replacesScript={saved.trim() !== ""}
+            merge={merge}
+            hadScript={saved.trim() !== ""}
+            unsavedDraft={draft !== null && draft !== saved}
             onPromptChange={setSpellPrompt}
             onConjure={conjure}
             onApply={applySpell}
