@@ -737,6 +737,67 @@ body {
   color: var(--light-bit);
 }
 
+/* HexAI Spellcaster tab (ObjectInspector.tsx): prompt row, the read-only HexTalk preview with
+   Discard / Apply, the reason and suggestions of a failed spell, and the Grimoire list. The tab
+   panel scrolls; the preview scrolls on its own when the script is long. */
+.s7-spell {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--px));
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-spell-result {
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+}
+
+.s7-spell-status,
+.s7-spell-heading {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.s7-spell-heading {
+  padding-top: calc(4 * var(--px));
+  border-top: calc(1 * var(--px)) solid var(--dark-bit);
+  font-family: "HexCard PixelOperator Bold", "HexCard PixelOperator", monospace;
+}
+
+.s7-spell-preview {
+  margin: 0;
+  max-height: calc(112 * var(--px));
+  overflow: auto;
+  padding: calc(4 * var(--px));
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  background: var(--light-bit);
+  color: var(--dark-bit);
+  font-family: "HexCard PixelOperatorMono", monospace;
+  font-size: calc(16 * var(--px));
+  line-height: calc(16 * var(--px));
+  white-space: pre;
+  scrollbar-color: var(--dark-bit) var(--light-bit);
+}
+
+.s7-spell-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.s7-shell .s7-spell-entry {
+  width: 100%;
+  text-align: left;
+  white-space: pre-wrap;
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-shell .s7-spell-entry:hover {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
 /* Stack Graph: nodes absolutely placed on a k-scaled 1x grid, arrows in one crisp SVG on top. */
 .s7-graph {
   position: relative;

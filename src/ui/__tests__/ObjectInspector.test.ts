@@ -30,6 +30,10 @@ import {
   createPropertiesCommand,
   createScriptCommand,
   createScriptErrorReporter,
+  createSpellCommand,
+  SpellcasterView,
+  spellStateFor,
+  type SpellState,
   createStudioWindows,
   describeObject,
   errorMarkers,
@@ -40,6 +44,7 @@ import {
   visualColumn,
 } from "../ObjectInspector.tsx";
 import { UiScaleContext, createModalManager } from "../System7Shell.tsx";
+import { conjureScript } from "../../ai/spellcaster.ts";
 
 const emptyBitmap = { width: 512, height: 342, rleData: "" };
 
@@ -341,9 +346,14 @@ describe("ObjectInspector rendering", () => {
     expect(html).toContain("compile error");
   });
 
-  it("reports a clean script and keeps the Spellcaster tab as a placeholder", () => {
+  it("reports a clean script and shows the Spellcaster prompt with the 24-spell Grimoire", () => {
     expect(render("prt_go", "script")).toContain("Compiled without errors");
-    expect(render("prt_go", "spellcaster")).toContain("The HexAI Spellcaster is not available yet.");
+    const html = render("prt_go", "spellcaster");
+    expect(html).toContain('aria-label="Spell"');
+    expect(html).toContain(">Conjure");
+    expect(html.match(/class="s7-spell-entry"/g)).toHaveLength(24);
+    expect(html).not.toContain(">Apply");
+    expect(html.replace(/<[^>]*>/g, "")).toMatch(/^[\x20-\x7e]*$/);
   });
 
   it("has the same fixed window size on every tab, the error state included", () => {
@@ -374,5 +384,72 @@ describe("ObjectInspector rendering", () => {
   it("uses only text the bundled fonts cover", () => {
     const text = render("prt_score", "properties").replace(/<[^>]*>/g, "");
     expect(text).toMatch(/^[\x20-\x7e]*$/);
+  });
+});
+
+describe("Spellcaster preview and Apply (Requirements 4.2, 4.3)", () => {
+  const view = (state: SpellState, replacesScript = true) => renderToStaticMarkup(
+    createElement(UiScaleContext, { value: 1 },
+      createElement(SpellcasterView, {
+        prompt: "hide this button", state, replacesScript,
+        onPromptChange: () => {}, onConjure: () => {}, onApply: () => {}, onDiscard: () => {},
+      })),
+  );
+
+  it("previews the printed HexTalk with Apply, and changes no script while doing so", async () => {
+    const { store } = setup();
+    const before = store.getSnapshot().stack;
+    const result = await conjureScript("hide this button", { objectKind: "button" });
+    const state = spellStateFor("hide this button", result, "button");
+    expect(state.status).toBe("preview");
+    expect(store.getSnapshot().stack).toBe(before);
+    const html = view(state);
+    expect(html).toContain("on mouseUp\n  set the visible of me to false\nend mouseUp\n");
+    expect(html).toContain(">Apply");
+    expect(html).toContain("Apply replaces the current script.");
+    expect(view(state, false)).not.toContain("Apply replaces");
+  });
+
+  it("warns when a handler can never reach a button", async () => {
+    const result = await conjureScript("Show a welcome message when the card opens", { objectKind: "button" });
+    const state = spellStateFor("x", result, "button");
+    expect(state.status === "preview" && state.hint).toMatch(/openCard is sent to the card/);
+    expect(spellStateFor("x", result, "card")).not.toHaveProperty("hint");
+  });
+
+  it("shows the reason and the closest Grimoire spells when the spell is not understood", async () => {
+    const result = await conjureScript("sort the cards alphabetically", { objectKind: "button" });
+    const state = spellStateFor("sort the cards alphabetically", result, "button");
+    expect(state.status).toBe("failed");
+    const html = view(state);
+    expect(html).toContain('role="alert">I did not understand');
+    expect(html).toContain("Closest Grimoire spells:");
+    expect(html).toContain('aria-label="Suggested spells"');
+    expect(html).not.toContain(">Apply");
+  });
+
+  it("Apply stores scriptSource and the prompt as one undoable step", async () => {
+    const { store, history } = setup();
+    const result = await conjureScript("beep 5 times", { objectKind: "button" });
+    if (!result.ok) throw new Error(result.reason);
+    history.execute(createSpellCommand("prt_go", result.hexTalk, "beep 5 times", true));
+    const part = findObject(store.getSnapshot().stack, "prt_go");
+    expect(part?.object.scriptSource).toBe(result.hexTalk);
+    expect(part?.kind === "part" && part.object.naturalLanguagePrompt).toBe("beep 5 times");
+    expect(store.getCompiled("prt_go").errors).toEqual([]);
+    expect(history.undoLabel()).toBe("Spell");
+    expect(validateStack(store.getSnapshot().stack).ok).toBe(true);
+    history.undo();
+    const restored = findObject(store.getSnapshot().stack, "prt_go");
+    expect(restored?.object.scriptSource).toBe(button.scriptSource);
+    expect(restored?.kind === "part" && restored.object.naturalLanguagePrompt).toBeUndefined();
+  });
+
+  it("Apply on a card stores only the script", () => {
+    const { store, history } = setup();
+    history.execute(createSpellCommand("crd_1", "on openCard\n  go next\nend openCard\n", "go next", false));
+    const card = findObject(store.getSnapshot().stack, "crd_1");
+    expect(card?.object.scriptSource).toBe("on openCard\n  go next\nend openCard\n");
+    expect(card?.object).not.toHaveProperty("naturalLanguagePrompt");
   });
 });

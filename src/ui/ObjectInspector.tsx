@@ -20,7 +20,6 @@ import {
   useState,
   useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
 } from "react";
 import type { HexCompileError } from "../core/ast.ts";
 import type { HexCommand, HexHistory } from "../core/history.ts";
@@ -37,6 +36,8 @@ import type {
   HexStack,
 } from "../core/schema.ts";
 import { HexRuntimeError, HexVmGasLimitError } from "../core/vm.ts";
+import { GRIMOIRE, type GrimoireEntry } from "../ai/grimoire.ts";
+import { conjureScript, handlerHint, type SpellObjectKind, type SpellResult } from "../ai/spellcaster.ts";
 import { PixelIcon } from "./FloatingTools.tsx";
 import { PushButtonArt, System7Window, useUiScale, type ModalManager, type UiStore } from "./System7Shell.tsx";
 
@@ -241,6 +242,14 @@ export function createPropertiesCommand(objectId: HexID, changes: ObjectChanges)
 /** Requirement 3.2: a saved script is stored as `scriptSource` (Edit > Undo Script). */
 export function createScriptCommand(objectId: HexID, source: string): HexCommand {
   return createObjectEditCommand(objectId, "Script", { scriptSource: source });
+}
+
+/**
+ * Requirement 4.2: Apply in the Spellcaster tab stores the previewed HexTalk as `scriptSource`
+ * (Edit > Undo Spell). For parts the prompt is kept as `naturalLanguagePrompt` in the same step.
+ */
+export function createSpellCommand(objectId: HexID, hexTalk: string, prompt: string, isPart: boolean): HexCommand {
+  return createObjectEditCommand(objectId, "Spell", isPart ? { scriptSource: hexTalk, naturalLanguagePrompt: prompt } : { scriptSource: hexTalk });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -735,6 +744,117 @@ export function ScriptEditor({ text, dirty, errors, onChange, onSave, onRevert, 
 }
 
 // ---------------------------------------------------------------------------------------------
+// HexAI Spellcaster tab (Requirements 4.1, 4.2, 4.3)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What the Spellcaster tab shows below the prompt. A `preview` holds a result that passed the
+ * acceptance pipeline; nothing is written until Apply.
+ */
+export type SpellState =
+  | { status: "idle" }
+  | { status: "working"; prompt: string }
+  | { status: "preview"; prompt: string; hexTalk: string; hint?: string }
+  | { status: "failed"; prompt: string; reason: string; suggestions: readonly GrimoireEntry[] }
+  | { status: "applied" };
+
+export const SPELL_IDLE: SpellState = { status: "idle" };
+
+/** The state after `conjureScript` returned `result` for `prompt`. */
+export function spellStateFor(prompt: string, result: SpellResult, objectKind: SpellObjectKind): SpellState {
+  if (!result.ok) return { status: "failed", prompt, reason: result.reason, suggestions: result.suggestions };
+  const hint = handlerHint(result.ast, objectKind);
+  return hint === undefined ? { status: "preview", prompt, hexTalk: result.hexTalk } : { status: "preview", prompt, hexTalk: result.hexTalk, hint };
+}
+
+export function spellObjectKind(found: InspectedObject): SpellObjectKind {
+  return found.kind === "part" ? found.object.type : found.kind;
+}
+
+export const APPLIED_MESSAGE = "Applied to the script. Edit > Undo Spell reverts it.";
+
+export interface SpellcasterViewProps {
+  prompt: string;
+  state: SpellState;
+  /** The object has a script that Apply would replace. */
+  replacesScript: boolean;
+  onPromptChange: (prompt: string) => void;
+  /** Conjures `prompt` (a Grimoire or suggestion click passes its own prompt). */
+  onConjure: (prompt: string) => void;
+  onApply: () => void;
+  onDiscard: () => void;
+}
+
+/** The Spellcaster tab: prompt, preview / reason, Apply, and the Grimoire Preset Library. */
+export function SpellcasterView({ prompt, state, replacesScript, onPromptChange, onConjure, onApply, onDiscard }: SpellcasterViewProps) {
+  const spellList = (entries: readonly GrimoireEntry[], label: string) => (
+    <ul className="s7-spell-list" aria-label={label}>
+      {entries.map((entry) => (
+        <li key={entry.prompt}>
+          <button type="button" className="s7-spell-entry" onClick={() => onConjure(entry.prompt)}>
+            {entry.prompt}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <div className="s7-spell">
+      <div className="s7-form-row">
+        <input
+          className="s7-input"
+          type="text"
+          aria-label="Spell"
+          placeholder="Describe what the script should do"
+          value={prompt}
+          spellCheck={false}
+          onChange={(event) => onPromptChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onConjure(prompt);
+            }
+          }}
+        />
+        <button type="button" className="s7-button" disabled={state.status === "working"} onClick={() => onConjure(prompt)}>
+          Conjure
+          <PushButtonArt isDefault={false} />
+        </button>
+      </div>
+      {state.status === "working" ? <p className="s7-spell-status" role="status">Conjuring...</p> : null}
+      {state.status === "preview" ? (
+        <div className="s7-spell-result">
+          <p className="s7-spell-status" role="status">Preview (not applied yet):</p>
+          <pre className="s7-spell-preview" aria-label="Spell preview">{state.hexTalk}</pre>
+          {state.hint ? <p className="s7-spell-status">{state.hint}</p> : null}
+          {replacesScript ? <p className="s7-spell-status">Apply replaces the current script.</p> : null}
+          <div className="s7-dialog-buttons">
+            <button type="button" className="s7-button" onClick={onDiscard}>
+              Discard
+              <PushButtonArt isDefault={false} />
+            </button>
+            <button type="button" className="s7-button s7-button-default" onClick={onApply}>
+              Apply
+              <PushButtonArt isDefault />
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {state.status === "failed" ? (
+        <div className="s7-spell-result">
+          <p className="s7-spell-status" role="alert">{state.reason}</p>
+          <p className="s7-spell-status">Closest Grimoire spells:</p>
+          {spellList(state.suggestions, "Suggested spells")}
+        </div>
+      ) : null}
+      {state.status === "applied" ? <p className="s7-spell-status" role="status">{APPLIED_MESSAGE}</p> : null}
+      <p className="s7-spell-heading">Grimoire</p>
+      {spellList(GRIMOIRE, "Grimoire")}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
 // Inspector window (Requirement 3.1)
 // ---------------------------------------------------------------------------------------------
 
@@ -756,11 +876,9 @@ export interface ObjectInspectorProps {
   history: Pick<HexHistory, "execute">;
   request: InspectorRequest;
   onClose: () => void;
-  /** Content of the HexAI Spellcaster tab (spec 04 task 5). */
-  renderSpellcaster?: (objectId: HexID) => ReactNode;
 }
 
-export function ObjectInspector({ store, history, request, onClose, renderSpellcaster }: ObjectInspectorProps) {
+export function ObjectInspector({ store, history, request, onClose }: ObjectInspectorProps) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const k = useUiScale();
   const [tab, setTab] = useState<InspectorTab>(request.tab);
@@ -768,6 +886,12 @@ export function ObjectInspector({ store, history, request, onClose, renderSpellc
   const [draft, setDraft] = useState<string | null>(null);
   const [pendingLine, setPendingLine] = useState(request.line);
   const found = findObject(state.stack, request.objectId);
+  // Spellcaster state lives here so that it survives switching tabs.
+  const [spellPrompt, setSpellPrompt] = useState(() =>
+    (found?.kind === "part" ? found.object.naturalLanguagePrompt : undefined) ?? "");
+  const [spell, setSpell] = useState<SpellState>(SPELL_IDLE);
+  /** Only the latest conjure may show its result. */
+  const spellTicket = useRef(0);
   const missing = found === undefined;
 
   // The object was removed (undo of its creation, another stack loaded): close the inspector.
@@ -782,6 +906,22 @@ export function ObjectInspector({ store, history, request, onClose, renderSpellc
   const save = (): void => {
     history.execute(createScriptCommand(objectId, text));
     setDraft(null);
+  };
+  const objectKind = spellObjectKind(found);
+  const conjure = (prompt: string): void => {
+    const ticket = ++spellTicket.current;
+    setSpellPrompt(prompt);
+    setSpell({ status: "working", prompt });
+    void conjureScript(prompt, { objectKind }).then((result) => {
+      if (ticket === spellTicket.current) setSpell(spellStateFor(prompt, result, objectKind));
+    });
+  };
+  const applySpell = (): void => {
+    if (spell.status !== "preview") return;
+    // Requirement 4.2: scriptSource changes here and only here, as one undoable authoring step.
+    history.execute(createSpellCommand(objectId, spell.hexTalk, spell.prompt, found.kind === "part"));
+    setDraft(null);
+    setSpell({ status: "applied" });
   };
 
   return (
@@ -822,10 +962,19 @@ export function ObjectInspector({ store, history, request, onClose, renderSpellc
             focusLine={pendingLine}
             onFocused={() => setPendingLine(undefined)}
           />
-        ) : renderSpellcaster ? (
-          renderSpellcaster(objectId)
         ) : (
-          <p className="s7-inspector-note">The HexAI Spellcaster is not available yet.</p>
+          <SpellcasterView
+            prompt={spellPrompt}
+            state={spell}
+            replacesScript={saved.trim() !== ""}
+            onPromptChange={setSpellPrompt}
+            onConjure={conjure}
+            onApply={applySpell}
+            onDiscard={() => {
+              spellTicket.current++;
+              setSpell(SPELL_IDLE);
+            }}
+          />
         )}
       </div>
     </System7Window>

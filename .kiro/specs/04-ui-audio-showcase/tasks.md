@@ -22,7 +22,7 @@
 
 - [ ] 5. Implement the Spellcaster
 
-  - [ ] 5.1 Tier 1 local compiler, 24-entry Grimoire, acceptance pipeline and the Spellcaster tab preview/Apply flow
+  - [x] 5.1 Tier 1 local compiler, 24-entry Grimoire, acceptance pipeline and the Spellcaster tab preview/Apply flow
     - _Requirements: 4.1, 4.2, 4.3, 4.6_
 
   - [ ] 5.2 Optional Tier 2 proxy adapter and Tier 3 in-memory BYOK

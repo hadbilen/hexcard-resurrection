@@ -162,6 +162,18 @@
         "chatSessionId": "sess_b777be9c-e57e-4dbf-ade5-2e7c555feba7",
         "timestamp": 1793835282974
       }
+    ],
+    "5.1 Tier 1 local compiler, 24-entry Grimoire, acceptance pipeline and the Spellcaster tab preview/Apply flow": [
+      {
+        "executionId": "e9dbe365-ce76-43fd-bc4f-18ba22c4ac30",
+        "chatSessionId": "sess_8300a509-deb7-4935-b3c2-cdac3efde832",
+        "timestamp": 1793835520527
+      },
+      {
+        "executionId": "e9dbe365-ce76-43fd-bc4f-18ba22c4ac30",
+        "chatSessionId": "sess_8300a509-deb7-4935-b3c2-cdac3efde832",
+        "timestamp": 1793838170188
+      }
     ]
   }
 }
