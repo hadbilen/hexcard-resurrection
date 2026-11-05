@@ -4,7 +4,8 @@
  * outcome of each. `expect` is the expected script as HexTalk (the test parses it into the
  * expected AST), or `null` when the right outcome is "not understood" with suggestions.
  *
- * Requirement 4.6: at least 60 prompts; at least 80% of them must compile to the expected AST.
+ * Requirement 4.6: at least 60 prompts, every prompt has an expected outcome (a script or a
+ * refusal) and Tier 1 matches 100% of them; at least 75% of the prompts expect a script.
  */
 import type { SpellObjectKind } from "../spellcaster.ts";
 
@@ -228,6 +229,131 @@ export const TIER1_CORPUS: readonly CorpusEntry[] = [
   { prompt: "play a sound like a bouncing dragon", expect: null },
   { prompt: "make a sound like a wand", expect: null },
   { prompt: "play a flute sound like a bell", expect: null },
+
+  // ===== Third rework: raw HexTalk, trigger synonyms, enable / disable =====
+
+  // ----- family 6: raw HexTalk fallback (";" ends a line in the one-line prompt box) -----
+  { prompt: "put Hello into field Greeting", expect: click('put "Hello" into field "Greeting"') },
+  { prompt: "answer Welcome Home with OK", expect: click('answer "Welcome Home" with "OK"') },
+  { prompt: "repeat with i = 1 to 5; put i into field Count; end repeat", expect: click("repeat with i = 1 to 5", '  put i into field "Count"', "end repeat") },
+  { prompt: "put 1 into x; add x to field Total", expect: click("put 1 into x", 'add x to field "Total"') },
+  { prompt: "put random(6) into field Dice", expect: click('put random(6) into field "Dice"') },
+  { prompt: "get the number of cards; put it into field Total", expect: click("get the number of cards", 'put it into field "Total"') },
+  { prompt: "on mouseUp; play boing \"c4q\"; go next; end mouseUp", expect: click('play boing "c4q"', "go next") },
+  { prompt: "on openCard; put the time into field Clock; end openCard", kind: "card", expect: on("openCard", 'put the time into field "Clock"') },
+  { prompt: "when the card opens, put Hello into field Greeting", kind: "card", expect: on("openCard", 'put "Hello" into field "Greeting"') },
+  {
+    prompt: "put Hello into field Greeting and go to the next card with a dissolve",
+    expect: click('put "Hello" into field "Greeting"', "visual effect dissolve", "go next"),
+  },
+  { prompt: "if field Answer = Yes then go to card Game Over", expect: click('if field "Answer" = "Yes" then go to card "Game Over"') },
+  {
+    prompt: 'fetch "https://example.com/data.json" at "data.value" into field Result',
+    expect: click('fetch "https://example.com/data.json" at "data.value" into field "Result"'),
+  },
+  { prompt: "answer Hello", expect: click('answer "Hello"') },
+  { prompt: "put field Score + 10 into field Score", expect: click('put field "Score" + 10 into field "Score"') },
+  { prompt: "if the hilite of me then go next", expect: click("if the hilite of me then go next") },
+  { prompt: 'repeat 3 times; play boing "c4q"; end repeat', expect: click("repeat 3 times", '  play boing "c4q"', "end repeat") },
+  { prompt: "put Hello World into field Greeting", expect: click('put "Hello World" into field "Greeting"') },
+  { prompt: "go to card id 3", expect: click("go to card id 3") },
+  { prompt: "visual effect iris open fast; go to card Hall", expect: click("visual effect iris open fast", 'go to card "Hall"') },
+  { prompt: 'put "Score: " & field Score into field Status', expect: click('put "Score: " & field "Score" into field "Status"') },
+  // English trigger "on mouseUp", then a HexTalk statement
+  { prompt: "on mouseUp; go next", expect: click("go next") },
+  // must refuse: lowercase unquoted word (variable or text?), a write nobody reads, a syntax error,
+  // free variables in numeric slots, a lowercase multi-word name, http, a missing "end"
+  { prompt: "put hello into field Greeting", expect: null },
+  { prompt: "put Hello into Greeting", expect: null },
+  { prompt: 'go to card "Hall', expect: null },
+  { prompt: "if field Score > Limit then go next", expect: null },
+  { prompt: "add Bonus to field Score", expect: null },
+  { prompt: "go to card game over", expect: null },
+  { prompt: 'fetch "http://example.com/data.json" into field Result', expect: null },
+  { prompt: 'put "Hello" into', expect: null },
+  { prompt: "set the enabled of this card to false", kind: "card", expect: null },
+
+  // ----- family 7: trigger synonyms (every time / each time / whenever / after a click, hover) -----
+  { prompt: "every time this button is clicked, add 1 to field 'Clicks'", expect: click('add 1 to field "Clicks"') },
+  { prompt: "whenever I tap it, play a boing sound", expect: click('play boing "c4q"') },
+  { prompt: "each time you press the button go to the next card", expect: click("go next") },
+  { prompt: "after a click, go back", expect: click("go back") },
+  { prompt: "when I hit it, beep", expect: click('play square8bit "a5e"') },
+  { prompt: "when the pointer moves over this button, hilite it", expect: on("mouseEnter", "set the hilite of me to true") },
+  { prompt: "when the mouse moves off it, unhilite me", expect: on("mouseLeave", "set the hilite of me to false") },
+  { prompt: "whenever the mouse hovers over the button, show field 'Tip'", expect: on("mouseEnter", 'set the visible of field "Tip" to true') },
+  { prompt: "every time the mouse enters, play a click sound", expect: on("mouseEnter", 'play click "c4q"') },
+  { prompt: "every time the cursor leaves this button, hide field 'Tip'", expect: on("mouseLeave", 'set the visible of field "Tip" to false') },
+  { prompt: "whenever the card opens, put the time into field 'Clock'", kind: "card", expect: on("openCard", 'put the time into field "Clock"') },
+  { prompt: "each time the stack opens, go to the first card", kind: "stack", expect: on("openStack", "go first") },
+  { prompt: "each time someone clicks here, beep twice", expect: click("repeat 2 times", '  play square8bit "a5e"', "  wait 15 ticks", "end repeat") },
+  { prompt: "whenever it's pressed, go to the previous card", expect: click("go prev") },
+  { prompt: "on every tap, play a click sound", expect: click('play click "c4q"') },
+  { prompt: "every time I click, add 1 to field Count", expect: click('add 1 to field "Count"') },
+  { prompt: "when the cursor rolls onto the button, show field 'Help'", expect: on("mouseEnter", 'set the visible of field "Help" to true') },
+  { prompt: "when I stop hovering over it, hide field 'Help'", expect: on("mouseLeave", 'set the visible of field "Help" to false') },
+  { prompt: "every time the card closes, put empty into field 'Note'", kind: "card", expect: on("closeCard", 'put empty into field "Note"') },
+  { prompt: "when the mouse is over the button, hilite it", expect: on("mouseEnter", "set the hilite of me to true") },
+  // must refuse: timers are no click trigger; movement without "over"; "while hovering" is a state;
+  // a trigger article completed by the action ("the next card")
+  { prompt: "every 5 seconds go to the next card", expect: null },
+  { prompt: "every second play a beep", expect: null },
+  { prompt: "when the mouse moves, hilite this button", expect: null },
+  { prompt: "while hovering, hilite this button", expect: null },
+  { prompt: "when the mouse enters the next card, beep", expect: null },
+
+  // ----- family 8: enable / disable / grey out / dim / (de)activate -----
+  { prompt: "after one click, disable this button", expect: click("set the enabled of me to false") },
+  { prompt: "grey out the Next button", expect: click('set the enabled of button "Next" to false') },
+  { prompt: "gray this button out", expect: click("set the enabled of me to false") },
+  { prompt: "dim me", expect: click("set the enabled of me to false") },
+  { prompt: "deactivate button B", expect: click('set the enabled of button "B" to false') },
+  { prompt: "enable the Submit button", expect: click('set the enabled of button "Submit" to true') },
+  { prompt: "activate it", expect: click("set the enabled of me to true") },
+  { prompt: "re-enable button 'Next' when the card opens", kind: "card", expect: on("openCard", 'set the enabled of button "Next" to true') },
+  { prompt: "disable this field", kind: "field", expect: click("set the enabled of me to false") },
+  { prompt: "disable button 'Go' and enable button 'Stop'", expect: click('set the enabled of button "Go" to false', 'set the enabled of button "Stop" to true') },
+  { prompt: "disable me", expect: click("set the enabled of me to false") },
+  { prompt: "deactivate the 'Buy' button", expect: click('set the enabled of button "Buy" to false') },
+  { prompt: "grey out button 'Save' when the card opens", kind: "card", expect: on("openCard", 'set the enabled of button "Save" to false') },
+  { prompt: "every time this button is clicked, disable it", expect: click("set the enabled of me to false") },
+  { prompt: "enable field 'Notes'", expect: click('set the enabled of field "Notes" to true') },
+  { prompt: "make this button disabled", expect: click("set the enabled of me to false") },
+  { prompt: "dim the Exit button", expect: click('set the enabled of button "Exit" to false') },
+  // must refuse: cards and stacks have no enabled property; "this button" in a card script; unknown object
+  { prompt: "disable the card", expect: null },
+  { prompt: "deactivate this stack", kind: "stack", expect: null },
+  { prompt: "deactivate me", kind: "card", expect: null },
+  { prompt: "dim the lights", expect: null },
+
+  // ===== Fourth rework: ambiguous unquoted value words =====
+  // An unquoted word that becomes a text (put value, answer / ask text and buttons, comparison
+  // operand, set the name / title value) is refused when it is a counter word or is also a field,
+  // button or card name in the same prompt. Name slots are not affected.
+
+  // must refuse: counter words, a word that is also a name, multi-word values, a button label
+  { prompt: "put Score into field Total", expect: null },
+  { prompt: "put Lives into field Status", expect: null },
+  { prompt: "answer Points", expect: null },
+  { prompt: "put Hello into field Hello and go to the next card", expect: null },
+  { prompt: "if field Answer = Score then go next", expect: null },
+  { prompt: "put Total Score into field Status", expect: null },
+  { prompt: "show a message saying Game Over and go to card Game Over", expect: null },
+  { prompt: "answer 'Ready?' with Gold or Silver", expect: null },
+  { prompt: "set my name to High Score", expect: null },
+  // must compile: quoted values, counter words as names, English counter phrases
+  { prompt: "put 'Score' into field 'Total'", expect: click('put "Score" into field "Total"') },
+  { prompt: "answer 'Score'", expect: click('answer "Score"') },
+  { prompt: "put field Score into field Total", expect: click('put field "Score" into field "Total"') },
+  { prompt: "put Welcome into field Greeting", expect: click('put "Welcome" into field "Greeting"') },
+  { prompt: "put Hello into field Score", expect: click('put "Hello" into field "Score"') },
+  { prompt: "add 1 to field Score", expect: click('add 1 to field "Score"') },
+  { prompt: "go to card Lives", expect: click('go to card "Lives"') },
+  { prompt: "put 0 into the Score field", expect: click('put 0 into field "Score"') },
+  { prompt: "increase the score by 5", expect: click('add 5 to field "score"') },
+  { prompt: "add 3 to lives", expect: click('add 3 to field "lives"') },
+  { prompt: "if field Lives is less than 1 then go to card Lives", expect: click('if field "Lives" < 1 then go to card "Lives"') },
+  { prompt: "show a message saying You win and go to card Score", expect: click('answer "You win"', 'go to card "Score"') },
 
   // ----- not understood: out of scope, ambiguous or incomplete -----
   { prompt: "make the game harder every level", expect: null },

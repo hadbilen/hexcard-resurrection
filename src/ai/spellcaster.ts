@@ -24,9 +24,13 @@ import type {
   HexCardTarget,
   HexContainerTarget,
   HexExprNode,
+  HexHandlerNode,
   HexObjectTarget,
+  HexPartSelector,
   HexPropertyName,
+  HexRepeatHead,
   HexScriptAST,
+  HexSourceLoc,
   HexStatementNode,
   HexVoice,
 } from "../core/ast.ts";
@@ -670,18 +674,34 @@ const SUBJECT = "the? user|player|someone|somebody|anyone|i|you|they|we|people|v
 const CLICK_TAIL = "on|at? it|this|that|me|here|the|button|field|checkbox|radiobutton|card*";
 const PART_SUBJECT = "it|this|that|i|im|the|button|field|checkbox|radiobutton|me*";
 const CARD_NOUN = "the|this? card|page";
+const POINTER = "the? mouse|pointer|cursor";
+const HOVER_TAIL = "it|this|that|me|the|button|field|checkbox|radiobutton*";
 
-const TRIGGERS: readonly { eventName: string; slots: Slot[] }[] = ([
+/**
+ * Hover phrases. Accepted: the mouse / pointer / cursor "enters", "hovers (over)", "moves | goes |
+ * rolls | comes | gets | is over | onto | into", "on hover", "when hovered", "on mouseover", "when
+ * I hover (over)" -> mouseEnter; "leaves", "exits", "moves | goes | rolls | comes | gets off |
+ * away (from) | out (of)", "when I stop hovering (over)" -> mouseLeave. Not accepted (ambiguous):
+ * "the mouse moves" with no preposition (moving inside the part is not entering it) and "while
+ * hovering" (a continuous state; there is no event for it).
+ */
+const TRIGGERS: readonly { eventName: string; slots: Slot[] }[] = withEveryTime([
   ["mouseDoubleClick", `on|when|whenever|after|upon|if? ${SUBJECT} doubleclick|doubleclicks|doubleclicked|doubleclicking ${CLICK_TAIL}`],
   ["mouseDoubleClick", `when|whenever|once|after|if ${PART_SUBJECT} is|gets|get|was|are doubleclicked`],
   ["mouseDown", "on|when|whenever|upon mousedown"],
   ["mouseDown", "when|whenever the? mouse|button goes|is|gets down"],
-  ["mouseEnter", "on|when|whenever|if? the? mouse|pointer|cursor enters|moves|goes|hovers|rolls|is over|onto|into? it|this|me|the|button|field*"],
-  ["mouseEnter", "on|when|whenever|while hover|hovering|hovered|mouseenter|mouseover|rollover over? it|this|me|the|button|field*"],
-  ["mouseEnter", "when|whenever|if the? user|i|you|someone hovers|hover|mouses over? it|this|me|the|button|field*"],
-  ["mouseLeave", "on|when|whenever|if? the? mouse|pointer|cursor leaves|exits it|this|me|the|button|field*"],
+  ["mouseEnter", `on|when|whenever|once|if? ${POINTER} enters|hovers over|onto|into|on? ${HOVER_TAIL}`],
+  ["mouseEnter", `on|when|whenever|once|if? ${POINTER} moves|goes|rolls|comes|gets|is over|onto|into ${HOVER_TAIL}`],
+  ["mouseEnter", `on|when|whenever|once|upon hover|hovering|hovered|mouseenter|mouseover|rollover over|on? ${HOVER_TAIL}`],
+  ["mouseEnter", `when|whenever|once|if ${SUBJECT} hovers|hover|mouses over|on? ${HOVER_TAIL}`],
+  ["mouseEnter", `when|whenever|once|if ${SUBJECT} move|moves|roll|rolls ${POINTER} over|onto ${HOVER_TAIL}`],
+  ["mouseLeave", `on|when|whenever|once|if? ${POINTER} leaves|exits ${HOVER_TAIL}`],
+  ["mouseLeave", `on|when|whenever|once|if? ${POINTER} moves|goes|rolls|comes|gets off|away|out of|from? ${HOVER_TAIL}`],
+  ["mouseLeave", `when|whenever|once|if ${SUBJECT} stops|stop hovering over|on? ${HOVER_TAIL}`],
   ["mouseLeave", "on|when|whenever mouseleave"],
   ["mouseUp", `on|upon|after|by click|clicking|press|pressing|tap|tapping|release|releasing|mouseup ${CLICK_TAIL}`],
+  // "after one click", "after a click", "on every tap"
+  ["mouseUp", `on|upon|after a|an|one|each|every|single|the* click|clicks|tap|taps|press|presses ${CLICK_TAIL}`],
   ["mouseUp", `when|whenever|once|after ${SUBJECT} click|clicks|clicked|press|presses|pressed|tap|taps|tapped|push|pushes|pushed|hit|hits|release|releases ${CLICK_TAIL}`],
   ["mouseUp", `when|whenever|once|after|if ${PART_SUBJECT} is|gets|get|was|am|are? clicked|pressed|tapped|pushed|hit|released`],
   ["mouseUp", "when|whenever mouseup"],
@@ -704,7 +724,25 @@ const TRIGGERS: readonly { eventName: string; slots: Slot[] }[] = ([
   ["idle", "on|when|while|during? every|each? idle|idling|idles"],
   ["idle", "constantly|continuously"],
   ["idle", "all the time"],
-] as const).map(([eventName, source]) => ({ eventName, slots: pattern(source) }));
+]);
+
+/**
+ * Builds the trigger table. "every time" and "each time" mean "whenever": every pattern whose
+ * first slot offers "whenever" gets a twin that starts with "every|each time" instead, so
+ * "every time the card opens" is openCard and "each time I press it" is mouseUp. Timer phrases
+ * ("every second", "every 5 seconds") match no pattern and stay not understood.
+ */
+function withEveryTime(table: readonly (readonly [string, string])[]): { eventName: string; slots: Slot[] }[] {
+  const everyTime = pattern("every|each time");
+  return table.flatMap(([eventName, source]) => {
+    const slots = pattern(source);
+    const entry = { eventName, slots };
+    return slots[0].words.has("whenever") ? [entry, { eventName, slots: [...everyTime, ...slots.slice(1)] }] : [entry];
+  });
+}
+
+/** A trigger phrase never ends with an article that the next word would complete ("enters the next card"). */
+const TRIGGER_ARTICLES: ReadonlySet<string> = new Set(["the", "a", "an"]);
 
 /** Removes every trigger phrase; fails when two different handlers are asked for. */
 function extractTrigger(tokens: Token[]): { tokens: Token[]; eventName?: string } | { error: string } {
@@ -716,6 +754,7 @@ function extractTrigger(tokens: Token[]): { tokens: Token[]; eventName?: string 
     let found: string | undefined;
     for (const trigger of TRIGGERS) {
       end = matchSlots(tokens, i, trigger.slots);
+      if (end > i && isAt(tokens, end - 1, TRIGGER_ARTICLES) && tokens[end]?.type === "word") continue;
       if (end > i) {
         found = trigger.eventName;
         break;
@@ -841,6 +880,10 @@ interface Ctx {
   itWritten: boolean;
   /** The prompt, for cutting unquoted message text out of it (token offsets). */
   source: string;
+  /** The handler the spell goes into (for clauses typed as HexTalk). */
+  eventName: string;
+  /** Which nodes came from clauses typed as HexTalk. */
+  origin: HexTalkOrigin;
 }
 
 /** `t[k]` directly followed `t[k - 1]` in the prompt (no trigger phrase was removed between them). */
@@ -1135,8 +1178,12 @@ function readObject(t: Toks, i: number, ctx: Ctx): Parsed<ObjectRef> | null {
   if (demonstrative && noun === "stack") return { value: { target: { objectType: "stack" }, kind: "stack" }, end: j + 1 };
   // "the 'Secret' button", "the Secret button"
   const token = t[j];
+  // A Capitalised word directly before the noun names the part even when it is also a keyword
+  // ("the Next button"), but never the first word of the clause (sentence case).
+  const capitalNamed = j > 0 && isCapitalized(t, j) && adjacent(t, j + 1) && !STRUCTURAL.has(wordAt(t, j) as string)
+    && !STOPWORDS.has(wordAt(t, j) as string) && (isAt(t, j + 1, BUTTON_WORDS) || isAt(t, j + 1, FIELD_WORDS));
   const named = token?.type === "string" ? (printable(token.value) && token.value !== "" ? token.value : undefined)
-    : isNameWord(t, j) ? (token as { raw: string }).raw : undefined;
+    : isNameWord(t, j) || capitalNamed ? (token as { raw: string }).raw : undefined;
   if (named !== undefined) {
     const kind = isAt(t, j + 1, BUTTON_WORDS) ? "button" : isAt(t, j + 1, FIELD_WORDS) ? "field" : undefined;
     if (kind) {
@@ -1573,7 +1620,7 @@ function labelOf(token: Extract<Token, { type: "word" }>): string {
   return token.word === "ok" ? "OK" : token.raw.charAt(0).toUpperCase() + token.raw.slice(1);
 }
 
-function readButtons(t: Toks, i: number): Parsed<HexExprNode[]> | null {
+function readButtons(t: Toks, i: number, ctx: Ctx): Parsed<HexExprNode[]> | null {
   if (wordAt(t, i) !== "with") return null;
   let j = i + 1;
   if (isAt(t, j, BUTTON_LIST_NOUNS)) j++;
@@ -1581,8 +1628,9 @@ function readButtons(t: Toks, i: number): Parsed<HexExprNode[]> | null {
   for (;;) {
     const token = t[j];
     if (token?.type === "string" && printable(token.value) && token.value !== "") labels.push(lit(token.value));
-    else if (token?.type === "word" && (LABEL_WORDS.has(token.word) || (/^[A-Z][A-Za-z]*$/.test(token.raw) && isNameWord(t, j)))) labels.push(lit(labelOf(token)));
-    else break;
+    else if (token?.type === "word" && (LABEL_WORDS.has(token.word) || (/^[A-Z][A-Za-z]*$/.test(token.raw) && isNameWord(t, j)))) {
+      labels.push(fromUnquoted(ctx, lit(labelOf(token)), token.raw));
+    } else break;
     j++;
     if (labels.length === 3 || !isAt(t, j, OR_AND)) break;
     j++;
@@ -1647,7 +1695,7 @@ const parseAnswer: PhraseParser = (t, i, ctx) => {
     // "a welcome message"
     j += 2;
     while (isAt(t, j, DIALOG_NOUNS)) j++;
-    const buttons = readButtons(t, j);
+    const buttons = readButtons(t, j, ctx);
     ctx.itWritten = true;
     return statements(buttons ? buttons.end : j, answer(lit("Welcome!"), buttons?.value ?? []));
   }
@@ -1694,7 +1742,7 @@ const parseAnswer: PhraseParser = (t, i, ctx) => {
       || (dialog && isCapitalized(t, j));
     const free = allowed ? readFreeText(t, j, ctx, (k) => wordAt(t, k) === "with") : null;
     if (free) {
-      content = lit(free.value);
+      content = fromUnquoted(ctx, lit(free.value), free.value);
       end = free.end;
     } else if (verb === "greet" && (j >= t.length || wordAt(t, j) === "with")) {
       content = lit("Hello!");
@@ -1703,7 +1751,7 @@ const parseAnswer: PhraseParser = (t, i, ctx) => {
   }
   if (content === undefined) return null;
   if (content.kind === "Literal" && typeof content.value === "string" && !printable(content.value)) return null;
-  const buttons = readButtons(t, end) ?? readYesNo(t, end);
+  const buttons = readButtons(t, end, ctx) ?? readYesNo(t, end);
   const after = readDialogTail(t, buttons ? buttons.end : end);
   ctx.itWritten = true;
   return statements(after, answer(content, buttons?.value ?? []));
@@ -1754,12 +1802,12 @@ const parseAsk: PhraseParser = (t, i, ctx) => {
       return printable(token.value) && token.value !== "" ? choice(lit(token.value), lead.value, k + 1) : null;
     }
     const free = readFreeText(t, k, ctx);
-    return free ? choice(lit(questionText(free.value)), lead.value, free.end) : null;
+    return free ? choice(fromUnquoted(ctx, lit(questionText(free.value)), free.value), lead.value, free.end) : null;
   }
   const token = t[j];
   if (token?.type === "string") {
     if (!printable(token.value) || token.value === "") return null;
-    const buttons = readButtons(t, j + 1) ?? readYesNo(t, j + 1);
+    const buttons = readButtons(t, j + 1, ctx) ?? readYesNo(t, j + 1);
     // "ask 'Are you sure?' with Yes or No": a choice, which is an answer dialog.
     if (buttons) return choice(lit(token.value), buttons.value, buttons.end);
     ctx.itWritten = true;
@@ -1768,10 +1816,10 @@ const parseAsk: PhraseParser = (t, i, ctx) => {
   // "ask are you ready with yes and no": the buttons end the question.
   if (isAt(t, j, QUESTION_WORDS)) {
     for (let k = j + 1; k < t.length; k++) {
-      const buttons = readButtons(t, k) ?? readYesNo(t, k);
+      const buttons = readButtons(t, k, ctx) ?? readYesNo(t, k);
       if (!buttons) continue;
       const free = readFreeText(t, j, ctx, (m) => m === k);
-      return free && free.end === k ? choice(lit(questionText(free.value)), buttons.value, buttons.end) : null;
+      return free && free.end === k ? choice(fromUnquoted(ctx, lit(questionText(free.value)), free.value), buttons.value, buttons.end) : null;
     }
   }
   if (wordAt(t, j) === "for") j++;
@@ -2087,8 +2135,10 @@ const parseMath: PhraseParser = (t, i, ctx) => {
 
 const HIDE_VERBS = words("hide hides conceal");
 const SHOW_VERBS = words("show shows reveal unhide");
-const ENABLE_VERBS = words("enable activate");
-const DISABLE_VERBS = words("disable deactivate");
+const ENABLE_VERBS = words("enable activate reenable");
+/** "grey out" / "gray out" become "disable" (COMPOUNDS); "grey this button out" is read below. */
+const DISABLE_VERBS = words("disable deactivate dim");
+const GREY_VERBS = words("grey gray");
 const CHECK_VERBS = words("check tick hilite highlight turnon");
 const UNCHECK_VERBS = words("uncheck untick unhilite unhighlight deselect turnoff");
 const STATE_ADJECTIVES: ReadonlyMap<string, [HexPropertyName, boolean]> = new Map([
@@ -2225,7 +2275,7 @@ function readPropertyValue(t: Toks, i: number, property: HexPropertyName, ctx: C
       // Unquoted, to the end of the clause: "to Start Game" (not "to the winner": that could be a field).
       if (isAt(t, i, ARTICLES) && !isCapitalized(t, i)) return null;
       const free = readFreeText(t, i, ctx);
-      return free ? { value: lit(free.value), end: free.end } : null;
+      return free ? { value: fromUnquoted(ctx, lit(free.value), free.value), end: free.end } : null;
     }
     default:
       return null;
@@ -2325,6 +2375,12 @@ const parseProperty: PhraseParser = (t, i, ctx) => {
     const object = objectAfter(i + 1);
     if (!object) return null;
     return setChecked("enabled", object.value, lit(ENABLE_VERBS.has(verb)), object.end);
+  }
+  // "grey this button out", "gray it out"
+  if (GREY_VERBS.has(verb)) {
+    const object = objectAfter(i + 1);
+    if (!object || wordAt(t, object.end) !== "out") return null;
+    return setChecked("enabled", object.value, lit(false), object.end + 1);
   }
   if (verb === "lock" || verb === "unlock") {
     const object = objectAfter(i + 1);
@@ -2554,7 +2610,10 @@ function readCondition(t: Toks, i: number, ctx: Ctx): Parsed<HexExprNode> | null
       if (isAt(t, j, CHOOSE_VERBS) && ctx.itWritten) {
         const token = t[j + 1];
         const label = token?.type === "string" ? token.value : token?.type === "word" ? token.raw : undefined;
-        if (label !== undefined && printable(label) && label !== "") return { value: binary("=", itVar(), lit(label)), end: j + 2 };
+        if (label !== undefined && printable(label) && label !== "") {
+          const value = token?.type === "word" ? fromUnquoted(ctx, lit(label), label) : lit(label);
+          return { value: binary("=", itVar(), value), end: j + 2 };
+        }
       }
     }
   }
@@ -2594,13 +2653,466 @@ function readCondition(t: Toks, i: number, ctx: Ctx): Parsed<HexExprNode> | null
   j = op.end;
   const right = readValue(t, j, ctx, false);
   if (right) return { value: binary(op.value, left.value, right.value), end: right.end };
+  // A bare word is a text ("is Yes", "contains Gold"), so only a text comparison may take one:
+  // "> Limit" compares a number with a word and is not understood.
   const token = t[j];
-  if (token?.type === "word" && (LABEL_WORDS.has(token.word) || isNameWord(t, j)) && IDENTIFIER_RAW.test(token.raw)) {
-    return { value: binary(op.value, left.value, lit(token.raw)), end: j + 1 };
+  const textual = op.value === "=" || op.value === "<>" || op.value === "contains";
+  if (textual && token?.type === "word" && (LABEL_WORDS.has(token.word) || isNameWord(t, j)) && IDENTIFIER_RAW.test(token.raw)) {
+    return { value: binary(op.value, left.value, fromUnquoted(ctx, lit(token.raw), token.raw)), end: j + 1 };
   }
   return null;
 }
 words("if unless else otherwise not");
+
+// ---------------------------------------------------------------------------------------------
+// Raw HexTalk fallback
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Nodes that came from typed HexTalk, keyed by object identity (nothing is added to the AST):
+ * `spelling`: Variable nodes -> the identifier as typed; `unquoted`: Literal nodes made from an
+ * unquoted multi-word name; `statements`: every typed statement. `freeText` is filled by the
+ * English rules: Literal nodes of a value or text slot made from unquoted prompt words -> those
+ * words as written (checked by `ambiguousValue`).
+ */
+interface HexTalkOrigin {
+  spelling: WeakMap<object, string>;
+  unquoted: WeakSet<object>;
+  statements: WeakSet<object>;
+  freeText: WeakMap<object, string>;
+}
+
+const newOrigin = (): HexTalkOrigin => ({ spelling: new WeakMap(), unquoted: new WeakSet(), statements: new WeakSet(), freeText: new WeakMap() });
+
+/** Records that an English rule made `node` from the unquoted prompt text `text`; returns `node`. */
+function fromUnquoted(ctx: Ctx, node: HexExprNode, text: string): HexExprNode {
+  ctx.origin.freeText.set(node, text);
+  return node;
+}
+
+/**
+ * Words that usually name a counter field ("Score", "Lives"). Unquoted in a value or text slot
+ * they are refused, since the user may mean the field; in a name slot (`field Score`, `card
+ * Lives`, `the Score field`) they are names as usual. "click count" is covered by "count".
+ */
+export const COUNTER_WORDS: ReadonlySet<string> = new Set(
+  ("score scores lives life points point coins coin health clicks count counts counter counters gold money " +
+    "level levels time timer timers total totals hp xp ammo gem gems key keys star stars heart hearts " +
+    "energy mana moves turns tries attempts bonus").split(" "),
+);
+
+/** Lowercased names of the fields, buttons and cards a script names (selectors that are texts). */
+function namesOf(value: unknown, names: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) namesOf(item, names);
+    return names;
+  }
+  if (typeof value !== "object" || value === null) return names;
+  const node = value as { by?: unknown; type?: unknown; value?: unknown };
+  if (node.by === "auto" || node.type === "auto") {
+    const selected = node.value as { kind?: unknown; value?: unknown } | undefined;
+    if (selected?.kind === "Literal" && typeof selected.value === "string") names.add(selected.value.toLowerCase());
+  }
+  for (const [key, child] of Object.entries(node)) if (key !== "loc") namesOf(child, names);
+  return names;
+}
+
+/**
+ * The unquoted-value rule: a value or text slot filled from unquoted words is refused when it
+ * could mean a field instead. Checked are the whole text and its Capitalised words (every word
+ * when the text is one word); one of them that is a counter word or, case-insensitively, the name
+ * of a field, button or card in the same spell makes the spell ambiguous. Returns the reason.
+ */
+function ambiguousValue(texts: readonly string[], names: ReadonlySet<string>): string | undefined {
+  const reason = (word: string, why: string): string =>
+    `${word} is not in quotes and ${why}, so it could be the text "${word}" or a field. `
+    + `Write "${word}" in quotes for the text, or field "${word}" for the contents of the field.`;
+  for (const text of texts) {
+    const whole = text.trim().replace(/[?!.]+$/, "");
+    if (names.has(whole.toLowerCase())) return reason(whole, "is also a name in this spell");
+    const all = whole.match(/[A-Za-z][A-Za-z0-9_]*/g) ?? [];
+    const checked = all.length === 1 ? all : all.filter((word) => /^[A-Z]/.test(word));
+    for (const word of checked) {
+      if (COUNTER_WORDS.has(word.toLowerCase())) return reason(word, "usually names a counter field");
+      if (names.has(word.toLowerCase())) return reason(word, "is also a name in this spell");
+    }
+  }
+  return undefined;
+}
+
+const HEX_IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*/;
+const CAPITAL_IDENTIFIER = /^[A-Z][A-Za-z0-9_]*$/;
+const EXPRESSION_KINDS = new Set(["Literal", "Constant", "Variable", "BuiltIn", "FunctionCall", "ReadContainer", "ReadProperty", "BinaryOp", "UnaryOp"]);
+
+/**
+ * The prompt as HexTalk source lines: curly double quotes become straight ones, ";" outside a
+ * string ends a line (the prompt box has a single line) and one final "." is dropped.
+ */
+function hexTalkLines(text: string): string[] {
+  let out = "";
+  let inString = false;
+  for (const c of text.replace(/[\u201c\u201d]/g, '"')) {
+    if (c === '"') inString = !inString;
+    else if (c === "\n" || c === "\r") inString = false;
+    out += !inString && c === ";" ? "\n" : c;
+  }
+  out = out.replace(/\s+$/, "");
+  if (out.endsWith(".") && !inString) out = out.slice(0, -1);
+  return out.split(/\r\n|\r|\n/);
+}
+
+const isReservedWord = (word: string): boolean => HEX_RESERVED_WORDS.has(word.toLowerCase());
+
+/**
+ * Quotes every unquoted name of two or more Capitalised words that are not reserved words, when
+ * its end is certain: the end of the line, a comment, an operator, a comma or a reserved word
+ * ("go to card Game Over", "put 0 into field High Score"). A lowercase word or a number right
+ * after the run makes the end uncertain, and the line is left as it is (so it does not compile).
+ * Returns the line and the 1-based columns of the opening quotes it added.
+ */
+function quoteNames(line: string): { line: string; columns: number[] } {
+  const first = HEX_IDENTIFIER.exec(line.trimStart())?.[0].toLowerCase();
+  if (first === "on" || first === "end") return { line, columns: [] };
+  const tokens: { start: number; end: number; text: string; word: boolean }[] = [];
+  let i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    if (c === " " || c === "\t") {
+      i++;
+      continue;
+    }
+    if (c === "-" && line[i + 1] === "-") break;
+    const rest = line.slice(i);
+    const match = c === '"' ? /^"[^"]*"?/.exec(rest) : HEX_IDENTIFIER.exec(rest) ?? /^\d+(?:\.\d+)?/.exec(rest);
+    const text = match ? match[0] : c;
+    tokens.push({ start: i, end: i + text.length, text, word: HEX_IDENTIFIER.test(text) && !text.startsWith('"') });
+    i += text.length;
+  }
+  const nameable = (k: number): boolean => tokens[k]?.word === true && CAPITAL_IDENTIFIER.test(tokens[k].text) && !isReservedWord(tokens[k].text);
+  let out = "";
+  let copied = 0;
+  const columns: number[] = [];
+  for (let k = 0; k < tokens.length; k++) {
+    if (!nameable(k)) continue;
+    let m = k;
+    while (nameable(m + 1)) m++;
+    const next = tokens[m + 1];
+    const certain = next === undefined || (next.word && isReservedWord(next.text)) || (!next.word && !/^["\d]/.test(next.text));
+    if (m > k && certain) {
+      out += line.slice(copied, tokens[k].start);
+      columns.push(out.length + 1);
+      out += `"${line.slice(tokens[k].start, tokens[m].end)}"`;
+      copied = tokens[m].end;
+    }
+    k = m;
+  }
+  return { line: out + line.slice(copied), columns };
+}
+
+/** Records where the nodes of a freshly parsed handler body came from (see HexTalkOrigin). */
+function annotate(value: unknown, lines: readonly string[], quoted: ReadonlySet<string>, origin: HexTalkOrigin): void {
+  if (Array.isArray(value)) {
+    for (const item of value) annotate(item, lines, quoted, origin);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  const node = value as { kind?: unknown; name?: unknown; loc?: HexSourceLoc };
+  if (typeof node.kind === "string") {
+    if (!EXPRESSION_KINDS.has(node.kind)) origin.statements.add(node);
+    if (node.kind === "Variable" && typeof node.name === "string") {
+      const spelled = node.loc ? HEX_IDENTIFIER.exec(lines[node.loc.line - 1]?.slice(node.loc.column - 1) ?? "")?.[0] : undefined;
+      origin.spelling.set(node, spelled !== undefined && spelled.toLowerCase() === node.name ? spelled : node.name);
+    }
+    if (node.kind === "Literal" && node.loc && quoted.has(`${node.loc.line}:${node.loc.column}`)) origin.unquoted.add(node);
+  }
+  for (const [key, child] of Object.entries(node)) if (key !== "loc") annotate(child, lines, quoted, origin);
+}
+
+type HexTalkRead = { ok: true; handlers: HexHandlerNode[] } | { ok: false; reason: string };
+
+/**
+ * Parses `text` with parseHexTalk: as statements wrapped in `on <eventName> ... end <eventName>`,
+ * or, without `eventName`, as one or more complete handlers. Only syntax is checked here; the
+ * literal-vs-variable rule runs on the whole handler afterwards (resolveHandler).
+ */
+function readHexTalk(text: string, eventName: string | undefined, origin: HexTalkOrigin): HexTalkRead {
+  const offset = eventName === undefined ? 0 : 1;
+  const quoted = new Set<string>();
+  const lines = hexTalkLines(text).map((line, index) => {
+    const result = quoteNames(line);
+    for (const column of result.columns) quoted.add(`${index + 1 + offset}:${column}`);
+    return result.line;
+  });
+  if (lines.every((line) => line.trim() === "")) return { ok: false, reason: "I did not find anything to do in that spell." };
+  const source = eventName === undefined ? lines.join("\n") : [`on ${eventName}`, ...lines, `end ${eventName}`].join("\n");
+  const parsed = parseHexTalk(source);
+  if (parsed.errors.length > 0) {
+    const error = parsed.errors[0];
+    return { ok: false, reason: `That is not valid HexTalk (line ${Math.max(1, error.line - offset)}: ${error.message}).` };
+  }
+  const handlers = Object.values(parsed.ast.handlers);
+  if (handlers.length === 0 || (eventName !== undefined && handlers.length !== 1)) {
+    return { ok: false, reason: "I did not find anything to do in that spell." };
+  }
+  const sourceLines = source.split("\n");
+  for (const handler of handlers) annotate(handler.body, sourceLines, quoted, origin);
+  return { ok: true, handlers };
+}
+
+function forEachStatement(list: readonly HexStatementNode[], visit: (statement: HexStatementNode) => void): void {
+  for (const statement of list) {
+    visit(statement);
+    if (statement.kind === "IfCondition") {
+      forEachStatement(statement.thenBranch, visit);
+      if (statement.elseBranch) forEachStatement(statement.elseBranch, visit);
+    } else if (statement.kind === "RepeatLoop") {
+      forEachStatement(statement.body, visit);
+    }
+  }
+}
+
+const IT_WRITERS = new Set(["GetValue", "ShowAnswerDialog", "ShowAskDialog", "FetchJson"]);
+
+function writesIt(list: readonly HexStatementNode[]): boolean {
+  let found = false;
+  forEachStatement(list, (statement) => {
+    if (IT_WRITERS.has(statement.kind)) found = true;
+  });
+  return found;
+}
+
+type ValueSlot = "name" | "value" | "other";
+/** `texts`: the unquoted words that became literals in value and text slots (see ambiguousValue). */
+type Resolved = { ok: true; body: HexStatementNode[]; texts: string[] } | { ok: false; reason: string };
+
+/**
+ * The literal-vs-variable rule for typed HexTalk, applied to a whole handler body (English and
+ * HexTalk statements together); returns a copy without `loc`. A variable is *set* when the
+ * handler writes it (put / add / subtract / multiply / divide / fetch into it, `repeat with`),
+ * declares it `global`, has it as a parameter, or it is `it`. An unquoted identifier typed as
+ * HexTalk that is never set always evaluates to empty, so:
+ * - in a name slot (the selector after `field`, `button` or `card`) it is read as that name;
+ * - in a text slot (the value of put / get, answer and ask texts and buttons, the value of
+ *   `set the name|title`, an operand of `=`, `<>`, `contains` or of `&` / `&&` in a text slot)
+ *   it is read as a literal only when it starts with a capital letter ("Hello", "Yes");
+ * - anywhere else (amounts, durations, numeric comparisons, function arguments, conditions,
+ *   other properties), or lowercase in a text slot, the spell is refused as ambiguous.
+ * A set variable is always kept as a variable. Unquoted multi-word names (quoteNames) are
+ * accepted only in name and text slots. Also refused: a comparison between two unquoted words,
+ * a typed write to a variable that nothing reads (`put Hello into Greeting`), a property the
+ * object does not have (§4.3) and a literal fetch URL that is not https.
+ * Returns the unquoted words that became literals in value and text slots (typed HexTalk and the
+ * English rules' `freeText`), for the unquoted-value rule (ambiguousValue) the callers apply.
+ */
+function resolveHandler(body: readonly HexStatementNode[], params: readonly string[], kind: SpellObjectKind, origin: HexTalkOrigin): Resolved {
+  const assigned = new Set<string>(["it", ...params]);
+  const globals = new Set<string>();
+  forEachStatement(body, (statement) => {
+    if ((statement.kind === "PutValue" || statement.kind === "MathMutation" || statement.kind === "FetchJson") && statement.destination.scope === "variable") {
+      assigned.add(statement.destination.name);
+    }
+    if (statement.kind === "RepeatLoop" && statement.head.type === "range") assigned.add(statement.head.varName);
+    if (statement.kind === "DeclareGlobal") for (const name of statement.names) globals.add(name);
+  });
+  const reads = new Set<string>();
+  const texts: string[] = [];
+  const converted = new WeakSet<object>();
+  let failure: string | undefined;
+  const fail = (reason: string): void => {
+    failure ??= reason;
+  };
+  const free = (name: string): boolean => !assigned.has(name) && !globals.has(name);
+  const literal = (value: string | number | boolean): HexExprNode => {
+    const node = lit(value);
+    converted.add(node);
+    return node;
+  };
+
+  const expr = (e: HexExprNode, slot: ValueSlot): HexExprNode => {
+    switch (e.kind) {
+      case "Variable": {
+        const spelled = origin.spelling.get(e);
+        if (spelled !== undefined && free(e.name)) {
+          if (slot === "name") return literal(spelled);
+          if (slot === "value" && CAPITAL_IDENTIFIER.test(spelled)) {
+            texts.push(spelled);
+            return literal(spelled);
+          }
+          fail(slot === "value"
+            ? `${spelled} is not in quotes, so in HexTalk it is a variable that is never set (always empty). Write "${spelled}" in quotes if you mean the word.`
+            : `${spelled} is a variable that is never set, so it is always empty here. Use a number, a quoted value or field "${spelled}".`);
+        }
+        reads.add(e.name);
+        return { kind: "Variable", name: e.name };
+      }
+      case "Literal": {
+        if (origin.unquoted.has(e)) {
+          if (slot === "other") fail(`"${String(e.value)}" needs quotes here: an unquoted name can only name a part or card, or be a text.`);
+          if (slot === "value") texts.push(String(e.value));
+          return literal(e.value);
+        }
+        const typed = origin.freeText.get(e);
+        if (typed !== undefined) texts.push(typed);
+        return { kind: "Literal", value: e.value };
+      }
+      case "Constant":
+        return { kind: "Constant", name: e.name };
+      case "BuiltIn":
+        return { kind: "BuiltIn", name: e.name };
+      case "FunctionCall":
+        return { kind: "FunctionCall", name: e.name, args: e.args.map((arg) => expr(arg, "other")) };
+      case "ReadContainer":
+        return { kind: "ReadContainer", source: field(e.source) };
+      case "ReadProperty": {
+        const target = object(e.target);
+        checkProperty(e.property, target);
+        return { kind: "ReadProperty", property: e.property, target };
+      }
+      case "UnaryOp":
+        return { kind: "UnaryOp", op: e.op, operand: expr(e.operand, "other") };
+      case "BinaryOp": {
+        const textual = e.op === "=" || e.op === "<>" || e.op === "contains";
+        const side: ValueSlot = textual || ((e.op === "&" || e.op === "&&") && slot === "value") ? "value" : "other";
+        const left = expr(e.left, side);
+        const right = expr(e.right, side);
+        if (textual && converted.has(left) && converted.has(right)) {
+          fail("That condition compares two unquoted words; put the text in quotes.");
+        }
+        return { kind: "BinaryOp", op: e.op, left, right };
+      }
+    }
+  };
+  const selector = (s: HexPartSelector): HexPartSelector => ({ by: s.by, value: expr(s.value, s.by === "auto" ? "name" : "other") });
+  const field = (c: FieldTarget): FieldTarget => ({ scope: "field", layer: c.layer, selector: selector(c.selector) });
+  const container = (c: HexContainerTarget): HexContainerTarget => (c.scope === "variable" ? { scope: "variable", name: c.name } : field(c));
+  const object = (o: HexObjectTarget): HexObjectTarget => {
+    if (o.objectType === "button" || o.objectType === "field") return { objectType: o.objectType, layer: o.layer, selector: selector(o.selector) };
+    if (o.objectType === "card") return o.selector ? { objectType: "card", selector: selector(o.selector) } : { objectType: "card" };
+    return { objectType: o.objectType };
+  };
+  const checkProperty = (property: HexPropertyName, target: HexObjectTarget): void => {
+    const targetKind: ObjectKind = target.objectType === "me" ? kind : target.objectType;
+    if (!propertyAllowed(property, targetKind)) fail(`A ${targetKind} has no ${property} property, so that script would stop with an error.`);
+  };
+  const cardTarget = (c: HexCardTarget): HexCardTarget =>
+    c.type === "relative" ? { type: "relative", dir: c.dir } : { type: c.type, value: expr(c.value, c.type === "auto" ? "name" : "other") };
+  const repeatHead = (head: HexRepeatHead): HexRepeatHead => {
+    switch (head.type) {
+      case "forever":
+        return { type: "forever" };
+      case "count":
+        return { type: "count", times: expr(head.times, "other") };
+      case "while": case "until":
+        return { type: head.type, condition: expr(head.condition, "other") };
+      case "range":
+        return { type: "range", varName: head.varName, start: expr(head.start, "other"), end: expr(head.end, "other"), direction: head.direction };
+    }
+  };
+  const statement = (s: HexStatementNode): HexStatementNode => {
+    switch (s.kind) {
+      case "GoToCard":
+        return { kind: s.kind, target: cardTarget(s.target) };
+      case "QueueVisualEffect":
+        return { kind: s.kind, effect: s.effect, speed: s.speed };
+      case "PutValue":
+        return { kind: s.kind, mode: s.mode, value: expr(s.value, "value"), destination: container(s.destination) };
+      case "GetValue":
+        return { kind: s.kind, value: expr(s.value, "value") };
+      case "MathMutation":
+        return { kind: s.kind, op: s.op, amount: expr(s.amount, "other"), destination: container(s.destination) };
+      case "SetProperty": {
+        const target = object(s.target);
+        checkProperty(s.property, target);
+        return { kind: s.kind, property: s.property, target, value: expr(s.value, s.property === "name" || s.property === "title" ? "value" : "other") };
+      }
+      case "PlaySound":
+        return { kind: s.kind, voice: s.voice, tempo: s.tempo, notes: s.notes };
+      case "ShowAnswerDialog":
+        return { kind: s.kind, prompt: expr(s.prompt, "value"), buttons: s.buttons.map((button) => expr(button, "value")) };
+      case "ShowAskDialog":
+        return s.defaultAnswer === undefined
+          ? { kind: s.kind, prompt: expr(s.prompt, "value") }
+          : { kind: s.kind, prompt: expr(s.prompt, "value"), defaultAnswer: expr(s.defaultAnswer, "value") };
+      case "Wait":
+        return { kind: s.kind, amount: expr(s.amount, "other"), unit: s.unit };
+      case "FetchJson": {
+        const url = expr(s.url, "other");
+        if (url.kind === "Literal" && !(typeof url.value === "string" && /^https:\/\//i.test(url.value))) fail("fetch only reads https:// addresses.");
+        const destination = container(s.destination);
+        return s.jsonPath === undefined ? { kind: s.kind, url, destination } : { kind: s.kind, url, jsonPath: s.jsonPath, destination };
+      }
+      case "DeclareGlobal":
+        return { kind: s.kind, names: [...s.names] };
+      case "IfCondition": {
+        const condition = expr(s.condition, "other");
+        const thenBranch = s.thenBranch.map(statement);
+        return s.elseBranch === undefined ? { kind: s.kind, condition, thenBranch } : { kind: s.kind, condition, thenBranch, elseBranch: s.elseBranch.map(statement) };
+      }
+      case "RepeatLoop":
+        return { kind: s.kind, head: repeatHead(s.head), body: s.body.map(statement) };
+      case "PassEvent":
+        return { kind: s.kind, eventName: s.eventName };
+      case "ExitHandler": case "ExitRepeat": case "NextRepeat":
+        return { kind: s.kind };
+    }
+  };
+  const result = body.map(statement);
+  forEachStatement(body, (s) => {
+    if (!origin.statements.has(s)) return;
+    if ((s.kind === "PutValue" || s.kind === "MathMutation" || s.kind === "FetchJson") && s.destination.scope === "variable") {
+      const name = s.destination.name;
+      if (name !== "it" && !globals.has(name) && !params.includes(name) && !reads.has(name)) {
+        fail(`Nothing in the script reads the variable ${name}, so changing it has no effect. To change a field, write field "${name}".`);
+      }
+    }
+  });
+  return failure === undefined ? { ok: true, body: result, texts } : { ok: false, reason: failure };
+}
+
+type TypedRead = { ok: true; ast: HexScriptAST } | { ok: false; syntax: boolean; reason: string };
+
+/**
+ * The whole prompt as typed HexTalk: one or more complete handlers (`on mouseUp ... end mouseUp`,
+ * lines separated by newlines or ";"), or statements that go into the object's default handler.
+ * `syntax: false` means the prompt is valid HexTalk but was refused (resolveHandler).
+ */
+function compileTypedHexTalk(prompt: string, kind: SpellObjectKind): TypedRead {
+  const origin = newOrigin();
+  const asScript = /^\s*on\s+[A-Za-z]/i.test(prompt);
+  const read = readHexTalk(prompt, asScript ? undefined : DEFAULT_HANDLER[kind], origin);
+  if (!read.ok) return { ok: false, syntax: true, reason: read.reason };
+  const handlers: HexScriptAST["handlers"] = {};
+  const texts: string[] = [];
+  for (const handler of read.handlers) {
+    if (handler.body.length === 0) return { ok: false, syntax: false, reason: `The handler ${handler.eventName} has nothing to do.` };
+    const resolved = resolveHandler(handler.body, handler.params, kind, origin);
+    if (!resolved.ok) return { ok: false, syntax: false, reason: resolved.reason };
+    texts.push(...resolved.texts);
+    handlers[handler.eventName.toLowerCase()] = { eventName: handler.eventName, params: [...handler.params], body: resolved.body };
+  }
+  const ast: HexScriptAST = { handlers };
+  const ambiguous = ambiguousValue(texts, namesOf(ast));
+  if (ambiguous !== undefined) return { ok: false, syntax: false, reason: ambiguous };
+  return { ok: true, ast };
+}
+
+/**
+ * One clause typed as HexTalk inside an English prompt ("when the card opens, put Hello into
+ * field Greeting"): its text as written (leading filler words skipped), parsed as statements of
+ * the spell's handler. Null when the clause is not valid HexTalk statement syntax or its words
+ * were not neighbours in the prompt (a trigger phrase was removed from its middle).
+ */
+function clauseHexTalk(t: Toks, start: number, ctx: Ctx): HexStatementNode[] | null {
+  let i = start;
+  while (i < t.length && (isAt(t, i, STOPWORDS) || t[i].type === "colon")) i++;
+  if (i >= t.length) return null;
+  for (let k = i + 1; k < t.length; k++) if (!adjacent(t, k)) return null;
+  const read = readHexTalk(ctx.source.slice(t[i].at, t[t.length - 1].to), ctx.eventName, ctx.origin);
+  if (!read.ok || read.handlers[0].body.length === 0) return null;
+  const body = read.handlers[0].body;
+  if (writesIt(body)) ctx.itWritten = true;
+  return body;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Clauses and assembly
@@ -2644,6 +3156,7 @@ function compileClause(t: Toks, ctx: Ctx): ClauseResult {
     header = { kind: "else" };
     i = 2;
   }
+  const bodyStart = i;
   const body: MaybeDefaultTempo[] = [];
   const unknown: string[] = [];
   let repeatCount: number | undefined;
@@ -2676,7 +3189,14 @@ function compileClause(t: Toks, ctx: Ctx): ClauseResult {
     }
     i = phrase.end;
   }
-  if (unknown.length > 0) return { kind: "error", reason: "", unknown };
+  if (unknown.length > 0) {
+    // Not English Tier 1 knows: the clause body may be HexTalk statement syntax.
+    const typed = clauseHexTalk(t, bodyStart, ctx);
+    if (!typed) return { kind: "error", reason: "", unknown };
+    if (header?.kind === "if") return { kind: "if", condition: header.condition, statements: typed };
+    if (header?.kind === "else") return { kind: "else", statements: typed };
+    return { kind: "plain", statements: typed };
+  }
   if (speed !== undefined) {
     const effects = body.filter((statement) => statement.kind === "QueueVisualEffect");
     const sounds = body.filter((statement) => statement.kind === "PlaySound" && statement.tempoDefault);
@@ -2704,25 +3224,29 @@ function compileClause(t: Toks, ctx: Ctx): ClauseResult {
   return { kind: "plain", statements: result };
 }
 
-/** Moves each queued visual effect right before the `go` it belongs to (§3.2 rule 7). */
-function placeEffects(list: HexStatementNode[]): HexStatementNode[] | string {
+/**
+ * Moves each queued visual effect right before the `go` it belongs to (§3.2 rule 7). Effects
+ * typed as HexTalk stay where the user wrote them.
+ */
+function placeEffects(list: HexStatementNode[], origin: HexTalkOrigin): HexStatementNode[] | string {
   const out: HexStatementNode[] = [];
   for (const statement of list) {
     if (statement.kind === "IfCondition") {
-      const thenBranch = placeEffects(statement.thenBranch);
+      const thenBranch = placeEffects(statement.thenBranch, origin);
       if (typeof thenBranch === "string") return thenBranch;
-      const elseBranch = statement.elseBranch ? placeEffects(statement.elseBranch) : undefined;
+      const elseBranch = statement.elseBranch ? placeEffects(statement.elseBranch, origin) : undefined;
       if (typeof elseBranch === "string") return elseBranch;
       out.push(ifThen(statement.condition, thenBranch, elseBranch));
     } else if (statement.kind === "RepeatLoop") {
-      const body = placeEffects(statement.body);
+      const body = placeEffects(statement.body, origin);
       if (typeof body === "string") return body;
       out.push({ ...statement, body });
     } else {
       out.push(statement);
     }
   }
-  if (!out.some((statement) => statement.kind === "QueueVisualEffect")) return out;
+  const movable = (statement: HexStatementNode): boolean => statement.kind === "QueueVisualEffect" && !origin.statements.has(statement);
+  if (!out.some(movable)) return out;
   const goIndexes = out.flatMap((statement, index) => (statement.kind === "GoToCard" ? [index] : []));
   if (goIndexes.length === 0) return "A visual effect is shown when the script goes to another card; say which card to go to.";
   // Each effect belongs to the first unclaimed `go` after it ("dissolve to the next card"), else
@@ -2730,7 +3254,7 @@ function placeEffects(list: HexStatementNode[]): HexStatementNode[] | string {
   const claimed = new Map<number, HexStatementNode>();
   for (let index = 0; index < out.length; index++) {
     const statement = out[index];
-    if (statement.kind !== "QueueVisualEffect") continue;
+    if (!movable(statement)) continue;
     const after = goIndexes.find((go) => go > index && !claimed.has(go));
     const before = [...goIndexes].reverse().find((go) => go < index && !claimed.has(go));
     const go = after ?? before;
@@ -2739,7 +3263,7 @@ function placeEffects(list: HexStatementNode[]): HexStatementNode[] | string {
   }
   const result: HexStatementNode[] = [];
   out.forEach((statement, index) => {
-    if (statement.kind === "QueueVisualEffect") return;
+    if (movable(statement)) return;
     const queued = claimed.get(index);
     if (queued) result.push(queued);
     result.push(statement);
@@ -2749,14 +3273,37 @@ function placeEffects(list: HexStatementNode[]): HexStatementNode[] | string {
 
 type Compiled = { ok: true; ast: HexScriptAST } | { ok: false; reason: string };
 
-/** The Tier 1 local compiler (no Grimoire lookup, no acceptance pipeline). */
+/**
+ * The Tier 1 local compiler (no Grimoire lookup, no acceptance pipeline). Two readings of the
+ * prompt: as English (where any clause Tier 1 does not understand may be HexTalk statement
+ * syntax) and as typed HexTalk (complete handlers, or statements for the default handler).
+ * - only one reading compiles: that one;
+ * - both compile to the same script: that script;
+ * - both compile to different scripts: refused, the prompt is ambiguous;
+ * - neither: the reason of the HexTalk reading when the prompt is valid HexTalk that was refused
+ *   (an unquoted word, a property the object lacks...), else the English reason.
+ */
 export function compileTier1(prompt: string, context: SpellContext): Compiled {
+  const english = compileEnglish(prompt, context);
+  const typed = compileTypedHexTalk(prompt, context.objectKind);
+  if (english.ok && typed.ok) {
+    return astEqual(english.ast, typed.ast)
+      ? english
+      : { ok: false, reason: "That spell means one thing as English and another as HexTalk. Put names and texts in quotes, or write it all in HexTalk." };
+  }
+  if (english.ok) return english;
+  if (typed.ok) return typed;
+  return typed.syntax ? english : { ok: false, reason: typed.reason };
+}
+
+/** The English reading, with HexTalk clauses (see compileTier1). */
+function compileEnglish(prompt: string, context: SpellContext): Compiled {
   const tokens = renumber(mergeCompounds(correctWords(tokenize(prompt))));
-  const other = tokens.find((token) => token.type === "other");
-  if (other) return { ok: false, reason: `I did not understand "${rawAt([other], 0)}" in that spell.` };
   const trigger = extractTrigger(tokens);
   if ("error" in trigger) return { ok: false, reason: trigger.error };
-  const ctx: Ctx = { kind: context.objectKind, itWritten: false, source: prompt };
+  const eventName = trigger.eventName ?? DEFAULT_HANDLER[context.objectKind];
+  const origin = newOrigin();
+  const ctx: Ctx = { kind: context.objectKind, itWritten: false, source: prompt, eventName, origin };
   const body: HexStatementNode[] = [];
   let open: { node: Extract<HexStatementNode, { kind: "IfCondition" }>; branch: "then" | "else"; sentence: number } | null = null;
   const sentences = splitSentences(trigger.tokens);
@@ -2799,10 +3346,14 @@ export function compileTier1(prompt: string, context: SpellContext): Compiled {
     }
   }
   if (body.length === 0) return { ok: false, reason: "I did not find anything to do in that spell." };
-  const placed = placeEffects(body);
+  const placed = placeEffects(body, origin);
   if (typeof placed === "string") return { ok: false, reason: placed };
-  const eventName = trigger.eventName ?? DEFAULT_HANDLER[context.objectKind];
-  return { ok: true, ast: script(eventName, placed) };
+  const resolved = resolveHandler(placed, [], context.objectKind, origin);
+  if (!resolved.ok) return { ok: false, reason: resolved.reason };
+  const ast = script(eventName, resolved.body);
+  const ambiguous = ambiguousValue(resolved.texts, namesOf(ast));
+  if (ambiguous !== undefined) return { ok: false, reason: ambiguous };
+  return { ok: true, ast };
 }
 
 // ---------------------------------------------------------------------------------------------
