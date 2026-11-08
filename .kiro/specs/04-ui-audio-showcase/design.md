@@ -44,7 +44,7 @@ export async function conjureScript(prompt: string, context: SpellContext):
 - `htmlExporter.ts` is a pure function of `(stack, playerJs)` and never imports `dist-player` at module level. It writes:
 ~~~html
 <!doctype html><html><head><meta charset="utf-8"><title>{escaped stack name}</title></head>
-<body><script type="application/json" id="hexstack">{stack JSON with every "<" replaced by "<"}</script>
+<body><script type="application/json" id="hexstack">{stack JSON with every "<" written as the six-character escape \u003c}</script>
 <script>{playerJs}</script></body></html>
 ~~~
 - The stack name in `<title>` is HTML-escaped.

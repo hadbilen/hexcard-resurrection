@@ -20,7 +20,7 @@ inclusion: always
 3. **Untrusted stacks:** every stack loaded from a file, URL hash or preset passes the Zod stack validator before it reaches the store. Invalid stacks are rejected whole, never partially loaded.
 4. **Network:** the only network access a script has is `fetch`, under the policy in `hexcard_design_spec.md` §4.3 (https only, GET, no credentials, no custom headers, 8 s timeout, 256 KB cap, JSON only).
 5. **Secrets:** a BYOK API key lives only in memory for the current session. It is never written to IndexedDB, URLs, exported stacks, exported HTML or logs.
-6. **Standalone HTML export:** the embedded stack JSON must escape `<` as `<` so that it can never close its `<script type="application/json">` tag.
+6. **Standalone HTML export:** the embedded stack JSON must write every `<` as the six-character escape `\u003c` so that it can never close its `<script type="application/json">` tag.
 
 ## Data Contracts
 - **Single source of truth for scripts:** only HexTalk `scriptSource` is persisted. ASTs live in the in-memory `ScriptCache` and are rebuilt by `parser.ts` on load. The AI layer outputs ASTs only; HexTalk is printed from them.
