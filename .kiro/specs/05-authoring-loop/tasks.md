@@ -19,7 +19,7 @@
   - fast-check property in `src/core/__tests__/authoringCommands.property.test.ts`: random action sequences of at most 50 steps through a real store and history keep the stack valid, and full undo restores the original stack and current card
   - _Requirements: 3.2, 3.3, 4.1, 5.1, 6.1, 6.3, 8.1, 8.2, 8.3, 8.4, 9.1, 9.2, 10.3, 10.4, 10.5, 13.1, 13.2, 13.3, 14.3, 15.1, 15.2_
 
-- [ ] 4. Implement the menu model, menu handlers and shortcuts
+- [x] 4. Implement the menu model, menu handlers and shortcuts
   - `src/ui/menuCommands.ts`: the layout, exact labels (trailing `...` rule), enabling rules and handlers of design §6.1, the API of §6.2, the shortcut table, platform labels, text-input rule and key mapping of §6.3, and the "not available now" check of §8
   - Command dispatches for New Card, New Background, Delete Card and the Go items as in design §5
   - Tests in `src/ui/__tests__/menuCommands.test.ts` (design §9): every enabling rule and label, the menu coverage test, shortcut labels and reserved browser shortcuts, every studio shortcut with text-input targets, end-to-end message orders with a real store, history and bus
