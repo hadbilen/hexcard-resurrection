@@ -13,7 +13,7 @@
   - Tests in `messageBus.test.ts`: FIFO order with posted messages, abort of queued and running commands, message orders for a new card, a new background and a deleted card, no commit after an abort, a script error or a handler's `go`
   - _Requirements: 4.2, 4.3, 5.2, 5.3, 6.2, 6.4, 11.1, 13.4, 13.5_
 
-- [ ] 3. Implement the structural commands
+- [x] 3. Implement the structural commands
   - `src/core/authoringCommands.ts`: ids, default names, `createBlankStack`, `canDeleteCard` and the six command factories of design §4
   - Unit tests in `src/core/__tests__/authoringCommands.test.ts` (design §9)
   - fast-check property in `src/core/__tests__/authoringCommands.property.test.ts`: random action sequences of at most 50 steps through a real store and history keep the stack valid, and full undo restores the original stack and current card
