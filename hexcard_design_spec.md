@@ -262,6 +262,7 @@ HexCard's runtime is single-threaded like HyperCard's. The rules below are norma
 7. **Visual effect queue.** `visual effect` stores one pending effect (the last one wins). The next `go` in the same dispatch consumes it; an unconsumed effect is discarded when the dispatch ends.
 8. **Abort.** `Cmd+.` / `Ctrl+.` (HyperCard's abort shortcut) aborts the running dispatch and clears the queue. Switching from Browse to any authoring tool does the same.
 9. **State writes.** The VM never mutates the stack object directly. It calls `store.applyRuntime(mutation)` (see `.kiro/specs/01-core-stack-engine/design.md`). Runtime writes are auto-saved but are not part of the undo history.
+10. **Menu commands.** A menu command that sends messages (New Card, New Background, Delete Card and the Go menu) runs as one top-level dispatch, queued in the same FIFO queue as discrete events and counted as a discrete entry for the overflow rule of rule 3. Its lifecycle messages (`deleteCard`, `closeCard`, `closeBackground`, `newCard`, `openBackground`, `openCard`) are nested dispatches inside it and share its gas budget (rule 5); its authoring change is one `history.execute` made between the close and the open messages. Abort (rule 8) drops queued menu commands and stops a running one. Menu commands that send no messages (New Button, New Field, Delete Part, Undo, Redo, opening a window) run at once, outside the queue. See `.kiro/specs/05-authoring-loop/design.md` §5.
 
 ---
 
@@ -762,11 +763,12 @@ The Kiroween 2026 rules require the `/.kiro` directory at the repository root (i
 │   ├── product.md                  # Product vision, hackathon category, 5-layer HyperCard rules
 │   ├── tech.md                     # Stack, security rules, 1-bit rendering rules, testing
 │   └── structure.md                # Canonical directory tree and module-boundary rules
-├── specs/                          # Each spec owns its modules; no task appears in two specs
+├── specs/                          # Each spec owns its modules; a later spec changes them only as its design.md lists (structure.md)
 │   ├── 01-core-stack-engine/       # schema.ts, store.ts, messageBus.ts, history.ts, stack validation
 │   ├── 02-hextalk-ast-vm/          # ast.ts, parser.ts (+ printer), vm.ts, fetch policy
 │   ├── 03-1bit-canvas-dither/      # rleCodec, compositor + part renderer, text raster, dither, patterns, transitions, paint tools
-│   └── 04-ui-audio-showcase/       # System 7 shell, inspector, synth, Spellcaster, storage/export, player build, presets
+│   ├── 04-ui-audio-showcase/       # System 7 shell, inspector, synth, Spellcaster, storage/export, player build, presets
+│   └── 05-authoring-loop/          # authoringCommands.ts, menuCommands.ts: menus, shortcuts, new/delete cards, backgrounds, parts
 └── hooks/                          # Kiro IDE 1.0 hook format: {"version":"v1","hooks":[...]}
     ├── validate-ast-safety.json    # PostFileSave on src/core, src/ai, src/storage
     └── enforce-1bit-ui.json        # PostFileSave on src/ui, src/engine/graphics, CSS
