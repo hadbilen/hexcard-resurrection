@@ -5,7 +5,7 @@ New modules:
 - `src/core/authoringCommands.ts`: pure TypeScript. The six structural `HexCommand` factories, default names, id generation, the blank stack of File > New Stack and the Delete Card rule. No React, no DOM, no `src/engine/` import.
 - `src/ui/menuCommands.ts`: React-free. The menu layout, enabling rules, menu handlers, shortcut table, platform labels and the key-to-command mapping. It replaces `buildMenus` and the `ForwardedCommand` path of `System7Shell.tsx`.
 
-Changed modules (§3): `store.ts`, `history.ts`, `messageBus.ts` (spec 01); `System7Shell.tsx`, `CardViewport.tsx`, `App.tsx`, `StackGraphModal.tsx`, `system7.css`, `main.tsx` (spec 04).
+Changed modules (§3): `store.ts`, `history.ts`, `messageBus.ts` (spec 01); `System7Shell.tsx`, `CardViewport.tsx`, `App.tsx`, `StackGraphModal.tsx`, `fileCommands.ts`, `system7.css`, `main.tsx` (spec 04).
 
 Canonical contracts used without restating them: schema §2.1, message path §3, supported messages §3.1 (`newCard`, `deleteCard`), concurrency model §3.2 (one dispatch at a time, nested lifecycle messages, abort, and rule 10 for menu commands as queued dispatches). Spec 01 design §3–§5 (store, history, bus) and spec 04 design §1 and §5 (UI store view, stack loader) stay valid; this design only extends them.
 
@@ -106,6 +106,8 @@ export interface MessageBus {
 - The Cmd/Ctrl+B listener becomes one window `keydown` listener that calls `shortcutCommand(event, context)` (§6.3). `shortcutCommand` ignores events whose target is a text input, and the listener does nothing while a modal dialog or studio window is open (the studio window already stops key propagation) (Requirement 16). This changes one behaviour of today's shell: Cmd/Ctrl+B no longer toggles Edit Background while an unlocked card field is being edited.
 - `MenuDropdown` draws a disabled item with the dim overlay of §7. `.s7-menu-item:disabled` loses `text-decoration: line-through`; it keeps the dark text colour (the overlay does the dimming) and gets `position: relative` for the overlay.
 - Menu tests in `System7Shell.test.ts` that assert the old layout (for example the exact Edit menu entries) are updated to the layout of §6.1.
+- `createThemeCommand` moves to `menuCommands.ts` with `buildMenus`; the copy in `System7Shell.tsx` is removed, and every importer (including `src/storage/__tests__/stackLoader.test.ts` and `src/ui/__tests__/System7Shell.test.ts`) imports it from `menuCommands.ts`.
+- `fileCommands.ts` (spec 04): `FileCommands.run` and its `ForwardedCommand` import are removed, because the menu handlers call `openStackFile`, `saveStackFile`, `copyShareLink`, `exportStandaloneHtml` and `replaceStackFrom` directly (§6.2). The tests of `run` in `fileCommands.test.ts` are removed; the other file-command tests stay.
 
 ### 3.5 `CardViewport.tsx`, `App.tsx`, `main.tsx` (spec 04)
 - `CardViewport` reads `state.selectedPartId` and calls `store.setSelectedPart` instead of its local `useState`; its tool-change clearing is removed (the store does it). Press, move and resize behaviour is unchanged.

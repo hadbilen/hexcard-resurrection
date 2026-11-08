@@ -28,6 +28,7 @@
 - [ ] 5. Wire the menus, shortcuts and selection into the studio
   - `System7Shell.tsx`: render `buildMenus` from `menuCommands.ts`, run items with `runMenuCommand`, one `keydown` listener using `shortcutCommand`, the dim overlay of design §7; remove `ForwardedCommand` and `onCommand` (design §3.4)
   - `system7.css`: disabled menu items without strike-through, positioned for the overlay
+  - `fileCommands.ts`: remove `FileCommands.run` and the `ForwardedCommand` import; move every `createThemeCommand` import to `menuCommands.ts` and delete the shell's copy (design §3.4)
   - `CardViewport.tsx` reads and writes the selection through the store; `App.tsx` and `main.tsx` pass the handlers, back history, platform and the extended bus (design §3.5)
   - Update the spec 04 tests that assert the old menu layout or the viewport's local selection
   - The shell's `keydown` listener ignores text-input targets and does nothing while a dialog or studio window is open; the abort shortcut and the arrow keys keep working as today
