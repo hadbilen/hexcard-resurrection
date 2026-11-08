@@ -34,6 +34,7 @@ function fakeStore(tool: AuthoringTool): UiStore {
     getCompiled: () => ({ ast: { handlers: {} }, errors: [] }),
     setEditLayer: () => {},
     setTool: () => {},
+    setSelectedPart: () => {},
   };
 }
 

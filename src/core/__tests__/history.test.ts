@@ -194,6 +194,100 @@ describe("undo/redo (Requirements 4.2, 4.3, 5.2)", () => {
   });
 });
 
+describe("currentCardAfter (spec 05 Requirements 13.2, 13.3, 13.4)", () => {
+  /** Inserts card `crd_new` after crd_1 and makes it current; revert removes it and returns to crd_1. */
+  function addCard(steps: string[] = []): HexCommand {
+    return {
+      label: "New Card",
+      apply(stack) {
+        steps.push("apply");
+        const [first, ...rest] = stack.cards;
+        return { ...stack, cards: [first, { ...first, id: "crd_new", name: "Card 2" }, ...rest] };
+      },
+      revert(stack) {
+        steps.push("revert");
+        return { ...stack, cards: stack.cards.filter((card) => card.id !== "crd_new") };
+      },
+      currentCardAfter(step) {
+        steps.push(`currentCardAfter:${step}`);
+        return step === "apply" ? "crd_new" : "crd_1";
+      },
+    };
+  }
+
+  /** setup() with a second card crd_2 after crd_1. */
+  function setupTwoCards() {
+    const stack = makeStack();
+    stack.cards.push({ ...stack.cards[0], id: "crd_2", name: "Second" });
+    expect(validateStack(stack).ok).toBe(true);
+    const store = createHexStore({ stack, compile });
+    return { store, history: createHistory(store) };
+  }
+
+  it("makes the command's card current after execute, undo and redo, reading it right after each step", () => {
+    const steps: string[] = [];
+    const { store, history } = setupTwoCards();
+    store.setTool("button");
+    store.setEditLayer("background");
+    const s0 = store.getSnapshot().stack;
+
+    history.execute(addCard(steps));
+    const s1 = store.getSnapshot().stack;
+    expect(store.getSnapshot().currentCardId).toBe("crd_new");
+
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" }); // the user navigates away meanwhile
+    history.undo();
+    expect(store.getSnapshot()).toMatchObject({ currentCardId: "crd_1", tool: "button", editLayer: "background" });
+    expect(store.getSnapshot().stack).toEqual(s0);
+
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    history.redo();
+    expect(store.getSnapshot()).toMatchObject({ currentCardId: "crd_new", tool: "button", editLayer: "background" });
+    expect(store.getSnapshot().stack).toEqual(s1);
+
+    expect(steps).toEqual([
+      "apply", "currentCardAfter:apply",
+      "revert", "currentCardAfter:revert",
+      "apply", "currentCardAfter:apply",
+    ]);
+  });
+
+  it("publishes the stack and the current card in one state change", () => {
+    const { store, history } = setupTwoCards();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    history.execute(addCard());
+    expect(listener).toHaveBeenCalledTimes(1);
+    history.undo();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves the current card alone for commands without it, or when it returns undefined", () => {
+    const { store, history } = setupTwoCards();
+    const applyAuthoring = vi.spyOn(store, "applyAuthoring");
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+
+    history.execute(renameStack("a"));
+    history.undo();
+    history.redo();
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+    for (const call of applyAuthoring.mock.calls) expect(call).toHaveLength(1); // today's one-argument call
+
+    history.execute({ ...renameStack("b"), currentCardAfter: () => undefined });
+    history.undo();
+    expect(store.getSnapshot().currentCardId).toBe("crd_2");
+  });
+
+  it("does not record a command whose card is missing from its result", () => {
+    const { store, history } = setupTwoCards();
+    const before = store.getSnapshot();
+    expect(() => history.execute({ ...renameStack("a"), currentCardAfter: () => "crd_missing" }))
+      .toThrow(HexMutationError);
+    expect(history.canUndo()).toBe(false);
+    expect(store.getSnapshot()).toBe(before);
+  });
+});
+
 describe("PaintStrokeCommand (Requirement 5.3)", () => {
   const rect = { x: 510, y: 340, width: 2, height: 2 }; // bottom-right corner
   const pixelAt = (pixels: Uint8Array, x: number, y: number) => pixels[y * WIDTH + x];

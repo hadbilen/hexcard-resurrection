@@ -1,6 +1,6 @@
 # Implementation Plan: Authoring Loop — Menus, Cards, Backgrounds & Parts
 
-- [ ] 1. Extend the store and the history for part selection and the restored current card
+- [x] 1. Extend the store and the history for part selection and the restored current card
   - `src/core/store.ts`: `selectedPartId` in `HexRuntimeState`, `setSelectedPart`, the selection invariant enforced on every published state, and `applyAuthoring(next, currentCardId?)` (design §3.1)
   - `src/core/history.ts`: optional `HexCommand.currentCardAfter(step)`, passed to `applyAuthoring` by `execute`, `undo` and `redo` (design §3.2)
   - `createUiStoreView` in `src/ui/App.tsx` exposes `setSelectedPart`; the `HexRuntimeState` literal in `StackGraphModal.tsx` gets `selectedPartId: null`

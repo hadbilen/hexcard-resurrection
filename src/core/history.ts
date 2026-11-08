@@ -20,6 +20,11 @@ export interface HexCommand {
   label: string;                           // shown in Edit > Undo <label>
   apply(stack: HexStack): HexStack;
   revert(stack: HexStack): HexStack;
+  /**
+   * Spec 05 (Requirements 13.2, 13.3). Read right after `apply` / `revert`; the returned card becomes
+   * current in the same `store.applyAuthoring` call. Commands without it leave the current card alone.
+   */
+  currentCardAfter?(step: "apply" | "revert"): HexID | undefined;
 }
 
 export interface HexHistory {
@@ -92,17 +97,19 @@ export function createHistory(store: Pick<HexStore, "getSnapshot" | "applyAuthor
   const redoList: HexCommand[] = [];
 
   /** Computes and commits the next stack; returns false when the command changed nothing. */
-  function run(step: (stack: HexStack) => HexStack): boolean {
+  function run(command: HexCommand, step: "apply" | "revert"): boolean {
     const current = store.getSnapshot().stack;
-    const next = step(current);
+    const next = step === "apply" ? command.apply(current) : command.revert(current);
     if (next === current) return false;
-    store.applyAuthoring(next);
+    const cardId = command.currentCardAfter?.(step);
+    if (cardId === undefined) store.applyAuthoring(next);
+    else store.applyAuthoring(next, cardId);
     return true;
   }
 
   return {
     execute(command) {
-      if (!run((stack) => command.apply(stack))) return;
+      if (!run(command, "apply")) return;
       undoRing.push(command);
       redoList.length = 0;
     },
@@ -110,7 +117,7 @@ export function createHistory(store: Pick<HexStore, "getSnapshot" | "applyAuthor
     undo() {
       const command = undoRing.peek();
       if (command === undefined) return false;
-      run((stack) => command.revert(stack));
+      run(command, "revert");
       undoRing.pop();
       redoList.push(command);
       return true;
@@ -119,7 +126,7 @@ export function createHistory(store: Pick<HexStore, "getSnapshot" | "applyAuthor
     redo() {
       const command = redoList.at(-1);
       if (command === undefined) return false;
-      run((stack) => command.apply(stack));
+      run(command, "apply");
       redoList.pop();
       undoRing.push(command);
       return true;

@@ -38,6 +38,12 @@ export interface HexRuntimeState {
   currentCardId: HexID;
   editLayer: HexLayer;             // Edit Background mode
   tool: AuthoringTool;
+  /**
+   * Spec 05 (Requirements 10.1, 10.2, 14.1): the part shown with selection handles while a part
+   * tool is active. UI state: never saved, never undoable. Only `setSelectedPart` sets it, and
+   * every published state clears it when it is no longer valid.
+   */
+  selectedPartId: HexID | null;
 }
 
 export type RuntimeMutation =
@@ -72,13 +78,23 @@ export interface HexStore {
    * Authoring write path, called only by history.ts (Requirement 4.2). Replaces the stack with an
    * authoring result, recompiles only scripts that changed, notifies listeners and schedules
    * auto-save. Never touches the undo history.
+   *
+   * Spec 05 (Requirements 13.2, 13.3): `currentCardId`, when given, becomes the current card in the
+   * same published state; it must name a card of `next`, else HexMutationError and nothing is
+   * published. Without it, a removed current card falls back to the card at the same position.
    */
-  applyAuthoring(next: HexStack): void;
+  applyAuthoring(next: HexStack, currentCardId?: HexID): void;
   getCompiled(objectId: HexID): CompiledScript;
   /** Toggles Edit Background mode (Cmd/Ctrl+B). UI state only: not saved, not undoable. */
   setEditLayer(layer: HexLayer): void;
   /** Selects the current tool. UI state only: not saved, not undoable. */
   setTool(tool: AuthoringTool): void;
+  /**
+   * Spec 05 (Requirement 10.1). `null` clears the selection. Otherwise the part must be a part of
+   * the active part tool's type (Button tool: button, Field tool: field) on the edit target, else
+   * HexMutationError and the state is unchanged. UI state only: not saved, not undoable.
+   */
+  setSelectedPart(partId: HexID | null): void;
 }
 
 export interface HexStoreOptions {
@@ -577,6 +593,33 @@ function applyStackMutation(stack: HexStack, m: Exclude<RuntimeMutation, { type:
 // Store
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Spec 05 Requirement 10.1: whether `partId` names a part of the active part tool's type
+ * (Button tool: button, Field tool: field) on the edit target of `state`.
+ */
+function isSelectablePart(state: HexRuntimeState, partId: HexID): boolean {
+  const { tool } = state;
+  if (tool !== "button" && tool !== "field") return false;
+  const card = state.stack.cards.find((candidate) => candidate.id === state.currentCardId);
+  if (!card) return false;
+  const owner = state.editLayer === "background"
+    ? state.stack.backgrounds.find((background) => background.id === card.backgroundId)
+    : card;
+  return owner?.parts.some((part) => part.id === partId && part.type === tool) ?? false;
+}
+
+/**
+ * Spec 05 Requirement 10.2: the selection survives a state change only while the tool, the current
+ * card and the edit layer stay the same and it still names a selectable part.
+ */
+function keptSelection(previous: HexRuntimeState, next: HexRuntimeState): HexID | null {
+  const partId = next.selectedPartId;
+  if (partId === null) return null;
+  if (next.tool !== previous.tool || next.currentCardId !== previous.currentCardId
+    || next.editLayer !== previous.editLayer) return null;
+  return isSelectablePart(next, partId) ? partId : null;
+}
+
 /** Deep-frozen private copy, so callers can neither mutate the snapshot nor be affected by it. */
 function adoptStack(stack: HexStack): HexStack {
   if (stack.cards.length === 0) throw new HexMutationError("Cannot load a stack without cards");
@@ -598,10 +641,13 @@ export function createHexStore(options: HexStoreOptions): HexStore {
     currentCardId: initialStack.cards[0].id,
     editLayer: "card",
     tool: "browse",
+    selectedPartId: null,
   });
 
+  /** Every state change goes through here, so the selection invariant holds for every snapshot. */
   function publish(next: HexRuntimeState, replaced = false): void {
-    state = freeze(next);
+    const selectedPartId = replaced ? null : keptSelection(state, next);
+    state = freeze(selectedPartId === next.selectedPartId ? next : { ...next, selectedPartId });
     if (replaced) for (const listener of [...replaceListeners]) listener();
     for (const listener of [...listeners]) listener();
   }
@@ -655,7 +701,9 @@ export function createHexStore(options: HexStoreOptions): HexStore {
       const next = adoptStack(stack);
       flushAutoSave();
       cache.rebuild(next);
-      publish({ stack: next, currentCardId: next.cards[0].id, editLayer: "card", tool: state.tool }, true);
+      publish({
+        stack: next, currentCardId: next.cards[0].id, editLayer: "card", tool: state.tool, selectedPartId: null,
+      }, true);
     },
 
     onReplaceStack(listener) {
@@ -665,20 +713,24 @@ export function createHexStore(options: HexStoreOptions): HexStore {
       };
     },
 
-    applyAuthoring(next) {
-      if (next === state.stack) return;
+    applyAuthoring(next, requestedCardId) {
+      if (next === state.stack && (requestedCardId === undefined || requestedCardId === state.currentCardId)) return;
       if (next.cards.length === 0) throw new HexMutationError("An authoring change cannot remove every card");
+      if (requestedCardId !== undefined && !next.cards.some((card) => card.id === requestedCardId)) {
+        throw new HexMutationError(`No card with id "${requestedCardId}" in the authoring result`);
+      }
       // Structural sharing: untouched subtrees keep their identity, new objects are frozen in place.
       const stack = freezeTree(next);
-      let { currentCardId } = state;
+      let currentCardId = requestedCardId ?? state.currentCardId;
       if (!stack.cards.some((card) => card.id === currentCardId)) {
         // The current card was removed (e.g. undoing "New Card"): stay at the same position.
         const oldIndex = state.stack.cards.findIndex((card) => card.id === currentCardId);
         currentCardId = stack.cards[Math.min(Math.max(oldIndex, 0), stack.cards.length - 1)].id;
       }
+      const stackChanged = stack !== state.stack;
       cache.sync(stack);
       publish({ ...state, stack, currentCardId });
-      scheduleAutoSave();
+      if (stackChanged) scheduleAutoSave();
     },
 
     getCompiled: (objectId) => cache.get(objectId),
@@ -689,6 +741,16 @@ export function createHexStore(options: HexStoreOptions): HexStore {
 
     setTool(tool) {
       if (tool !== state.tool) publish({ ...state, tool });
+    },
+
+    setSelectedPart(partId) {
+      if (partId !== null && !isSelectablePart(state, partId)) {
+        throw new HexMutationError(
+          `Part "${partId}" is not a ${state.tool === "field" ? "field" : "button"} of the edit target, `
+            + `or no part tool is active (tool "${state.tool}")`,
+        );
+      }
+      if (partId !== state.selectedPartId) publish({ ...state, selectedPartId: partId });
     },
   };
 }

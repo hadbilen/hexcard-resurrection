@@ -568,3 +568,150 @@ describe("applyAuthoring (Requirements 4.2, 4.4)", () => {
     }
   });
 });
+
+describe("applyAuthoring with a current card (spec 05 Requirements 13.2, 13.3)", () => {
+  it("makes the given card current in the same published state", () => {
+    const { store } = setup();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    const current = store.getSnapshot().stack;
+    store.applyAuthoring({ ...current, name: "Authored" }, "crd_3");
+    expect(store.getSnapshot()).toMatchObject({ currentCardId: "crd_3", stack: { name: "Authored" } });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a card that is not in the result before anything is published", () => {
+    const { store } = setup();
+    const before = store.getSnapshot();
+    const current = before.stack;
+    expect(() => store.applyAuthoring({ ...current, cards: current.cards.slice(1) }, "crd_1")).toThrow(HexMutationError);
+    expect(store.getSnapshot()).toBe(before);
+  });
+
+  it("switches the current card for an unchanged stack without an auto-save", () => {
+    vi.useFakeTimers();
+    try {
+      const { store, autoSave } = setup();
+      const { stack } = store.getSnapshot();
+      store.applyAuthoring(stack, "crd_2");
+      expect(store.getSnapshot()).toMatchObject({ stack, currentCardId: "crd_2" });
+      const before = store.getSnapshot();
+      store.applyAuthoring(stack, "crd_2"); // nothing changes
+      expect(store.getSnapshot()).toBe(before);
+      vi.advanceTimersByTime(500);
+      expect(autoSave).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("part selection (spec 05 Requirements 10.1, 10.2, 14.1)", () => {
+  it("starts empty and is set only for a part of the active part tool's type on the edit target", () => {
+    const { store } = setup();
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+    expect(() => store.setSelectedPart("prt_btn")).toThrow(HexMutationError); // Browse tool
+
+    store.setTool("button");
+    store.setSelectedPart("prt_btn");
+    expect(store.getSnapshot().selectedPartId).toBe("prt_btn");
+
+    const before = store.getSnapshot();
+    expect(() => store.setSelectedPart("prt_card_fld")).toThrow(HexMutationError); // a field, Button tool
+    expect(() => store.setSelectedPart("prt_shared")).toThrow(HexMutationError); // background layer
+    expect(() => store.setSelectedPart("prt_missing")).toThrow(HexMutationError);
+    expect(store.getSnapshot()).toBe(before);
+    store.setSelectedPart("prt_btn"); // same selection: no new snapshot
+    expect(store.getSnapshot()).toBe(before);
+
+    store.setSelectedPart(null);
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+  });
+
+  it("selects background parts only in Edit Background mode", () => {
+    const { store } = setup();
+    store.setTool("field");
+    expect(() => store.setSelectedPart("prt_shared")).toThrow(HexMutationError);
+    store.setSelectedPart("prt_card_fld");
+    store.setEditLayer("background");
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+    expect(() => store.setSelectedPart("prt_card_fld")).toThrow(HexMutationError);
+    store.setSelectedPart("prt_shared");
+    expect(store.getSnapshot().selectedPartId).toBe("prt_shared");
+  });
+
+  it("is cleared when the tool, the current card or the edit layer changes, and by replaceStack", () => {
+    const { store } = setup();
+    const select = () => {
+      store.setTool("button");
+      store.setEditLayer("card");
+      if (store.getSnapshot().currentCardId !== "crd_1") store.applyRuntime({ type: "goToCard", cardId: "crd_1" });
+      store.setSelectedPart("prt_btn");
+      expect(store.getSnapshot().selectedPartId).toBe("prt_btn");
+    };
+
+    select();
+    store.setTool("field");
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+
+    select();
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+
+    select();
+    store.setEditLayer("background");
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+
+    select();
+    store.applyAuthoring(store.getSnapshot().stack, "crd_2"); // current card changed by an authoring step
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+
+    select();
+    store.replaceStack(makeStack());
+    expect(store.getSnapshot()).toMatchObject({ tool: "button", currentCardId: "crd_1", selectedPartId: null });
+  });
+
+  it("follows the part through stack changes and is cleared once the part is gone (e.g. after Undo)", () => {
+    const { store } = setup();
+    store.setTool("button");
+    store.setSelectedPart("prt_btn");
+
+    store.applyRuntime({ type: "setPartProperty", partId: "prt_btn", property: "rect", value: "0,0,50,20" });
+    const moved = store.getSnapshot().stack;
+    store.applyAuthoring({ ...moved, name: "Edited" });
+    expect(store.getSnapshot().selectedPartId).toBe("prt_btn");
+
+    const current = store.getSnapshot().stack;
+    const [first, ...rest] = current.cards;
+    store.applyAuthoring({ ...current, cards: [{ ...first, parts: first.parts.filter((p) => p.id !== "prt_btn") }, ...rest] });
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+  });
+
+  it("is cleared when the selected id now names a part of another type", () => {
+    const { store } = setup();
+    store.setTool("button");
+    store.setSelectedPart("prt_btn");
+    const current = store.getSnapshot().stack;
+    const [first, ...rest] = current.cards;
+    const asField = { ...first.parts[0], id: "prt_btn" };
+    store.applyAuthoring({ ...current, cards: [{ ...first, parts: [asField] }, ...rest] });
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+  });
+
+  it("is never saved", () => {
+    vi.useFakeTimers();
+    try {
+      const { store, autoSave } = setup();
+      store.setTool("button");
+      store.setSelectedPart("prt_btn");
+      vi.advanceTimersByTime(500);
+      expect(autoSave).not.toHaveBeenCalled();
+      store.applyAuthoring({ ...store.getSnapshot().stack, name: "Saved" });
+      vi.advanceTimersByTime(500);
+      expect(autoSave).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(autoSave.mock.calls[0][0])).not.toContain("selectedPartId");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
