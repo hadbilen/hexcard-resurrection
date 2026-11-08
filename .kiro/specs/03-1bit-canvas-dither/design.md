@@ -41,7 +41,7 @@ export function frameToImageData(frame: Uint8Array, palette: { darkBitHex: strin
 - `renderCrisp1BitText(text, font, size, style, rect, align, wrap) -> { mask: Uint8Array; lineBoxes }` draws with `fillText` at integer coordinates on an `OffscreenCanvas`, then thresholds alpha `>= 128`.
 - Word wrapping is done in TypeScript with `measureText`, so line breaks are identical across browsers that load the same font.
 - `textStyle` support: bold/italic come from the bitmap font's variants when available; `underline`, `outline`, `shadow`, `condense` are pixel operations on the mask.
-- Font loading uses `FontFace` with files from `public/fonts/`; rendering waits for `document.fonts.ready` before the first frame.
+- Font loading uses `FontFace` with files from `public/fonts/`; rendering waits for `document.fonts.ready` before the first frame. `loadBundledFonts(baseUrl?, overrides?)` and `fontFileUrl(baseUrl, file, overrides?)` take optional per-file URL overrides (e.g. `data:` URLs) that replace `<baseUrl><file>`; the standalone player uses them (spec 04 design §6).
 - Native-size rendering (Requirement 4.3): text is drawn only at 1x, 2x, ... of a font file's native pixel size (Pixel Operator 16 px, Pixel Operator 8 px, Fairfax Serif 12 px; declared once per file in `FONT_FILES`). The exported `TEXT_SIZE_TABLE` maps each logical font and size to the file (bold file only where one exists at that native size, otherwise bold is synthesized), the render size in px and the line height; rendering, measuring, CSS font strings, `FontFace` registration and `lineMetrics` derive from it:
 
   | Size | Line height | System | Sans (bold file) | Mono (bold file) | Serif |

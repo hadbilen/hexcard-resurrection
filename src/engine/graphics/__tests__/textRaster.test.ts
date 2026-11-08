@@ -11,6 +11,7 @@ import {
   type TextStyle,
   bundledFontFaces,
   cssFontString,
+  fontFileUrl,
   layoutText,
   lineMetrics,
   renderCrisp1BitText,
@@ -132,6 +133,14 @@ describe("size table, lineMetrics and fonts", () => {
   it("registers one FontFace per font file the table uses, and declares no unused file", () => {
     expect(bundledFontFaces()).toHaveLength(9);
     expect(new Set(tableFontFiles())).toEqual(new Set(Object.keys(FONT_FILES)));
+  });
+  it("loads a font from <baseUrl><file> unless the file has a URL override (embedded fonts of the player)", () => {
+    // A sub-path base, as on GitHub Pages (a site-root fonts path is rejected by assetUrls.test.ts).
+    const base = "/hexcard-resurrection/fonts/";
+    expect(fontFileUrl(base, "PixelOperator.ttf")).toBe(`${base}PixelOperator.ttf`);
+    const overrides = { "PixelOperator.ttf": "data:font/ttf;base64,AAEA" };
+    expect(fontFileUrl(base, "PixelOperator.ttf", overrides)).toBe("data:font/ttf;base64,AAEA");
+    expect(fontFileUrl(base, "PixelOperator-Bold.ttf", overrides)).toBe(`${base}PixelOperator-Bold.ttf`);
   });
 });
 

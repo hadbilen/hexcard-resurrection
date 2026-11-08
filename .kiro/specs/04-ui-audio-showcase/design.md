@@ -38,8 +38,10 @@ export async function conjureScript(prompt: string, context: SpellContext):
 
 ## 6. Player Build & Standalone HTML Export
 - `src/player/main.ts` is a browse-only entry: it reads the embedded stack, validates it, and mounts a minimal viewport using spec-01, spec-02 and spec-03 modules plus the synth. No authoring tools, no AI, no React shell.
-- `vite.player.config.ts` builds it as one minified IIFE (`dist-player/player.js`). The npm `build` script runs the player build first, then the studio build.
-- `htmlExporter.ts` imports the bundle as text (`import playerJs from "../../dist-player/player.js?raw"`) and writes:
+- Fonts (Requirement 6.1): the player bundle embeds the bundled fonts as base64 `data:` URLs and passes them to `loadBundledFonts` as per-file overrides, so the exported file makes no font requests. Only the player bundle does this; the studio and the live site keep loading fonts from `<BASE_URL>fonts/`.
+- `vite.player.config.ts` builds it as one minified IIFE (`dist-player/player.js`). The npm `build` script runs the player build first (`build:player`), then the studio build.
+- Player bundle availability: the File > Export Standalone HTML command loads the player source lazily from the virtual Vite module `virtual:hexcard-player`, implemented by a small plugin in `vite.config.ts`. The module returns the text of the built `dist-player/player.js` when the file exists, and `null` otherwise; on `null` the studio shows "Export needs a production build (npm run build)". Vitest and `npm run dev` therefore work on a clean checkout without `dist-player`.
+- `htmlExporter.ts` is a pure function of `(stack, playerJs)` and never imports `dist-player` at module level. It writes:
 ~~~html
 <!doctype html><html><head><meta charset="utf-8"><title>{escaped stack name}</title></head>
 <body><script type="application/json" id="hexstack">{stack JSON with every "<" replaced by "<"}</script>

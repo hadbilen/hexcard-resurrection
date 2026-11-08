@@ -255,24 +255,38 @@ export function bundledFontFaces(): Array<{ family: string; file: FontFileName }
   return tableFontFiles().map((file) => ({ family: FONT_FILES[file].family, file }));
 }
 
+/** URLs that replace `<baseUrl><file>` for single font files, e.g. `data:` URLs embedded in a bundle. */
+export type FontUrlOverrides = Readonly<Partial<Record<FontFileName, string>>>;
+
+/** The URL a font file is loaded from: its override if there is one, else `<baseUrl><file>`. */
+export function fontFileUrl(baseUrl: string, file: FontFileName, overrides?: FontUrlOverrides): string {
+  return overrides?.[file] ?? `${baseUrl}${file}`;
+}
+
 /**
  * Loads the bundled fonts from `baseUrl` (default `<BASE_URL>fonts/`) with FontFace, adds them to
  * `document.fonts` and resolves after `document.fonts.ready`. The first frame must wait for it.
  * Memoised per base URL; a failed load is not cached, so it can be retried.
+ *
+ * `overrides` (spec 04 Requirement 6.1) replaces the URL of individual files. The standalone
+ * player passes `data:` URLs it carries inside its own bundle, so an exported single-file HTML makes
+ * no font requests. Loads with overrides are not memoised.
  */
-export function loadBundledFonts(baseUrl: string = DEFAULT_FONT_BASE): Promise<void> {
-  const pending = fontLoads.get(baseUrl);
+export function loadBundledFonts(baseUrl: string = DEFAULT_FONT_BASE, overrides?: FontUrlOverrides): Promise<void> {
+  const pending = overrides ? undefined : fontLoads.get(baseUrl);
   if (pending) return pending;
   const load = (async () => {
     const faces = bundledFontFaces().map(
-      ({ family, file }) => new FontFace(family, `url("${baseUrl}${file}")`, { weight: "normal", style: "normal" }),
+      ({ family, file }) => new FontFace(family, `url("${fontFileUrl(baseUrl, file, overrides)}")`, { weight: "normal", style: "normal" }),
     );
     await Promise.all(faces.map((face) => face.load()));
     for (const face of faces) document.fonts.add(face);
     await document.fonts.ready;
   })();
-  fontLoads.set(baseUrl, load);
-  load.catch(() => fontLoads.delete(baseUrl));
+  if (!overrides) {
+    fontLoads.set(baseUrl, load);
+    load.catch(() => fontLoads.delete(baseUrl));
+  }
   return load;
 }
 

@@ -63,7 +63,7 @@ This spec covers everything the user touches directly: the React System 7 shell,
 **User Story:** As a user, I want to export a stack as a single HTML file that runs anywhere without HexCard.
 
 #### Acceptance Criteria
-1. WHEN the user chooses `File -> Export Standalone HTML`, THE SYSTEM SHALL produce one `.html` file containing the browse-only player bundle and the stack JSON, with no external requests other than the stack's own `fetch` commands.
+1. WHEN the user chooses `File -> Export Standalone HTML`, THE SYSTEM SHALL produce one `.html` file containing the browse-only player bundle and the stack JSON, with no external requests other than the stack's own `fetch` commands. The player bundle SHALL embed the bundled fonts as base64 `data:` URLs, so the exported file makes no font requests; only the player bundle does this, and the studio and the live site SHALL keep loading fonts from `<BASE_URL>fonts/`.
 2. THE SYSTEM SHALL embed the stack JSON in a `<script type="application/json">` element with every `<` escaped as `<`.
 3. WHEN the exported file is opened, THE SYSTEM SHALL validate the embedded stack and run it in Browse mode only, without authoring tools or AI features.
 

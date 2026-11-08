@@ -1,7 +1,8 @@
 /**
  * File menu commands of spec 04 task 6 (Requirements 5.2, 5.3): Save Stack File, Open Stack File
  * and Copy Share Link, plus loading share links from the page's URL hash. Commands that replace
- * the stack first offer to save unsaved changes (task 8, Requirement 7.6).
+ * the stack first offer to save unsaved changes (task 8, Requirement 7.6). Task 7 adds Export
+ * Standalone HTML (Requirement 6.1), which loads the player bundle and the exporter lazily.
  *
  * Browser access (downloads, the file picker, the clipboard, the page URL) is injected through
  * `FileBrowserAccess`, so the command logic runs in Node tests; `createBrowserFileAccess` is the
@@ -88,6 +89,8 @@ export interface FileCommandOptions {
   changes?: Pick<ChangeTracker, "hasChanges" | "markSaved">;
   /** Unexpected failures (e.g. compression unavailable) are reported here as well as in an alert. */
   onError?: (error: unknown) => void;
+  /** Source of the player bundle for Export Standalone HTML; defaults to `loadPlayerSource`. */
+  loadPlayer?: () => Promise<string | null>;
 }
 
 export interface FileCommands {
@@ -97,6 +100,11 @@ export interface FileCommands {
   saveStackFile(): Promise<boolean>;
   openStackFile(): Promise<LoadStackResult | undefined>;
   copyShareLink(): Promise<void>;
+  /**
+   * Requirement 6.1: downloads the current stack as `<name>.html` with the player bundle. Resolves
+   * false (after an alert) when there is no player build or the export failed.
+   */
+  exportStandaloneHtml(): Promise<boolean>;
   /**
    * Requirement 7.6: with no changes, resolves true at once. Otherwise asks
    * "Save changes to a file first?" with Save…, Don't Save and Cancel: Save… saves the stack file
@@ -108,6 +116,17 @@ export interface FileCommands {
 }
 
 export const SAVE_STACK_FILE_BUTTON = "Save Stack File";
+/** Shown by Export Standalone HTML when no player bundle was built (spec 04 design.md §6). */
+export const EXPORT_NEEDS_BUILD_MESSAGE = "Export needs a production build (npm run build)";
+
+/**
+ * The built player bundle (`dist-player/player.js`) as text, or null without a player build. Read
+ * from the virtual module of `vite.config.ts` on first use, so nothing is loaded until the user
+ * exports.
+ */
+export async function loadPlayerSource(): Promise<string | null> {
+  return (await import("virtual:hexcard-player")).default;
+}
 export const SHARE_LINK_COPIED_MESSAGE = "The share link has been copied to the clipboard.";
 
 export function shareLinkTooLongMessage(length: number): string {
@@ -115,7 +134,15 @@ export function shareLinkTooLongMessage(length: number): string {
     + `more than the ${MAX_SHARE_LINK_LENGTH.toLocaleString("en-US")} a link can hold.`;
 }
 
-export function createFileCommands({ getStack, loader, modals, browser, changes, onError }: FileCommandOptions): FileCommands {
+export function createFileCommands({
+  getStack,
+  loader,
+  modals,
+  browser,
+  changes,
+  onError,
+  loadPlayer = loadPlayerSource,
+}: FileCommandOptions): FileCommands {
   const fail = (message: string, error: unknown): void => {
     onError?.(error);
     void modals.alert(message, { details: [error instanceof Error ? error.message : String(error)] });
@@ -190,6 +217,23 @@ export function createFileCommands({ getStack, loader, modals, browser, changes,
     await modals.alert(SHARE_LINK_COPIED_MESSAGE);
   };
 
+  const exportStandaloneHtml = async (): Promise<boolean> => {
+    // The stack as it is now, runtime changes included, taken before anything is awaited.
+    const stack = getStack();
+    try {
+      const [player, exporter] = await Promise.all([loadPlayer(), import("../storage/htmlExporter.ts")]);
+      if (player === null) {
+        await modals.alert(EXPORT_NEEDS_BUILD_MESSAGE);
+        return false;
+      }
+      browser.download(exporter.htmlFileName(stack), exporter.renderStandaloneHtml(stack, player), exporter.HTML_MIME_TYPE);
+    } catch (error) {
+      fail("The stack could not be exported as HTML.", error);
+      return false;
+    }
+    return true;
+  };
+
   return {
     run(command) {
       switch (command) {
@@ -202,6 +246,9 @@ export function createFileCommands({ getStack, loader, modals, browser, changes,
         case "file.copyShareLink":
           void copyShareLink();
           return true;
+        case "file.exportHtml":
+          void exportStandaloneHtml();
+          return true;
         default:
           return false;
       }
@@ -209,6 +256,7 @@ export function createFileCommands({ getStack, loader, modals, browser, changes,
     saveStackFile,
     openStackFile,
     copyShareLink,
+    exportStandaloneHtml,
     confirmReplace,
     replaceStackFrom,
   };

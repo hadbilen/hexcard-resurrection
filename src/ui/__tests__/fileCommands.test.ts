@@ -6,15 +6,18 @@ import { noiseLayer, makeStack } from "../../storage/__tests__/fixtures.ts";
 import { decodeStackFile, encodeStackFile, encodeStackPayload } from "../../storage/stackFile.ts";
 import { DAMAGED_STACK_MESSAGE, createStackLoader } from "../../storage/stackLoader.ts";
 import { SHARE_HASH_PREFIX } from "../../storage/urlCodec.ts";
+import { parseEmbeddedStack } from "../../player/embedded.ts";
 import {
   CANCEL_BUTTON,
   DONT_SAVE_BUTTON,
+  EXPORT_NEEDS_BUILD_MESSAGE,
   SAVE_CHANGES_BUTTON,
   SAVE_CHANGES_MESSAGE,
   SAVE_STACK_FILE_BUTTON,
   SHARE_LINK_COPIED_MESSAGE,
   createChangeTracker,
   createFileCommands,
+  loadPlayerSource,
   type FileBrowserAccess,
   type PickedFile,
 } from "../fileCommands.ts";
@@ -31,7 +34,7 @@ async function nextDialog(modals: ReturnType<typeof createModalManager>) {
   return dialog;
 }
 
-function setup(pickedText?: string) {
+function setup(pickedText?: string, loadPlayer?: () => Promise<string | null>) {
   const store = createHexStore({ stack: makeStack({ name: "Current" }), compile: parseHexTalk });
   const history = createHistory(store);
   const modals = createModalManager();
@@ -47,7 +50,7 @@ function setup(pickedText?: string) {
     },
     pageUrl: () => "https://example.org/hexcard/#old",
   };
-  const commands = createFileCommands({ getStack: () => store.getSnapshot().stack, loader, modals, browser });
+  const commands = createFileCommands({ getStack: () => store.getSnapshot().stack, loader, modals, browser, loadPlayer });
   return { store, history, modals, commands, downloads, copied };
 }
 
@@ -120,10 +123,41 @@ describe("File menu commands", () => {
     expect(downloads).toHaveLength(1);
   });
 
-  it("run handles only this task's File commands", () => {
+  it("run handles only the File commands of this module", () => {
     const { commands } = setup();
-    expect(commands.run("file.exportHtml")).toBe(false);
+    expect(commands.run("file.openShowcase")).toBe(false);
     expect(commands.run("go.next")).toBe(false);
+  });
+
+  it("loadPlayerSource resolves virtual:hexcard-player under Vitest (text of dist-player/player.js, or null)", async () => {
+    const source = await loadPlayerSource();
+    expect(source === null || typeof source === "string").toBe(true);
+  });
+
+  it("Export Standalone HTML without a player build alerts and downloads nothing", async () => {
+    const { modals, commands, downloads } = setup(undefined, async () => null);
+    const done = commands.exportStandaloneHtml();
+    const dialog = await nextDialog(modals);
+    expect(dialog.message).toBe(EXPORT_NEEDS_BUILD_MESSAGE);
+    modals.settle(dialog.id, "OK");
+    expect(await done).toBe(false);
+    expect(downloads).toEqual([]);
+  });
+
+  it("Export Standalone HTML downloads <name>.html with the player and the current stack", async () => {
+    const { store, modals, commands, downloads } = setup(undefined, async () => "/*FAKE_PLAYER*/");
+    // A runtime change: the export holds the stack as it is now, with no prompt.
+    store.applyRuntime({ type: "setFieldText", cardId: "crd_starter", layer: "card", partId: "prt_welcome", text: "</script><!-- typed" });
+    expect(commands.run("file.exportHtml")).toBe(true);
+    for (let i = 0; i < 200 && downloads.length === 0; i++) await flush();
+    expect(modals.getSnapshot()).toEqual([]);
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0].fileName).toBe("Current.html");
+    expect(downloads[0].mimeType).toBe("text/html");
+    expect(downloads[0].text).toContain("<script>/*FAKE_PLAYER*/</script>");
+    const json = /<script type="application\/json" id="hexstack">([^<]*)<\/script>/.exec(downloads[0].text)?.[1];
+    const parsed = parseEmbeddedStack(json);
+    expect(parsed.ok && parsed.stack).toEqual(store.getSnapshot().stack);
   });
 });
 

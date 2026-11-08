@@ -32,7 +32,7 @@
   - `indexedDb.ts` auto-save, `stackFile.ts`, `urlCodec.ts` with the 32,000-character warning, validation on every load
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 7. Implement the player build and standalone HTML export
+- [x] 7. Implement the player build and standalone HTML export
   - `src/player/main.ts`, `vite.player.config.ts`, build-order script, `htmlExporter.ts` with `<` escaping
   - _Requirements: 2.7, 6.1, 6.2, 6.3_
 

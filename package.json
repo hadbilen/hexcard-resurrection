@@ -6,7 +6,8 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run build:player && tsc -b && vite build",
+    "build:player": "vite build --config vite.player.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "vitest --run",
