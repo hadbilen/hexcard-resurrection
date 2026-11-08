@@ -6,13 +6,15 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { HexHistory } from "../core/history.ts";
 import type { MessageBus } from "../core/messageBus.ts";
+import type { HexID } from "../core/schema.ts";
 import type { HexStore } from "../core/store.ts";
 import type { PaintController } from "../engine/graphics/paintTools.ts";
 import { CardViewport } from "./CardViewport.tsx";
 import { ObjectInspector, type StudioWindows } from "./ObjectInspector.tsx";
 import { ShowcaseChooser, type ShowcaseChoice } from "./ShowcaseChooser.tsx";
 import { StackGraphModal } from "./StackGraphModal.tsx";
-import { System7Shell, type ForwardedCommand, type ModalManager, type UiStore } from "./System7Shell.tsx";
+import type { Platform, ShellMenuHandlers } from "./menuCommands.ts";
+import { System7Shell, type ModalManager, type UiStore } from "./System7Shell.tsx";
 import type { EffectStage, MouseTracker } from "./vmHost.ts";
 
 /**
@@ -38,7 +40,8 @@ export interface AppProps {
   modals: ModalManager;
   /** Which studio window is open; shared with the script error reporter and the message bus. */
   windows: StudioWindows;
-  bus: Pick<MessageBus, "post" | "abort">;
+  /** The viewport posts and aborts; the menu handlers (built in main.tsx) use the rest. */
+  bus: Pick<MessageBus, "post" | "abort" | "runCommand" | "changeCard" | "changeCardBy" | "sendNested" | "backHistory">;
   painter: PaintController;
   effects: EffectStage;
   mouse: Pick<MouseTracker, "set">;
@@ -51,8 +54,10 @@ export interface AppProps {
    * the visual-effect surface (child effects run before this one). StrictMode may call it twice.
    */
   onReady?: () => void;
-  /** Menu commands neither the shell nor the app implements (e.g. the File menu). */
-  onCommand?: (command: ForwardedCommand) => void;
+  /** Spec 05 design §3.5: the menu handlers of `createMenuHandlers`. */
+  handlers: ShellMenuHandlers;
+  /** Shortcut label platform, detected once by the composition root. */
+  platform: Platform;
   /** Stacks listed by File > Open Showcase Stack (Requirement 7.5). */
   showcases?: readonly ShowcaseChoice[];
   /** Loads the chosen showcase stack (through the stack loader). */
@@ -60,8 +65,8 @@ export interface AppProps {
 }
 
 export function App({
-  store, history, modals, windows, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady, onCommand,
-  showcases = [], onOpenShowcase,
+  store, history, modals, windows, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady, handlers,
+  platform, showcases = [], onOpenShowcase,
 }: AppProps) {
   const [patternIndex, setPatternIndex] = useState(initialPatternIndex);
   const open = useSyncExternalStore(windows.subscribe, windows.getSnapshot, windows.getSnapshot);
@@ -70,6 +75,7 @@ export function App({
     // Only the first commit matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const backHistory = (): readonly HexID[] => bus.backHistory();
   // A newly loaded stack closes the studio windows of the old one.
   useEffect(() => store.onReplaceStack(() => windows.close()), [store, windows]);
 
@@ -78,11 +84,10 @@ export function App({
       store={store}
       history={history}
       modals={modals}
-      onCommand={(command) => {
-        if (command === "go.stackGraph") windows.openStackGraph();
-        else if (command === "file.openShowcase") windows.openShowcaseChooser();
-        else onCommand?.(command);
-      }}
+      handlers={handlers}
+      backHistory={backHistory}
+      platform={platform}
+      isWindowOpen={windows.isOpen}
       patternIndex={patternIndex}
       onPatternChange={(index) => {
         setPatternIndex(index);

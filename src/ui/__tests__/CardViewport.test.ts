@@ -35,6 +35,7 @@ import {
 import { CARD_FRAME_WIDTH, computeUiScale, menuBarHeight } from "../FloatingTools.tsx";
 import { createStarterStack } from "../starterStack.ts";
 import { createModalManager, System7Shell } from "../System7Shell.tsx";
+import { buildMenus, isReservedCommand, type MenuContext, type ShellMenuHandlers } from "../menuCommands.ts";
 
 // Read as plain text: Vitest's CSS handling turns `system7.css?raw` into "".
 const SHELL_CSS = readFileSync(new URL("../system7.css", import.meta.url), "utf8");
@@ -345,9 +346,46 @@ function renderInShell(store: HexStore, k: number, child: ReactNode): string {
     modals: createModalManager(),
     patternIndex: 1,
     onPatternChange: () => undefined,
+    handlers: noMenuHandlers(),
+    backHistory: () => [],
+    platform: "other",
     scale: k,
   }, child));
 }
+
+/** A handler for every non-reserved menu command except the shell-owned palette toggle; none is run here. */
+function noMenuHandlers(): ShellMenuHandlers {
+  const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
+  const context: MenuContext = { state: store.getSnapshot(), history: createHistory(store), backHistory: [], paletteVisible: false };
+  const commands = buildMenus(context, "other")
+    .flatMap((menu) => menu.entries.flatMap((entry) => (entry.kind === "item" ? [entry.command] : [])))
+    .filter((command) => !isReservedCommand(command) && command !== "paint.togglePalette");
+  return Object.fromEntries(commands.map((command) => [command, () => undefined])) as ShellMenuHandlers;
+}
+
+describe("part selection through the store (spec 05 Requirements 10.1, 10.2, 14.1)", () => {
+  const VIEWPORT_SOURCE = readFileSync(new URL("../CardViewport.tsx", import.meta.url), "utf8");
+
+  it("draws the handles of the store's selected part and follows the store", () => {
+    const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
+    store.setTool("button");
+    expect(renderToStaticMarkup(viewportElement(store))).not.toContain("hc-handle");
+    store.setSelectedPart("prt_btn");
+    const html = renderToStaticMarkup(viewportElement(store));
+    // prt_btn's rect is 10,10 80x20 at k = 1.
+    expect(html).toContain('style="left:10px;top:10px;width:80px;height:20px"');
+    expect(html.match(/class="hc-handle hc-handle-(nw|ne|sw|se)"/g)).toHaveLength(4);
+    store.setTool("field"); // the store clears the selection
+    expect(store.getSnapshot().selectedPartId).toBeNull();
+    expect(renderToStaticMarkup(viewportElement(store))).not.toContain("hc-handle");
+  });
+
+  it("keeps no selection state of its own: presses select through store.setSelectedPart", () => {
+    expect(VIEWPORT_SOURCE).toContain("store.setSelectedPart(hit?.id ?? null)");
+    expect(VIEWPORT_SOURCE).not.toMatch(/useState<HexID \| null>/);
+    expect(VIEWPORT_SOURCE).not.toMatch(/setSelectedPartId/);
+  });
+});
 
 describe("CardViewport markup", () => {
   it("renders one 512x342 canvas and the hidden, labelled textarea", () => {

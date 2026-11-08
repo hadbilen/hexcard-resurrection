@@ -321,7 +321,6 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
   // Requirement 2.10: the shell's UI scale k, shared with the menu bar, menus, dialogs and palette.
   const scale = useUiScale();
   const [editing, setEditingState] = useState<EditingSession | null>(null);
-  const [selectedPartId, setSelectedPartId] = useState<HexID | null>(null);
   const [drag, setDragState] = useState<PartDrag | null>(null);
   const [marquee, setMarquee] = useState<HexRect | null>(null);
   const [, setOverlayVersion] = useState(0);
@@ -511,7 +510,7 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
     }
     if ((toolChanged && state.tool !== "select" && state.tool !== "lasso") || cardChanged) painter.clearSelection();
     if ((toolChanged || cardChanged || layerChanged) && dragRef.current) setDrag(null);
-    if (toolChanged && state.tool !== "button" && state.tool !== "field") setSelectedPartId(null);
+    // The part selection lives in the store, which clears it on these changes (spec 05 Requirement 10.2).
 
     const session = editingRef.current;
     if (session) {
@@ -630,14 +629,15 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
     }
 
     // Button and field tools.
-    const selected = selectedPartOf(snapshot, selectedPartId);
+    const selected = selectedPartOf(snapshot, snapshot.selectedPartId);
     const handle = selected ? handleAt(selected.rect, point.x, point.y) : null;
     if (selected && handle) {
       startDrag(selected, handle, point);
       return;
     }
     const hit = hitTestLayerPart(snapshot, snapshot.tool === "button" ? "button" : "field", point.x, point.y);
-    setSelectedPartId(hit?.id ?? null);
+    // Spec 05 Requirement 10.1: the selection is UI state in the store.
+    store.setSelectedPart(hit?.id ?? null);
     if (hit) startDrag(hit, "move", point);
   };
 
@@ -742,7 +742,7 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
   const width = BITMAP_WIDTH * scale;
   const height = BITMAP_HEIGHT * scale;
   const frame = CARD_FRAME_WIDTH * scale;
-  const selected = selectedPartOf(state, selectedPartId);
+  const selected = selectedPartOf(state, state.selectedPartId);
   const selectionRect = selected ? (drag?.partId === selected.id ? drag.rect : selected.rect) : null;
   const pixelSelection = isPaintTool(state.tool) && !painter.isActive() ? painter.getSelection() : null;
   const editingPart = editing ? editableField(state, editing) : null;

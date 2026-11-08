@@ -25,7 +25,7 @@
   - Tests in `src/ui/__tests__/menuCommands.test.ts` (design §9): every enabling rule and label, the menu coverage test, shortcut labels and reserved browser shortcuts, every studio shortcut with text-input targets, end-to-end message orders with a real store, history and bus
   - _Requirements: 1.1, 1.2, 1.4, 1.5, 1.6, 1.7, 1.8, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.4, 3.5, 4.2, 4.4, 5.2, 5.4, 6.1, 6.2, 6.5, 7.1, 7.2, 7.3, 7.4, 9.3, 9.4, 10.3, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 12.1, 12.2, 13.5, 14.2, 15.1, 15.3, 16.1, 16.2, 16.5_
 
-- [ ] 5. Wire the menus, shortcuts and selection into the studio
+- [x] 5. Wire the menus, shortcuts and selection into the studio
   - `System7Shell.tsx`: render `buildMenus` from `menuCommands.ts`, run items with `runMenuCommand`, one `keydown` listener using `shortcutCommand`, the dim overlay of design §7; remove `ForwardedCommand` and `onCommand` (design §3.4)
   - `system7.css`: disabled menu items without strike-through, positioned for the overlay
   - `fileCommands.ts`: remove `FileCommands.run` and the `ForwardedCommand` import; move every `createThemeCommand` import to `menuCommands.ts` and delete the shell's copy (design §3.4)

@@ -132,9 +132,20 @@ body {
   color: var(--light-bit);
 }
 
+/* Disabled items keep the dark text; the .s7-dim checkerboard over them does the dimming
+   (spec 05 Requirement 1.3: no opacity, no grey, no strike-through). */
 .s7-menu-item:disabled {
+  position: relative;
   color: var(--dark-bit);
-  text-decoration: line-through;
+}
+
+/* A 50% checkerboard of light 1x pixels over a disabled item (spec 05 design §7). */
+.s7-dim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  pointer-events: none;
 }
 
 /* Check mark column: a 16x16 pixel-art glyph (CHECK_MARK) in currentColor, so it inverts with a

@@ -123,12 +123,6 @@ describe("File menu commands", () => {
     expect(downloads).toHaveLength(1);
   });
 
-  it("run handles only the File commands of this module", () => {
-    const { commands } = setup();
-    expect(commands.run("file.openShowcase")).toBe(false);
-    expect(commands.run("go.next")).toBe(false);
-  });
-
   it("loadPlayerSource resolves virtual:hexcard-player under Vitest (text of dist-player/player.js, or null)", async () => {
     const source = await loadPlayerSource();
     expect(source === null || typeof source === "string").toBe(true);
@@ -148,8 +142,7 @@ describe("File menu commands", () => {
     const { store, modals, commands, downloads } = setup(undefined, async () => "/*FAKE_PLAYER*/");
     // A runtime change: the export holds the stack as it is now, with no prompt.
     store.applyRuntime({ type: "setFieldText", cardId: "crd_starter", layer: "card", partId: "prt_welcome", text: "</script><!-- typed" });
-    expect(commands.run("file.exportHtml")).toBe(true);
-    for (let i = 0; i < 200 && downloads.length === 0; i++) await flush();
+    expect(await commands.exportStandaloneHtml()).toBe(true);
     expect(modals.getSnapshot()).toEqual([]);
     expect(downloads).toHaveLength(1);
     expect(downloads[0].fileName).toBe("Current.html");

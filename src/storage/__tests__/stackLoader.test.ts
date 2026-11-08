@@ -3,7 +3,7 @@ import { createHistory } from "../../core/history.ts";
 import { parseHexTalk } from "../../core/parser.ts";
 import { createHexStore, type HexStore } from "../../core/store.ts";
 import { clearDecodedLayerCache, composeFrame, decodedLayerCacheSize } from "../../engine/graphics/bitmapCanvas.ts";
-import { createThemeCommand } from "../../ui/System7Shell.tsx";
+import { createThemeCommand } from "../../ui/menuCommands.ts";
 import { decodeStackFile, encodeStackFile } from "../stackFile.ts";
 import { DAMAGED_STACK_MESSAGE, checkStack, createStackLoader } from "../stackLoader.ts";
 import { makeStack } from "./fixtures.ts";

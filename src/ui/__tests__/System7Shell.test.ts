@@ -21,22 +21,30 @@ import {
   PUSH_BUTTON_MIN_WIDTH,
   PUSH_BUTTON_RIGHT_CAP,
   System7Shell,
-  THEME_NAMES,
   TEAR_OFF_DISTANCE,
   UiScaleContext,
-  buildMenus,
   gridSnapOffset,
   pushButtonLabelPadding,
   createModalManager,
-  createThemeCommand,
   defaultPalettePosition,
-  isEditBackgroundShortcut,
+  shellShortcutKey,
   shouldTearOff,
   tearOffThreshold,
   themeCssVariables,
   useUiScale,
-  type MenuState,
 } from "../System7Shell.tsx";
+import {
+  MENU_THEMES,
+  buildMenus,
+  createThemeCommand,
+  isReservedCommand,
+  type MenuCommand,
+  type MenuContext,
+  type MenuHandlers,
+  type ShellMenuHandlers,
+} from "../menuCommands.ts";
+import type { AuthoringTool, ThemePaletteName } from "../../core/schema.ts";
+import type { HexLayer } from "../../core/store.ts";
 
 // Read as plain text: Vitest's CSS handling turns `system7.css?raw` into "".
 const SHELL_SOURCE = readFileSync(new URL("../System7Shell.tsx", import.meta.url), "utf8");
@@ -75,10 +83,50 @@ function setup() {
   return { store, history, modals };
 }
 
+/** A menu context on the test stack, with the given tool, edit layer and theme. */
+function contextWith(options: { tool?: AuthoringTool; editLayer?: HexLayer; themeName?: ThemePaletteName } = {}): MenuContext {
+  const { store, history } = setup();
+  const state = store.getSnapshot();
+  const themeName = options.themeName ?? "ClassicPaper";
+  return {
+    state: {
+      ...state,
+      tool: options.tool ?? state.tool,
+      editLayer: options.editLayer ?? state.editLayer,
+      stack: { ...state.stack, themePalette: { name: themeName, ...THEME_PALETTES[themeName] } },
+    },
+    history,
+    backHistory: [],
+    paletteVisible: false,
+  };
+}
+
+/** Every command of the menus in `context`, in menu order. */
+function menuCommandsOf(context: MenuContext): MenuCommand[] {
+  return buildMenus(context, "other").flatMap((menu) => menu.entries.flatMap((entry) => (entry.kind === "item" ? [entry.command] : [])));
+}
+
+/** Handlers that record the commands they run; `paint.togglePalette` included for `shellShortcutKey`. */
+function recordingHandlers(): { handlers: MenuHandlers; ran: MenuCommand[] } {
+  const ran: MenuCommand[] = [];
+  const entries = menuCommandsOf(contextWith())
+    .filter((command) => !isReservedCommand(command))
+    .map((command) => [command, () => void ran.push(command)]);
+  return { handlers: Object.fromEntries(entries) as MenuHandlers, ran };
+}
+
+function shellHandlers(): ShellMenuHandlers {
+  const { "paint.togglePalette": _toggle, ...rest } = recordingHandlers().handlers;
+  return rest;
+}
+
 function render(parts: ReturnType<typeof setup>, extra: { scale?: number; children?: unknown } = {}): string {
   const { children, ...props } = extra;
   return renderToStaticMarkup(
-    createElement(System7Shell, { ...parts, ...props, patternIndex: 1, onPatternChange: () => {} }, children as never),
+    createElement(System7Shell, {
+      ...parts, ...props, patternIndex: 1, onPatternChange: () => {},
+      handlers: shellHandlers(), backHistory: () => [], platform: "other",
+    }, children as never),
   );
 }
 
@@ -86,54 +134,184 @@ function ScaleProbe() {
   return createElement("output", null, `k=${useUiScale()}`);
 }
 
-const baseState: MenuState = {
-  tool: "browse", editLayer: "card", themeName: "ClassicPaper",
-  canUndo: false, canRedo: false, paletteVisible: false,
-};
-
 describe("menus", () => {
-  it("has the eight menus of design spec §7 in order", () => {
-    expect(buildMenus(baseState).map((menu) => menu.label)).toEqual([
-      "Hex", "File", "Edit", "Go", "Tools", "Objects", "Paint", "AI Conjure",
-    ]);
+  it("renders the eight menu titles of the menu model in order", () => {
+    const html = render(setup());
+    const titles = [...html.matchAll(/aria-haspopup="menu" aria-expanded="false">([^<]+)<\/button>/g)].map((match) => match[1]);
+    expect(titles).toEqual(["Hex", "File", "Edit", "Go", "Tools", "Objects", "Paint", "AI Conjure"]);
   });
 
   it("lists the 12 tools in the Tools menu and checks the current one", () => {
-    const tools = buildMenus({ ...baseState, tool: "spray" }).find((menu) => menu.id === "tools")!;
+    const tools = buildMenus(contextWith({ tool: "spray" }), "other").find((menu) => menu.id === "tools")!;
     expect(tools.entries).toHaveLength(12);
     const checked = tools.entries.filter((entry) => entry.kind === "item" && entry.checked);
     expect(checked).toMatchObject([{ command: "tool:spray" }]);
   });
 
   it("offers the four themes and checks the current one", () => {
-    const hex = buildMenus({ ...baseState, themeName: "AmberCRT" }).find((menu) => menu.id === "hex")!;
+    const hex = buildMenus(contextWith({ themeName: "AmberCRT" }), "other").find((menu) => menu.id === "hex")!;
     const themes = hex.entries.filter((entry) => entry.kind === "item" && entry.command.startsWith("theme:"));
-    expect(themes.map((entry) => entry.kind === "item" && entry.command)).toEqual(THEME_NAMES.map((name) => `theme:${name}`));
+    expect(themes.map((entry) => entry.kind === "item" && entry.command)).toEqual(MENU_THEMES.map((name) => `theme:${name}`));
     expect(themes.filter((entry) => entry.kind === "item" && entry.checked)).toMatchObject([{ command: "theme:AmberCRT" }]);
   });
 
-  it("checks Edit Background in background mode and disables Undo without history", () => {
-    const edit = buildMenus({ ...baseState, editLayer: "background" }).find((menu) => menu.id === "edit")!;
+  it("checks Edit Background in background mode and disables Undo without history (spec 05 layout)", () => {
+    const edit = buildMenus(contextWith({ editLayer: "background" }), "other").find((menu) => menu.id === "edit")!;
     expect(edit.entries).toMatchObject([
-      { command: "edit.undo", disabled: true },
-      { command: "edit.redo", disabled: true },
+      { command: "edit.undo", disabled: true, shortcut: "Ctrl+Z" },
+      { command: "edit.redo", disabled: true, shortcut: "Ctrl+Shift+Z" },
       { kind: "separator" },
-      { command: "edit.background", checked: true, shortcut: "Ctrl+B" },
+      { command: "edit.background", checked: true, shortcut: "Ctrl+B", disabled: false },
+      { kind: "separator" },
+      { command: "edit.iconEditor", label: "Icon Editor...", disabled: true },
     ]);
   });
 });
 
-describe("shortcut and tear-off helpers", () => {
-  const key = { key: "b", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
-
-  it("accepts Cmd+B and Ctrl+B only", () => {
-    expect(isEditBackgroundShortcut({ ...key, ctrlKey: true })).toBe(true);
-    expect(isEditBackgroundShortcut({ ...key, metaKey: true, key: "B" })).toBe(true);
-    expect(isEditBackgroundShortcut(key)).toBe(false);
-    expect(isEditBackgroundShortcut({ ...key, ctrlKey: true, shiftKey: true })).toBe(false);
-    expect(isEditBackgroundShortcut({ ...key, ctrlKey: true, key: "n" })).toBe(false);
+describe("dimmed menu items (spec 05 Requirement 1.3, design §7)", () => {
+  it("draw a k-scaled checkerboard of light 1x pixels over every disabled item, and nothing over enabled ones", () => {
+    const context = contextWith();
+    const objects = buildMenus(context, "other").find((menu) => menu.id === "objects")!;
+    const disabled = objects.entries.filter((entry) => entry.kind === "item" && entry.disabled);
+    expect(disabled.map((entry) => entry.kind === "item" && entry.command)).toEqual([
+      "objects.objectInfo", "objects.deletePart", "objects.deleteCard",
+    ]);
+    for (const k of [1, 3]) {
+      const html = renderMenu(objects, k);
+      const overlays = html.match(/<svg class="s7-dim" width="100%" height="100%" shape-rendering="crispEdges" aria-hidden="true" focusable="false">/g) ?? [];
+      expect(overlays).toHaveLength(disabled.length);
+      expect(html.match(new RegExp(`<pattern id="[^"]+" width="2" height="2" patternUnits="userSpaceOnUse" patternTransform="scale\\(${k}\\)"><path d="M0 0h1v1H0zM1 1h1v1H1z" fill="var\\(--light-bit\\)"`, "g")))
+        .toHaveLength(disabled.length);
+      // Each overlay is the last child of its disabled button, after the shortcut cell.
+      expect(html.match(/<button type="button" class="s7-menu-item" role="menuitem" disabled="">[\s\S]*?<\/button>/g)!
+        .every((button) => button.includes('class="s7-dim"'))).toBe(true);
+      // Pattern ids are unique within the menu.
+      const ids = [...html.matchAll(/<pattern id="([^"]+)"/g)].map((match) => match[1]);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
   });
 
+  it("use no strike-through, opacity or grey: the overlay does the dimming", () => {
+    const disabledRule = SHELL_RULES.match(/\.s7-menu-item:disabled \{[^}]*\}/)![0];
+    expect(disabledRule).toContain("position: relative;");
+    expect(disabledRule).toContain("color: var(--dark-bit);");
+    expect(SHELL_RULES).not.toMatch(/line-through/);
+    expect(disabledRule).not.toMatch(/opacity|grey|gray/i);
+    expect(SHELL_RULES).toMatch(/\.s7-dim \{[^}]*position: absolute;[^}]*pointer-events: none;/);
+    // Disabled items do not invert on hover.
+    expect(SHELL_RULES).toMatch(/\.s7-menu-item:hover:not\(:disabled\) \{/);
+  });
+});
+
+describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
+  type Key = Parameters<typeof shellShortcutKey>[0] & { prevented: number };
+  const press = (init: Partial<Key>): Key => {
+    const event: Key = {
+      key: "", code: "", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, target: null, prevented: 0,
+      preventDefault() {
+        event.prevented++;
+      },
+      ...init,
+    };
+    return event;
+  };
+  /** A duck-typed element: `closest` finds a text input only when `textInput` is set. */
+  const element = (textInput: boolean) => ({ closest: (selector: string) => (textInput && selector.includes("textarea") ? {} : null) }) as unknown as EventTarget;
+
+  it("runs Edit Background for Ctrl+B and Cmd+B and prevents the browser default", () => {
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+      const { handlers, ran } = recordingHandlers();
+      const event = press({ key: "b", code: "KeyB", ...modifier, target: element(false) });
+      expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers })).toBe("edit.background");
+      expect(ran).toEqual(["edit.background"]);
+      expect(event.prevented).toBe(1);
+    }
+  });
+
+  it("prevents a disabled shortcut but does not run it (Undo without history)", () => {
+    const { handlers, ran } = recordingHandlers();
+    const event = press({ key: "z", code: "KeyZ", ctrlKey: true });
+    expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers })).toBeUndefined();
+    expect(ran).toEqual([]);
+    expect(event.prevented).toBe(1);
+  });
+
+  it("does nothing while a dialog or studio window is open, whatever has the focus (Requirement 16.3)", () => {
+    for (const target of [null, element(false)]) {
+      const { handlers, ran } = recordingHandlers();
+      let contextRead = false;
+      const event = press({ key: "b", code: "KeyB", ctrlKey: true, target });
+      const context = () => {
+        contextRead = true;
+        return contextWith();
+      };
+      expect(shellShortcutKey(event, { blocked: true, context, handlers })).toBeUndefined();
+      expect(ran).toEqual([]);
+      expect(event.prevented).toBe(0);
+      expect(contextRead).toBe(false);
+    }
+  });
+
+  it("leaves every studio shortcut to a focused text input (Requirements 16.1, 16.2)", () => {
+    const { handlers, ran } = recordingHandlers();
+    const { store, history } = setup();
+    store.setTool("button");
+    const selected: MenuContext = { state: { ...store.getSnapshot(), selectedPartId: "prt_any" }, history, backHistory: [], paletteVisible: false };
+    for (const init of [
+      { key: "b", code: "KeyB", ctrlKey: true },
+      { key: "z", code: "KeyZ", metaKey: true },
+      { key: "Z", code: "KeyZ", ctrlKey: true, shiftKey: true },
+      { key: "Delete", code: "Delete" },
+      { key: "Backspace", code: "Backspace" },
+    ]) {
+      const event = press({ ...init, target: element(true) });
+      expect(shellShortcutKey(event, { blocked: false, context: () => selected, handlers })).toBeUndefined();
+      expect(event.prevented).toBe(0);
+    }
+    expect(ran).toEqual([]);
+  });
+
+  it("maps Delete and Backspace to Delete Part only while a part is selected (Requirement 2.5)", () => {
+    const { store, history } = setup();
+    const none = contextWith();
+    const selected: MenuContext = {
+      state: { ...store.getSnapshot(), tool: "button", selectedPartId: "prt_any" }, history, backHistory: [], paletteVisible: false,
+    };
+    for (const key of ["Delete", "Backspace"]) {
+      const idle = recordingHandlers();
+      const free = press({ key, code: key });
+      expect(shellShortcutKey(free, { blocked: false, context: () => none, handlers: idle.handlers })).toBeUndefined();
+      expect(free.prevented).toBe(0); // left to the Browse-mode keyDown forwarding
+      const active = recordingHandlers();
+      const event = press({ key, code: key });
+      expect(shellShortcutKey(event, { blocked: false, context: () => selected, handlers: active.handlers })).toBe("objects.deletePart");
+      expect(active.ran).toEqual(["objects.deletePart"]);
+      expect(event.prevented).toBe(1);
+    }
+  });
+
+  it("leaves the arrow keys and the abort shortcut alone (Requirements 2.6, 16.4)", () => {
+    const { handlers, ran } = recordingHandlers();
+    for (const init of [
+      { key: "ArrowLeft", code: "ArrowLeft" },
+      { key: "ArrowRight", code: "ArrowRight" },
+      { key: ".", code: "Period", metaKey: true },
+      { key: ".", code: "Period", ctrlKey: true },
+    ]) {
+      const event = press(init);
+      expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers })).toBeUndefined();
+      expect(event.prevented).toBe(0);
+    }
+    expect(ran).toEqual([]);
+  });
+
+  it("is the shell's only keydown shortcut path: no other key test is left in the shell", () => {
+    expect(SHELL_SOURCE).not.toMatch(/isEditBackgroundShortcut|onCommand|ForwardedCommand/);
+    expect(SHELL_SOURCE.match(/addEventListener\("keydown"/g)).toHaveLength(2); // shortcuts + closing an open menu
+  });
+});
+
+describe("tear-off helpers", () => {
   it("tears off only after the pointer is dragged below the menu bar", () => {
     expect(shouldTearOff(20, 1)).toBe(false);
     expect(shouldTearOff(20 + TEAR_OFF_DISTANCE, 1)).toBe(false);
@@ -210,7 +388,7 @@ describe("menu title focus", () => {
 
 describe("themes", () => {
   it("maps each palette to the --dark-bit / --light-bit variables", () => {
-    for (const name of THEME_NAMES) {
+    for (const name of MENU_THEMES) {
       expect(themeCssVariables(THEME_PALETTES[name])).toEqual({
         "--dark-bit": THEME_PALETTES[name].darkBitHex,
         "--light-bit": THEME_PALETTES[name].lightBitHex,
@@ -371,7 +549,7 @@ describe("shell CSS draws only 1-bit pixels", () => {
 });
 
 describe("menu check marks", () => {
-  const menus = buildMenus({ ...baseState, tool: "pencil", editLayer: "background", themeName: "GreenPhosphor" });
+  const menus = buildMenus(contextWith({ tool: "pencil", editLayer: "background", themeName: "GreenPhosphor" }), "mac");
 
   it("render only text the bundled fonts cover, and no U+2713", () => {
     for (const menu of menus) {
@@ -403,14 +581,14 @@ describe("menu check marks", () => {
 
 describe("Tools menu tear-off line", () => {
   it("is an SVG pattern of alternating 1x pixels, scaled by k, not a border", () => {
-    const tools = buildMenus(baseState).find((menu) => menu.id === "tools")!;
+    const tools = buildMenus(contextWith(), "other").find((menu) => menu.id === "tools")!;
     const html = renderMenu(tools, 2);
     expect(html).toMatch(/<div class="s7-tear-strip" aria-hidden="true"><svg class="s7-tear-strip-art" width="100%" height="2" shape-rendering="crispEdges"/);
     expect(html).toMatch(/<pattern [^>]*width="2" height="1" patternUnits="userSpaceOnUse" patternTransform="scale\(2\)"><rect width="1" height="1" fill="currentColor"/);
     expect(SHELL_RULES).toMatch(/\.s7-tear-strip \{[^}]*height: calc\(1 \* var\(--px\)\);/);
     expect(SHELL_RULES.match(/\.s7-tear-strip \{[^}]*\}/)![0]).not.toMatch(/border/);
     // Other menus have no tear-off line.
-    expect(renderMenu(buildMenus(baseState)[0])).not.toContain("s7-tear-strip");
+    expect(renderMenu(buildMenus(contextWith(), "other")[0])).not.toContain("s7-tear-strip");
   });
 });
 

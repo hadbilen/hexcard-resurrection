@@ -3,10 +3,10 @@
  * and modal manager. Requirements: spec 04 2.2, 2.3, 2.4, 2.6.
  * Design: .kiro/specs/04-ui-audio-showcase/design.md §1.
  *
- * - State is read with `useSyncExternalStore`; the shell only calls `store.setTool`,
- *   `store.setEditLayer` (UI state) and `history.execute` / `undo` / `redo` (theme and undo).
- * - Menu items that belong to later tasks (file I/O, navigation, objects, Spellcaster) are
- *   forwarded to `onCommand`; the shell does not implement them.
+ * - State is read with `useSyncExternalStore`. The menus are the model of `menuCommands.ts`
+ *   (spec 05 design §6): the shell renders `buildMenus`, runs items and shortcuts with
+ *   `runMenuCommand` against the `handlers` it receives, and owns only the palette toggle.
+ * - Disabled items are dimmed with a 1-bit checkerboard overlay (spec 05 design §7).
  * - The modal manager is created by the composition root with `createModalManager()` so that the
  *   VM host (`showAnswer` / `showAsk`) and the message bus (`isModalOpen`) can use the same instance.
  */
@@ -24,13 +24,12 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import type { HexCommand, HexHistory } from "../core/history.ts";
-import { THEME_PALETTES, type AuthoringTool, type HexStack, type ThemePaletteName } from "../core/schema.ts";
-import type { HexLayer, HexStore } from "../core/store.ts";
+import type { HexHistory } from "../core/history.ts";
+import type { HexID } from "../core/schema.ts";
+import type { HexStore } from "../core/store.ts";
 import {
   FloatingTools,
   PixelIcon,
-  TOOLS,
   beginPointerDrag,
   clampPaletteOrigin,
   computeUiScale,
@@ -38,6 +37,17 @@ import {
   pixelRowsToPath,
   type Point,
 } from "./FloatingTools.tsx";
+import {
+  buildMenus,
+  handleShortcutKey,
+  runMenuCommand,
+  type MenuCommand,
+  type MenuContext,
+  type MenuHandlers,
+  type MenuModel,
+  type Platform,
+  type ShellMenuHandlers,
+} from "./menuCommands.ts";
 import "./system7.css";
 
 // ---------------------------------------------------------------------------------------------
@@ -94,32 +104,12 @@ export type UiStore = Omit<HexStore, "applyAuthoring" | "replaceStack">;
 export type ShellHistory = Pick<HexHistory, "execute" | "undo" | "redo" | "canUndo" | "canRedo" | "undoLabel" | "redoLabel">;
 
 // ---------------------------------------------------------------------------------------------
-// Themes (Requirement 2.4)
+// Themes (Requirement 2.4; the theme menu command is `createThemeCommand` in menuCommands.ts)
 // ---------------------------------------------------------------------------------------------
-
-export const THEME_NAMES: readonly ThemePaletteName[] = ["ClassicPaper", "AmberCRT", "GreenPhosphor", "MidnightHex"];
 
 /** CSS custom properties for a stack's palette. Custom properties are the only theme mechanism. */
 export function themeCssVariables(palette: { darkBitHex: string; lightBitHex: string }): CSSProperties {
   return { "--dark-bit": palette.darkBitHex, "--light-bit": palette.lightBitHex } as CSSProperties;
-}
-
-/** Authoring command that switches the stack theme; Undo restores the palette it replaced. */
-export function createThemeCommand(name: ThemePaletteName): HexCommand {
-  let previous: HexStack["themePalette"] | undefined;
-  return {
-    label: "Theme",
-    apply(stack) {
-      const { darkBitHex, lightBitHex } = THEME_PALETTES[name];
-      const current = stack.themePalette;
-      if (current.name === name && current.darkBitHex === darkBitHex && current.lightBitHex === lightBitHex) return stack;
-      previous = current;
-      return { ...stack, themePalette: { name, darkBitHex, lightBitHex } };
-    },
-    revert(stack) {
-      return previous === undefined ? stack : { ...stack, themePalette: previous };
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -615,143 +605,8 @@ function ModalLayer({ modals }: { modals: ModalManager }) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Menus (design spec §7.1)
+// Gesture helpers (the menu model and the shortcuts are in menuCommands.ts)
 // ---------------------------------------------------------------------------------------------
-
-/** Menu commands the shell forwards to `onCommand`; they are implemented by later tasks. */
-export type ForwardedCommand =
-  | "file.saveStackFile"
-  | "file.openStackFile"
-  | "file.copyShareLink"
-  | "file.exportHtml"
-  | "file.openShowcase"
-  | "go.first"
-  | "go.previous"
-  | "go.next"
-  | "go.last"
-  | "go.stackGraph"
-  | "objects.newButton"
-  | "objects.newField"
-  | "objects.objectInfo"
-  | "ai.conjure";
-
-export type ShellCommand =
-  | ForwardedCommand
-  | "hex.about"
-  | "edit.undo"
-  | "edit.redo"
-  | "edit.background"
-  | "paint.togglePalette"
-  | `tool:${AuthoringTool}`
-  | `theme:${ThemePaletteName}`;
-
-export type MenuEntry =
-  | { kind: "separator" }
-  | { kind: "item"; command: ShellCommand; label: string; shortcut?: string; checked?: boolean; disabled?: boolean };
-
-export interface MenuModel {
-  id: string;
-  label: string;
-  entries: readonly MenuEntry[];
-}
-
-export interface MenuState {
-  tool: AuthoringTool;
-  editLayer: HexLayer;
-  themeName: ThemePaletteName;
-  canUndo: boolean;
-  canRedo: boolean;
-  undoLabel?: string;
-  redoLabel?: string;
-  paletteVisible: boolean;
-}
-
-const item = (command: ShellCommand, label: string, extra: Partial<Extract<MenuEntry, { kind: "item" }>> = {}): MenuEntry => ({
-  kind: "item",
-  command,
-  label,
-  ...extra,
-});
-const SEPARATOR: MenuEntry = { kind: "separator" };
-
-/** The eight menus in menu-bar order, with check marks and enabled states taken from `state`. */
-export function buildMenus(state: MenuState): MenuModel[] {
-  return [
-    {
-      id: "hex",
-      label: "Hex",
-      entries: [
-        item("hex.about", "About HexCard"),
-        SEPARATOR,
-        ...THEME_NAMES.map((name) => item(`theme:${name}`, name, { checked: state.themeName === name })),
-      ],
-    },
-    {
-      id: "file",
-      label: "File",
-      entries: [
-        item("file.openShowcase", "Open Showcase Stack"),
-        SEPARATOR,
-        item("file.openStackFile", "Open Stack File"),
-        item("file.saveStackFile", "Save Stack File"),
-        SEPARATOR,
-        item("file.copyShareLink", "Copy Share Link"),
-        item("file.exportHtml", "Export Standalone HTML"),
-      ],
-    },
-    {
-      id: "edit",
-      label: "Edit",
-      entries: [
-        item("edit.undo", state.undoLabel ? `Undo ${state.undoLabel}` : "Undo", { disabled: !state.canUndo }),
-        item("edit.redo", state.redoLabel ? `Redo ${state.redoLabel}` : "Redo", { disabled: !state.canRedo }),
-        SEPARATOR,
-        item("edit.background", "Edit Background", { shortcut: "Ctrl+B", checked: state.editLayer === "background" }),
-      ],
-    },
-    {
-      id: "go",
-      label: "Go",
-      entries: [
-        item("go.first", "First"),
-        item("go.previous", "Prev"),
-        item("go.next", "Next"),
-        item("go.last", "Last"),
-        SEPARATOR,
-        item("go.stackGraph", "Stack Graph"),
-      ],
-    },
-    {
-      id: "tools",
-      label: "Tools",
-      entries: TOOLS.map((tool) => item(`tool:${tool.id}`, tool.label, { checked: state.tool === tool.id })),
-    },
-    {
-      id: "objects",
-      label: "Objects",
-      entries: [item("objects.newButton", "New Button"), item("objects.newField", "New Field"), SEPARATOR, item("objects.objectInfo", "Object Info")],
-    },
-    {
-      id: "paint",
-      label: "Paint",
-      entries: [item("paint.togglePalette", state.paletteVisible ? "Hide Tools Palette" : "Show Tools Palette")],
-    },
-    {
-      id: "ai",
-      label: "AI Conjure",
-      entries: [item("ai.conjure", "Conjure Script")],
-    },
-  ];
-}
-
-// ---------------------------------------------------------------------------------------------
-// Keyboard and gesture helpers
-// ---------------------------------------------------------------------------------------------
-
-/** Cmd+B / Ctrl+B (Requirement 2.2). */
-export function isEditBackgroundShortcut(event: { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }): boolean {
-  return (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "b";
-}
 
 /** Pixels (at 1x) the pointer must travel below the menu bar before the Tools menu detaches. */
 export const TEAR_OFF_DISTANCE = 8;
@@ -785,20 +640,21 @@ export interface System7ShellProps {
   /** Index into `PATTERNS`; owned by the composition root so the paint controller can read it. */
   patternIndex: number;
   onPatternChange: (index: number) => void;
-  /** Receives menu commands implemented outside the shell. */
-  onCommand?: (command: ForwardedCommand) => void;
+  /** Spec 05 design §3.4: every menu handler except the palette toggle, which the shell owns. */
+  handlers: ShellMenuHandlers;
+  /** The message bus back history, read by the enabling rule of Go > Back (Requirement 11.4). */
+  backHistory: () => readonly HexID[];
+  /** Shortcut labels: `Cmd+B` on macOS, `Ctrl+B` elsewhere (Requirement 2.3). */
+  platform: Platform;
+  /**
+   * True while a studio window (Object Inspector, Stack Graph, showcase chooser) is open: studio
+   * shortcuts then do nothing, even when the focus is not inside the window (Requirement 16.3).
+   */
+  isWindowOpen?: () => boolean;
   /** The card area. Reads the shared UI scale with `useUiScale()`. */
   children?: ReactNode;
   /** Fixed UI scale k instead of the one computed from the window (tests, embedding). */
   scale?: number;
-}
-
-function isTool(value: string): value is AuthoringTool {
-  return TOOLS.some((tool) => tool.id === value);
-}
-
-function isTheme(value: string): value is ThemePaletteName {
-  return (THEME_NAMES as readonly string[]).includes(value);
 }
 
 /**
@@ -843,9 +699,30 @@ function TearOffStrip() {
   );
 }
 
-/** An open menu: its items, check marks drawn as pixel art, and the tear-off line for Tools. */
-export function MenuDropdown({ menu, onRun }: { menu: MenuModel; onRun: (command: ShellCommand) => void }) {
+/**
+ * Spec 05 design §7: the dim overlay of a disabled menu item. Every second 1x pixel, in a
+ * checkerboard, is painted light (a 2x2 tile enlarged k times), so the text and the check mark
+ * keep half of their dark pixels. The item box is on the k-pixel grid, so the pattern is too.
+ * No opacity, no grey and no strike-through.
+ */
+function DimOverlay({ patternId }: { patternId: string }) {
   const k = useUiScale();
+  return (
+    <svg className="s7-dim" width="100%" height="100%" shapeRendering="crispEdges" aria-hidden="true" focusable="false">
+      <defs>
+        <pattern id={patternId} width={2} height={2} patternUnits="userSpaceOnUse" patternTransform={`scale(${k})`}>
+          <path d="M0 0h1v1H0zM1 1h1v1H1z" fill="var(--light-bit)" />
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill={`url(#${patternId})`} />
+    </svg>
+  );
+}
+
+/** An open menu: its items, check marks drawn as pixel art, and the tear-off line for Tools. */
+export function MenuDropdown({ menu, onRun }: { menu: MenuModel; onRun: (command: MenuCommand) => void }) {
+  const k = useUiScale();
+  const dimId = useId();
   return (
     <div className="s7-dropdown" role="menu" aria-label={menu.label}>
       {menu.id === "tools" ? <TearOffStrip /> : null}
@@ -867,6 +744,7 @@ export function MenuDropdown({ menu, onRun }: { menu: MenuModel; onRun: (command
             </span>
             <span className="s7-menu-label">{entry.label}</span>
             <span className="s7-shortcut">{entry.shortcut ?? ""}</span>
+            {entry.disabled ? <DimOverlay patternId={`${dimId}-${index}`} /> : null}
           </button>
         ),
       )}
@@ -875,15 +753,28 @@ export function MenuDropdown({ menu, onRun }: { menu: MenuModel; onRun: (command
 }
 
 /**
+ * One step of the shell's window `keydown` listener (spec 05 Requirements 2.4, 2.5, 16.1-16.3):
+ * nothing while a dialog or studio window is open (`blocked`), otherwise `handleShortcutKey`,
+ * which ignores text-input targets and runs only enabled items. Returns the command that ran.
+ */
+export function shellShortcutKey(
+  event: Parameters<typeof handleShortcutKey>[0],
+  options: { blocked: boolean; context: () => MenuContext; handlers: MenuHandlers },
+): MenuCommand | undefined {
+  if (options.blocked) return undefined;
+  return handleShortcutKey(event, options.context(), options.handlers);
+}
+
+/**
  * Keeps menu titles from taking focus on a pointer press (System 7 menus never take focus), so
  * a title can only be focused, and shown inverted through `:focus-visible`, from the keyboard.
  */
 const keepFocusOnPointerPress = (event: { preventDefault(): void }): void => event.preventDefault();
 
-export function System7Shell({ store, history, modals, patternIndex, onPatternChange, onCommand, children, scale }: System7ShellProps) {
+export function System7Shell({
+  store, history, modals, patternIndex, onPatternChange, handlers, backHistory, platform, isWindowOpen, children, scale,
+}: System7ShellProps) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  const modalQueue = useSyncExternalStore(modals.subscribe, modals.getSnapshot, modals.getSnapshot);
-  const modalOpen = modalQueue.length > 0;
   const viewportScale = useViewportScale();
   const k = scale ?? viewportScale;
   const scaleRef = useRef(k);
@@ -901,19 +792,35 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
   const palette = state.stack.themePalette;
   const editBackground = state.editLayer === "background";
 
-  const toggleEditBackground = (): void => store.setEditLayer(store.getSnapshot().editLayer === "background" ? "card" : "background");
+  /** The shell's handlers plus its own palette toggle. */
+  const allHandlers: MenuHandlers = { ...handlers, "paint.togglePalette": () => setPaletteVisible((visible) => !visible) };
+  /** Requirement 1.4: enabled states from the live snapshot, the history and the back history. */
+  const menuContext = (): MenuContext => ({
+    state: store.getSnapshot(),
+    history,
+    backHistory: backHistory(),
+    paletteVisible,
+  });
+  // The window listener below reads the latest render's handlers and context.
+  const latest = useRef({ allHandlers, menuContext });
+  latest.current = { allHandlers, menuContext };
 
-  // Requirement 2.2: Cmd+B / Ctrl+B toggles Edit Background (not while a dialog is open).
+  // Spec 05 Requirements 2.4, 2.5 and 16: one listener for every studio shortcut. It does nothing
+  // while a dialog or studio window is open (key presses inside a studio window do not even reach
+  // it), and `shortcutCommand` ignores text-input targets, so their editing keys stay theirs.
+  // The abort shortcut and Browse-mode keyDown forwarding stay in CardViewport's own listener.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (modalOpen || !isEditBackgroundShortcut(event)) return;
-      event.preventDefault();
-      toggleEditBackground();
+      const { allHandlers: current, menuContext: context } = latest.current;
+      shellShortcutKey(event, {
+        blocked: modals.isOpen() || (isWindowOpen?.() ?? false),
+        context,
+        handlers: current,
+      });
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modalOpen, store]);
+  }, [modals, isWindowOpen]);
 
   // Close an open menu on an outside press or Escape.
   useEffect(() => {
@@ -941,27 +848,10 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
     );
   }, [k]);
 
-  const runCommand = (command: ShellCommand): void => {
+  /** A chosen item runs only if its enabling rule holds on the live snapshot (Requirement 1.3). */
+  const runCommand = (command: MenuCommand): void => {
     setOpenMenu(null);
-    if (command.startsWith("tool:")) {
-      const tool = command.slice("tool:".length);
-      if (isTool(tool)) store.setTool(tool);
-    } else if (command.startsWith("theme:")) {
-      const theme = command.slice("theme:".length);
-      if (isTheme(theme)) history.execute(createThemeCommand(theme));
-    } else if (command === "edit.undo") {
-      history.undo();
-    } else if (command === "edit.redo") {
-      history.redo();
-    } else if (command === "edit.background") {
-      toggleEditBackground();
-    } else if (command === "paint.togglePalette") {
-      setPaletteVisible((visible) => !visible);
-    } else if (command === "hex.about") {
-      void modals.alert("HexCard 2.0.0\nA resurrection of HyperCard (1987).");
-    } else {
-      onCommand?.(command as ForwardedCommand);
-    }
+    runMenuCommand(command, menuContext(), allHandlers);
   };
 
   /** Requirement 2.3: press on the Tools header and drag below the menu bar to detach the palette. */
@@ -996,16 +886,7 @@ export function System7Shell({ store, history, modals, patternIndex, onPatternCh
     stopGesture.current = finish;
   };
 
-  const menus = buildMenus({
-    tool: state.tool,
-    editLayer: state.editLayer,
-    themeName: palette.name,
-    canUndo: history.canUndo(),
-    canRedo: history.canRedo(),
-    undoLabel: history.undoLabel(),
-    redoLabel: history.redoLabel(),
-    paletteVisible,
-  });
+  const menus: MenuModel[] = buildMenus({ state, history, backHistory: backHistory(), paletteVisible }, platform);
 
   return (
     <UiScaleContext value={k}>

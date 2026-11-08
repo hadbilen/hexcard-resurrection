@@ -36,6 +36,7 @@ import { stripHash } from "./storage/urlCodec.ts";
 import { createBrowserFileAccess, createChangeTracker, createFileCommands, loadShareHash } from "./ui/fileCommands.ts";
 import { createStarterStack } from "./ui/starterStack.ts";
 import { openInitialStack, startStudio } from "./ui/startup.ts";
+import { createMenuHandlers, detectPlatform } from "./ui/menuCommands.ts";
 import { createScriptErrorReporter, createStudioWindows } from "./ui/ObjectInspector.tsx";
 import { createModalManager } from "./ui/System7Shell.tsx";
 import { createEffectStage, createMouseTracker, createVmHost } from "./ui/vmHost.ts";
@@ -154,6 +155,17 @@ async function main(): Promise<void> {
 
   const uiStore = createUiStoreView(store);
   const readyBus: MessageBus = bus; // `bus` is a `let`, so its narrowing does not reach the closure below
+  // Spec 05 design §3.5: every menu item's handler, built from the narrowed store view (no
+  // applyAuthoring / replaceStack); File > New Stack loads through the file commands' loader.
+  const menuHandlers = createMenuHandlers({
+    store: uiStore,
+    history,
+    bus: readyBus,
+    windows,
+    files: fileCommands,
+    modals,
+  });
+  const platform = detectPlatform(navigator);
   await startStudio({
     loadFonts: () => fonts,
     onFontError: (error) => console.error("HexCard: the bundled fonts could not be loaded; card text uses fallback fonts", error),
@@ -174,9 +186,8 @@ async function main(): Promise<void> {
               patternIndex = index;
             }}
             onReady={resolve}
-            onCommand={(command) => {
-              fileCommands.run(command);
-            }}
+            handlers={menuHandlers}
+            platform={platform}
             showcases={showcases}
             onOpenShowcase={openShowcase}
           />

@@ -13,7 +13,7 @@ import type { HexStore } from "../core/store.ts";
 import { decodeStackFile, encodeStackFile, STACK_FILE_EXTENSION, STACK_FILE_MIME_TYPE, stackFileName } from "../storage/stackFile.ts";
 import type { LoadStackResult, StackLoader } from "../storage/stackLoader.ts";
 import { MAX_SHARE_LINK_LENGTH, buildShareLink, decodeSharePayload, readShareHash } from "../storage/urlCodec.ts";
-import type { ForwardedCommand, ModalManager } from "./System7Shell.tsx";
+import type { ModalManager } from "./System7Shell.tsx";
 
 export interface PickedFile {
   text(): Promise<string>;
@@ -93,9 +93,8 @@ export interface FileCommandOptions {
   loadPlayer?: () => Promise<string | null>;
 }
 
+/** Called directly by the menu handlers of `menuCommands.ts` (spec 05 design §6.2). */
 export interface FileCommands {
-  /** Runs a File command of this task; returns false for commands it does not handle. */
-  run(command: ForwardedCommand): boolean;
   /** Resolves true once the file was offered as a download, false when it could not be encoded. */
   saveStackFile(): Promise<boolean>;
   openStackFile(): Promise<LoadStackResult | undefined>;
@@ -235,24 +234,6 @@ export function createFileCommands({
   };
 
   return {
-    run(command) {
-      switch (command) {
-        case "file.saveStackFile":
-          void saveStackFile();
-          return true;
-        case "file.openStackFile":
-          void openStackFile();
-          return true;
-        case "file.copyShareLink":
-          void copyShareLink();
-          return true;
-        case "file.exportHtml":
-          void exportStandaloneHtml();
-          return true;
-        default:
-          return false;
-      }
-    },
     saveStackFile,
     openStackFile,
     copyShareLink,
