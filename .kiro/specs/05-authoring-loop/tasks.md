@@ -7,7 +7,7 @@
   - Tests in `store.test.ts` and `history.test.ts`: selection rules, current card after execute / undo / redo, unchanged behaviour of commands without `currentCardAfter`
   - _Requirements: 10.2, 13.2, 13.3, 13.4, 14.1_
 
-- [ ] 2. Extend the message bus with command dispatches
+- [x] 2. Extend the message bus with command dispatches
   - `src/core/messageBus.ts`: `runCommand(label, task)` as a queued top-level dispatch, and `changeCardBy(ctx, change)` with the message orders of design §5 (design §3.3)
   - Command entries in the FIFO queue: overflow, abort and error reporting as in design §3.3
   - Tests in `messageBus.test.ts`: FIFO order with posted messages, abort of queued and running commands, message orders for a new card, a new background and a deleted card, no commit after an abort, a script error or a handler's `go`

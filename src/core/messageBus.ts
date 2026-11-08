@@ -14,7 +14,7 @@
  */
 import type { HexHandlerNode } from "./ast.ts";
 import type { HexCard, HexFieldPart, HexID, HexPart } from "./schema.ts";
-import type { HexLayer, HexRuntimeState, HexStore } from "./store.ts";
+import { HexMutationError, type HexLayer, type HexRuntimeState, type HexStore } from "./store.ts";
 import {
   createDispatchContext,
   HexAbortError,
@@ -48,6 +48,18 @@ export interface BackTarget {
 
 /** A card id, or `go back`. */
 export type CardChangeTarget = HexID | BackTarget;
+
+/** Spec 05: the structural card change of `changeCardBy`. */
+export interface CardChangeBy {
+  /** The card that is current after `commit`. */
+  cardId: HexID;
+  /** Its background (after `commit`). */
+  backgroundId: HexID;
+  /** True for New Card / New Background: `newCard` is sent to `cardId` after the commit. */
+  isNew: boolean;
+  /** Runs exactly one `history.execute` whose command makes `cardId` current. */
+  commit: () => void;
+}
 
 /** Most pending entries the queue holds; the oldest entry is dropped on overflow (§3.2 rule 3). */
 export const MAX_QUEUE_LENGTH = 32;
@@ -115,7 +127,25 @@ export interface MessageBus {
    * 2.7), and does nothing at all when there is none.
    */
   changeCard(target: CardChangeTarget, ctx: DispatchContext, transition?: () => Promise<void>): Promise<void>;
-  /** Cmd/Ctrl+. or a tool switch: aborts the running dispatch and clears the queue. */
+  /**
+   * Spec 05 (design spec §3.2 rule 10). Queues `task` as one top-level dispatch with its own
+   * DispatchContext, in FIFO order with posted messages (a discrete entry for the overflow rule of
+   * §3.2 rule 3). Script errors are reported through `onError` with the message
+   * `{ name: label, params: [], targetId: <current card> }`; aborts are not reported.
+   */
+  runCommand(label: string, task: (ctx: DispatchContext) => Promise<void>): void;
+  /**
+   * Spec 05. A structural card change inside a dispatch (New Card, New Background, Delete Card):
+   * 1. `closeCard` to the current card, then `closeBackground` if `backgroundId` differs from its background;
+   * 2. if the dispatch was aborted, throw HexAbortError; if the current card changed meanwhile, return
+   *    without calling `commit`;
+   * 3. `commit()`: exactly one `history.execute`, whose command makes `cardId` current (throws if it did not);
+   * 4. `newCard` to `cardId` when `isNew`, `openBackground` if the background changed, `openCard`.
+   * All messages are nested dispatches sharing `ctx` (§3.2 rule 5). The departing card is pushed onto
+   * the back history by the store subscriber.
+   */
+  changeCardBy(ctx: DispatchContext, change: CardChangeBy): Promise<void>;
+  /** Cmd/Ctrl+. or a tool switch: aborts the running dispatch and clears the queue (command entries included). */
   abort(): void;
   /**
    * Requirement 2.9: opens the stack in the store. Aborts the running dispatch, clears the queue
@@ -132,7 +162,7 @@ export interface MessageBus {
   buildPath(targetId: HexID): HexID[];
   /** True while a dispatch runs (including while it is suspended). */
   isRunning(): boolean;
-  /** Number of queued messages. */
+  /** Number of queued entries (messages and command dispatches). */
   pendingCount(): number;
   /** Copy of the back history, oldest first (the last entry is what `go back` tries first). */
   backHistory(): readonly HexID[];
@@ -236,6 +266,20 @@ export function isAbortShortcut(event: { key: string; metaKey: boolean; ctrlKey:
   return event.key === "." && (event.metaKey || event.ctrlKey);
 }
 
+/**
+ * Spec 05: a queued command dispatch (design spec §3.2 rule 10). A class, so the queue can tell it
+ * from a HexMessage with `instanceof`; it never leaves the bus.
+ */
+class CommandEntry {
+  readonly label: string;
+  readonly task: (ctx: DispatchContext) => Promise<void>;
+
+  constructor(label: string, task: (ctx: DispatchContext) => Promise<void>) {
+    this.label = label;
+    this.task = task;
+  }
+}
+
 const defaultScheduleInterval: IntervalScheduler = (callback, ms) => {
   const handle = setInterval(callback, ms);
   return () => clearInterval(handle);
@@ -260,7 +304,8 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
   const onError = options.onError ?? ((error: unknown) => console.error(error));
   const scheduleInterval = options.scheduleInterval ?? defaultScheduleInterval;
 
-  const queue: HexMessage[] = [];
+  /** FIFO of posted messages and command dispatches (§3.2 rules 3 and 10). */
+  const queue: (HexMessage | CommandEntry)[] = [];
   let running = false;
   let controller: AbortController | null = null;
 
@@ -343,31 +388,56 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
     }
   }
 
+  /** Spec 05: one command dispatch, with its own DispatchContext and AbortController. */
+  async function runCommandEntry(entry: CommandEntry): Promise<void> {
+    const own = new AbortController();
+    controller = own;
+    const ctx = createDispatchContext({ abortSignal: own.signal, globals });
+    try {
+      await entry.task(ctx);
+    } catch (error) {
+      if (!(error instanceof HexAbortError)) {
+        onError(error, { name: entry.label, params: [], targetId: store.getSnapshot().currentCardId });
+      }
+    } finally {
+      ctx.pendingVisualEffect = null;
+      if (controller === own) controller = null;
+    }
+  }
+
   async function drain(): Promise<void> {
     running = true;
     try {
-      for (let msg = queue.shift(); msg; msg = queue.shift()) {
-        if (!isSkippedOpenMessage(msg)) await runTopLevel(msg);
+      for (let entry = queue.shift(); entry; entry = queue.shift()) {
+        if (entry instanceof CommandEntry) await runCommandEntry(entry);
+        else if (!isSkippedOpenMessage(entry)) await runTopLevel(entry);
       }
     } finally {
       running = false;
     }
   }
 
+  /** Appends `entry`; on overflow the oldest entry (message or command) is dropped with a warning. */
+  function push(entry: HexMessage | CommandEntry): void {
+    queue.push(entry);
+    if (queue.length > MAX_QUEUE_LENGTH) {
+      const dropped = queue.shift();
+      const what = dropped instanceof CommandEntry ? `menu command "${dropped.label}"` : `message "${dropped?.name}"`;
+      warn(`HexCard message queue is full (${MAX_QUEUE_LENGTH}); dropped the oldest ${what}`);
+    }
+  }
+
   function enqueue(msg: HexMessage): void {
     const kind = msg.name.toLowerCase();
     if (CONTINUOUS_MESSAGES.has(kind)) {
-      const pending = queue.findIndex((entry) => entry.name.toLowerCase() === kind);
+      // Coalescing applies to messages only; command entries are never replaced.
+      const pending = queue.findIndex((entry) => !(entry instanceof CommandEntry) && entry.name.toLowerCase() === kind);
       if (pending >= 0) {
         queue[pending] = msg; // keep the queue position, take the newest target and params
         return;
       }
     }
-    queue.push(msg);
-    if (queue.length > MAX_QUEUE_LENGTH) {
-      const dropped = queue.shift();
-      warn(`HexCard message queue is full (${MAX_QUEUE_LENGTH}); dropped the oldest message "${dropped?.name}"`);
-    }
+    push(msg);
   }
 
   /** Requirement 2.6: a Browse-tool click in an unlocked field never becomes a mouse message. */
@@ -427,8 +497,40 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
       await bus.sendNested({ name: "openCard", params: [], targetId: to.id }, ctx);
     },
 
+    runCommand(label, task) {
+      push(new CommandEntry(label, task));
+      if (!running) void drain();
+    },
+
+    async changeCardBy(ctx, change) {
+      const before = store.getSnapshot();
+      const from = before.stack.cards.find((card) => card.id === before.currentCardId);
+      if (!from) throw new HexMutationError(`No current card "${before.currentCardId}"`);
+      const backgroundChanges = from.backgroundId !== change.backgroundId;
+      const changesBefore = cardChanges;
+
+      await bus.sendNested({ name: "closeCard", params: [], targetId: from.id }, ctx);
+      if (backgroundChanges) await bus.sendNested({ name: "closeBackground", params: [], targetId: from.id }, ctx);
+      if (ctx.abortSignal.aborted) throw new HexAbortError();
+      // A handler's `go` (even one that came back to the same card) cancels the structural change.
+      if (cardChanges !== changesBefore) return;
+
+      change.commit(); // the store listener below pushes `from` onto the back history
+      const after = store.getSnapshot();
+      const to = after.stack.cards.find((card) => card.id === after.currentCardId);
+      if (!to || to.id !== change.cardId || to.backgroundId !== change.backgroundId) {
+        throw new HexMutationError(
+          `The structural change did not make card "${change.cardId}" on background "${change.backgroundId}" current`,
+        );
+      }
+
+      if (change.isNew) await bus.sendNested({ name: "newCard", params: [], targetId: to.id }, ctx);
+      if (backgroundChanges) await bus.sendNested({ name: "openBackground", params: [], targetId: to.id }, ctx);
+      await bus.sendNested({ name: "openCard", params: [], targetId: to.id }, ctx);
+    },
+
     abort() {
-      queue.length = 0;
+      queue.length = 0; // command entries are dropped with the messages
       openSequence = null; // its queued messages are gone with the queue
       controller?.abort();
     },

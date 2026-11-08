@@ -14,8 +14,9 @@ import {
   type HexMessage,
   type MessageBus,
 } from "../messageBus.ts";
-import type { HexButtonPart, HexCard, HexFieldPart, HexStack } from "../schema.ts";
-import { createHexStore, readFieldText, type CompiledScript } from "../store.ts";
+import { createHistory, type HexCommand } from "../history.ts";
+import type { HexBackground, HexButtonPart, HexCard, HexFieldPart, HexStack } from "../schema.ts";
+import { createHexStore, HexMutationError, readFieldText, type CompiledScript } from "../store.ts";
 import {
   createDispatchContext,
   resolveObjectTarget,
@@ -135,6 +136,7 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
   const depths: number[] = [];
   const contexts = new Set<DispatchContext>();
   const errors: unknown[] = [];
+  const errorMessages: HexMessage[] = [];
   const warnings: string[] = [];
   const pendingAnswers: (() => void)[] = [];
   const env = { visible: options.visible ?? true, modal: options.modal ?? false };
@@ -190,7 +192,10 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
           idleTick = undefined;
         };
       },
-    onError: (error) => errors.push(error),
+    onError: (error, message) => {
+      errors.push(error);
+      errorMessages.push(message);
+    },
     warn: (message) => warnings.push(message),
   });
 
@@ -202,7 +207,7 @@ function setup(scripts: ScriptSet, options: SetupOptions = {}) {
   };
 
   return {
-    store, bus, log, depths, contexts, errors, warnings, env, pendingAnswers, releaseAnswers,
+    store, bus, log, depths, contexts, errors, errorMessages, warnings, env, pendingAnswers, releaseAnswers,
     tickIdle: () => idleTick?.(),
   };
 }
@@ -951,5 +956,303 @@ describe("opening the current stack", () => {
     await settle();
     expect(log).toEqual([]);
     expect(bus.pendingCount()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Command dispatches (spec 05: design §3.3 and §5, design spec §3.2 rule 10)
+// ---------------------------------------------------------------------------------------------
+
+describe("command dispatches (spec 05)", () => {
+  const lifecycle: Scripts = {
+    deleteCard: [], closeCard: [], closeBackground: [], newCard: [], openBackground: [], openCard: [],
+  };
+  /** A pass whose name differs from its handler's: a real HexScriptError from the VM. */
+  const scriptError = pass("somethingElse");
+
+  const newBackground = (id: string): HexBackground => ({
+    id, name: id, bitmap: emptyBitmap, scriptSource: "", cantDelete: false, parts: [],
+  });
+
+  /** New Card / New Background fake: inserts `added` after `afterId`, optionally appending `background`. */
+  function insertCardCommand(afterId: string, added: HexCard, background?: HexBackground): HexCommand {
+    return {
+      label: background ? "New Background" : "New Card",
+      apply(stack) {
+        const index = stack.cards.findIndex((c) => c.id === afterId);
+        if (index < 0) throw new HexMutationError(`No card "${afterId}"`);
+        const cards = [...stack.cards];
+        cards.splice(index + 1, 0, added);
+        return { ...stack, cards, backgrounds: background ? [...stack.backgrounds, background] : stack.backgrounds };
+      },
+      revert: (stack) => ({
+        ...stack,
+        cards: stack.cards.filter((c) => c.id !== added.id),
+        backgrounds: background ? stack.backgrounds.filter((b) => b.id !== background.id) : stack.backgrounds,
+      }),
+      currentCardAfter: (step) => (step === "apply" ? added.id : afterId),
+    };
+  }
+
+  /** Delete Card fake: removes `cardId` (and its background when no other card uses it). */
+  function deleteCardCommand(cardId: string, destinationId: string): HexCommand {
+    let removed: { card: HexCard; index: number; background?: { value: HexBackground; index: number } } | undefined;
+    return {
+      label: "Delete Card",
+      apply(stack) {
+        const index = stack.cards.findIndex((c) => c.id === cardId);
+        if (index < 0) throw new HexMutationError(`No card "${cardId}"`);
+        const deleted = stack.cards[index];
+        const shared = stack.cards.some((c) => c.id !== cardId && c.backgroundId === deleted.backgroundId);
+        const bgIndex = shared ? -1 : stack.backgrounds.findIndex((b) => b.id === deleted.backgroundId);
+        removed = { card: deleted, index, background: bgIndex >= 0 ? { value: stack.backgrounds[bgIndex], index: bgIndex } : undefined };
+        return {
+          ...stack,
+          cards: stack.cards.filter((c) => c.id !== cardId),
+          backgrounds: bgIndex >= 0 ? stack.backgrounds.filter((_, i) => i !== bgIndex) : stack.backgrounds,
+        };
+      },
+      revert(stack) {
+        if (!removed) throw new HexMutationError("Delete Card was never applied");
+        const cards = [...stack.cards];
+        cards.splice(removed.index, 0, removed.card);
+        const backgrounds = [...stack.backgrounds];
+        if (removed.background) backgrounds.splice(removed.background.index, 0, removed.background.value);
+        return { ...stack, cards, backgrounds };
+      },
+      currentCardAfter: (step) => (step === "apply" ? destinationId : cardId),
+    };
+  }
+
+  /** Runs New Card (or New Background) after crd_1 as one command dispatch; `commit` is logged. */
+  function runNewCard(t: ReturnType<typeof setup>, options: { background?: boolean; script?: Scripts } = {}) {
+    const history = createHistory(t.store);
+    const background = options.background ? newBackground("bkg_new") : undefined;
+    const added = card("crd_new", background?.id ?? "bkg_1", script(options.script ?? lifecycle));
+    const command = insertCardCommand(t.store.getSnapshot().currentCardId, added, background);
+    t.bus.runCommand(command.label, (ctx) => t.bus.changeCardBy(ctx, {
+      cardId: added.id, backgroundId: added.backgroundId, isNew: true,
+      commit: () => {
+        t.log.push("commit");
+        history.execute(command);
+      },
+    }));
+    return history;
+  }
+
+  const cardIds = (t: ReturnType<typeof setup>): string[] => t.store.getSnapshot().stack.cards.map((c) => c.id);
+
+  it("runs a command in FIFO order with posted messages, in its own top-level context", async () => {
+    const t = setup({ crd_1: { mouseUp: [answer], keyDown: [] } });
+    const commandContexts: DispatchContext[] = [];
+    t.bus.post(msg("mouseUp", "crd_1"));
+    t.bus.post(msg("idle", "crd_1"));
+    t.bus.runCommand("Go Next", async (ctx) => {
+      commandContexts.push(ctx);
+      t.log.push("command");
+    });
+    t.bus.post(msg("idle", "crd_1")); // coalesces with the first idle, never with the command entry
+    t.bus.post(msg("keyDown", "crd_1", "a"));
+    expect(t.bus.pendingCount()).toBe(3);
+
+    await t.releaseAnswers();
+    expect(t.log).toEqual(["crd_1.mouseUp", "command", "crd_1.keyDown(a)"]);
+    expect(commandContexts).toHaveLength(1);
+    expect(commandContexts[0].depth).toBe(0);
+    expect(t.contexts.has(commandContexts[0])).toBe(false);
+    expect(t.bus.isRunning()).toBe(false);
+  });
+
+  it("counts a command as a discrete entry for the overflow rule", async () => {
+    const t = setup({ crd_1: { mouseUp: [answer], mouseDown: [] } });
+    t.bus.post(msg("mouseUp", "crd_1"));
+    t.bus.runCommand("New Card", async () => {
+      t.log.push("command");
+    });
+    for (let i = 0; i < MAX_QUEUE_LENGTH; i += 1) t.bus.post(msg("mouseDown", "crd_1", i));
+    expect(t.bus.pendingCount()).toBe(MAX_QUEUE_LENGTH);
+    expect(t.warnings).toEqual([`HexCard message queue is full (${MAX_QUEUE_LENGTH}); dropped the oldest menu command "New Card"`]);
+
+    await t.releaseAnswers();
+    expect(t.log).not.toContain("command");
+  });
+
+  it("abort drops queued commands and stops a running one without reporting an error", async () => {
+    const t = setup({ crd_1: { doIt: [answer] } });
+    t.bus.runCommand("First", async (ctx) => {
+      await t.bus.sendNested(msg("doIt", "crd_1"), ctx);
+      t.log.push("after doIt");
+    });
+    t.bus.runCommand("Second", async () => {
+      t.log.push("second");
+    });
+    await settle();
+    expect(t.bus.isRunning()).toBe(true);
+    expect(t.bus.pendingCount()).toBe(1);
+
+    t.bus.abort();
+    await settle();
+    t.pendingAnswers.splice(0).forEach((release) => release());
+    await settle();
+    expect(t.log).toEqual(["crd_1.doIt"]);
+    expect(t.errors).toEqual([]);
+    expect(t.bus.isRunning()).toBe(false);
+    expect(t.bus.pendingCount()).toBe(0);
+  });
+
+  it("reports a script error with the command label and the current card", async () => {
+    const t = setup({ crd_2: { doIt: [scriptError] } });
+    t.store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    t.bus.runCommand("Delete Card", (ctx) => t.bus.sendNested(msg("doIt", "crd_2"), ctx));
+    await settle();
+    expect(t.errors).toHaveLength(1);
+    expect((t.errors[0] as Error).name).toBe("HexScriptError");
+    expect(t.errorMessages).toEqual([{ name: "Delete Card", params: [], targetId: "crd_2" }]);
+  });
+
+  it("New Card: closeCard, commit, newCard, openCard, nested in one context", async () => {
+    const t = setup({ crd_1: lifecycle, crd_2: lifecycle });
+    const history = runNewCard(t);
+    await settle();
+    expect(t.log).toEqual(["crd_1.closeCard", "commit", "crd_new.newCard", "crd_new.openCard"]);
+    expect(t.depths).toEqual([1, 1, 1]);
+    expect(t.contexts.size).toBe(1);
+    expect(cardIds(t)).toEqual(["crd_1", "crd_new", "crd_2", "crd_3"]);
+    expect(t.store.getSnapshot().currentCardId).toBe("crd_new");
+    expect(t.bus.backHistory()).toEqual(["crd_1"]);
+    expect(history.undoLabel()).toBe("New Card");
+    expect(t.errors).toEqual([]);
+
+    // Requirement 13.4: Undo and Redo send no message; the card change is still in the back history.
+    t.log.length = 0;
+    history.undo();
+    expect(t.store.getSnapshot().currentCardId).toBe("crd_1");
+    history.redo();
+    await settle();
+    expect(t.store.getSnapshot().currentCardId).toBe("crd_new");
+    expect(t.log).toEqual([]);
+    expect(t.bus.backHistory()).toEqual(["crd_1", "crd_new", "crd_1"]);
+  });
+
+  it("New Background: closeCard, closeBackground, commit, newCard, openBackground, openCard", async () => {
+    const t = setup({ crd_1: lifecycle });
+    runNewCard(t, { background: true });
+    await settle();
+    expect(t.log).toEqual([
+      "crd_1.closeCard", "crd_1.closeBackground", "commit", "crd_new.newCard", "crd_new.openBackground", "crd_new.openCard",
+    ]);
+    expect(t.store.getSnapshot().stack.backgrounds.map((b) => b.id)).toEqual(["bkg_1", "bkg_2", "bkg_new"]);
+    expect(t.store.getSnapshot().currentCardId).toBe("crd_new");
+  });
+
+  it.each([
+    ["the background changes", "crd_2", "crd_3", "bkg_2", ["crd_2.deleteCard", "crd_2.closeCard", "crd_2.closeBackground", "commit", "crd_3.openBackground", "crd_3.openCard"]],
+    ["the background stays", "crd_1", "crd_2", "bkg_1", ["crd_1.deleteCard", "crd_1.closeCard", "commit", "crd_2.openCard"]],
+  ] as const)("Delete Card when %s: deleteCard, closeCard, [closeBackground], commit, [openBackground], openCard", async (
+    _label, deleted, destination, destinationBackground, expected,
+  ) => {
+    const t = setup({ crd_1: lifecycle, crd_2: lifecycle, crd_3: lifecycle });
+    t.store.applyRuntime({ type: "goToCard", cardId: deleted });
+    const before = t.store.getSnapshot().stack;
+    const history = createHistory(t.store);
+    const command = deleteCardCommand(deleted, destination);
+    t.bus.runCommand("Delete Card", async (ctx) => {
+      await t.bus.sendNested(msg("deleteCard", deleted), ctx);
+      await t.bus.changeCardBy(ctx, {
+        cardId: destination, backgroundId: destinationBackground, isNew: false,
+        commit: () => {
+          t.log.push("commit");
+          history.execute(command);
+        },
+      });
+    });
+    await settle();
+    expect(t.log).toEqual(expected);
+    expect(t.contexts.size).toBe(1);
+    expect(cardIds(t)).not.toContain(deleted);
+    expect(t.store.getSnapshot().currentCardId).toBe(destination);
+    expect(t.bus.backHistory().at(-1)).toBe(deleted);
+
+    t.log.length = 0;
+    history.undo();
+    expect(t.store.getSnapshot().stack).toEqual(before);
+    expect(t.store.getSnapshot().currentCardId).toBe(deleted);
+    expect(t.log).toEqual([]);
+  });
+
+  it("does not commit when the dispatch is aborted in closeCard", async () => {
+    const t = setup({ crd_1: { closeCard: [answer] } });
+    const before = t.store.getSnapshot();
+    runNewCard(t);
+    await settle();
+    expect(t.log).toEqual(["crd_1.closeCard"]);
+    t.bus.abort();
+    await settle();
+    t.pendingAnswers.splice(0).forEach((release) => release());
+    await settle();
+    expect(t.log).toEqual(["crd_1.closeCard"]);
+    expect(t.store.getSnapshot().stack).toBe(before.stack);
+    expect(t.store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(t.errors).toEqual([]);
+    expect(t.bus.isRunning()).toBe(false);
+  });
+
+  it("does not commit after a script error in closeBackground", async () => {
+    const t = setup({ crd_1: { closeBackground: [scriptError] } });
+    const before = t.store.getSnapshot();
+    runNewCard(t, { background: true });
+    await settle();
+    expect(t.log).toEqual(["crd_1.closeBackground"]);
+    expect(t.store.getSnapshot().stack).toBe(before.stack);
+    expect(t.errors).toHaveLength(1);
+    expect(t.errorMessages).toEqual([{ name: "New Background", params: [], targetId: "crd_1" }]);
+  });
+
+  it("does not commit when a closeBackground handler runs go", async () => {
+    const t = setup({ crd_1: { closeBackground: [goNext] }, crd_2: { openCard: [] } });
+    const before = t.store.getSnapshot();
+    runNewCard(t, { background: true });
+    await settle();
+    expect(t.log).toEqual(["crd_1.closeBackground", "crd_2.openCard"]);
+    expect(t.store.getSnapshot().stack).toBe(before.stack);
+    expect(t.store.getSnapshot().currentCardId).toBe("crd_2");
+    expect(t.errors).toEqual([]);
+  });
+
+  it("does not commit when the card changes during closeCard, even if it comes back", async () => {
+    const t = setup({ crd_1: { closeCard: [answer] } });
+    const before = t.store.getSnapshot();
+    runNewCard(t);
+    await settle();
+    expect(t.log).toEqual(["crd_1.closeCard"]); // suspended in answer
+    t.store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    t.store.applyRuntime({ type: "goToCard", cardId: "crd_1" });
+    await t.releaseAnswers();
+    expect(t.log).toEqual(["crd_1.closeCard"]);
+    expect(t.store.getSnapshot().stack).toBe(before.stack);
+    expect(t.store.getSnapshot().currentCardId).toBe("crd_1");
+    expect(t.errors).toEqual([]);
+    expect(t.bus.isRunning()).toBe(false);
+  });
+
+  it("keeps the change and sends no further message after a script error in newCard", async () => {
+    const t = setup({ crd_1: lifecycle });
+    runNewCard(t, { script: { newCard: [scriptError], openCard: [] } });
+    await settle();
+    expect(t.log).toEqual(["crd_1.closeCard", "commit", "crd_new.newCard"]);
+    expect(t.store.getSnapshot().currentCardId).toBe("crd_new");
+    expect(cardIds(t)).toContain("crd_new");
+    expect(t.errorMessages).toEqual([{ name: "New Card", params: [], targetId: "crd_new" }]);
+  });
+
+  it("throws when the commit does not make the card current, and sends no open message", async () => {
+    const t = setup({ crd_1: lifecycle });
+    t.bus.runCommand("New Card", (ctx) => t.bus.changeCardBy(ctx, {
+      cardId: "crd_new", backgroundId: "bkg_1", isNew: true, commit: () => t.log.push("commit"),
+    }));
+    await settle();
+    expect(t.log).toEqual(["crd_1.closeCard", "commit"]);
+    expect(t.errors).toHaveLength(1);
+    expect(t.errors[0]).toBeInstanceOf(HexMutationError);
   });
 });
