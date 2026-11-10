@@ -129,7 +129,7 @@ export interface HexButtonPart extends HexPartBase {
   style: ButtonStyle;
   title: string;
   showName: boolean;
-  iconId?: string;                // 32x32 1-bit sprite icon reference
+  iconId?: string;                // names a key of the stack's customIcons (spec 06)
   autoHilite: boolean;            // Invert black/white pixels on click
   hilite: boolean;                // Checked state for Checkbox/Radio
   family?: number;                // Mutually exclusive radio button group number (1-15)
@@ -192,7 +192,7 @@ export interface HexStack {
   };
   backgrounds: HexBackground[];
   cards: HexCard[];               // Sequential card array (Index 0 = First Card)
-  customIcons: Record<string, string>; // 32x32 1-bit Base64 icon library
+  customIcons: Record<string, string>; // icon name -> 32x32 1-bit icon: 128 bytes (32 rows x 4 bytes, row-major, MSB = leftmost pixel, 1 = dark) as padded standard Base64, 172 chars (spec 06)
   scriptSource: string;
 }
 
@@ -726,7 +726,7 @@ Per frame, into one `Uint8Array(175,104)` of pixel states:
 
 - **Hit testing** is geometric (`partRenderer.hitTest(x, y)`): card parts topmost-first, then background parts. Pointer coordinates are divided by the integer scale factor.
 - **Highlighting:** `autoHilite` and radio/checkbox states are drawn by inverting the part's pixels in the frame.
-- Button icons (`iconId`, `customIcons`) are kept in the schema for forward compatibility but are not rendered in schema 2.0.0.
+- **Button icons:** a button whose `iconId` names a `customIcons` entry draws the 32x32 icon centred horizontally in its inside area, with the title line directly below it when `showName` is true (icon and title centred vertically as one block); set bits draw dark, clear bits leave the button face; highlighting inverts the icon and a disabled button dims it; `checkBox` and `radioButton` buttons draw no icon. See `.kiro/specs/06-hypercard-classics/design.md`.
 - **Transitions:** visual effects (§5.2) receive two fully composed frames (old card, new card), so every part moves with the effect.
 - **DOM overlay** is limited to the hidden textarea of §5.5 and, in authoring tools, the selection marquee and resize handles (crisp 1 px borders).
 - A full recomposition touches 175,104 bytes; recompose the whole frame on every change unless profiling shows a problem.
@@ -768,7 +768,8 @@ The Kiroween 2026 rules require the `/.kiro` directory at the repository root (i
 │   ├── 02-hextalk-ast-vm/          # ast.ts, parser.ts (+ printer), vm.ts, fetch policy
 │   ├── 03-1bit-canvas-dither/      # rleCodec, compositor + part renderer, text raster, dither, patterns, transitions, paint tools
 │   ├── 04-ui-audio-showcase/       # System 7 shell, inspector, synth, Spellcaster, storage/export, player build, presets
-│   └── 05-authoring-loop/          # authoringCommands.ts, menuCommands.ts: menus, shortcuts, new/delete cards, backgrounds, parts
+│   ├── 05-authoring-loop/          # authoringCommands.ts, menuCommands.ts: menus, shortcuts, new/delete cards, backgrounds, parts
+│   └── 06-hypercard-classics/       # find.ts, messageBox.ts, recentCards.ts, icons.ts, fatBits.ts, imageImport.ts: Message Box, Find, Recent, Import Image, FatBits, icons
 └── hooks/                          # Kiro IDE 1.0 hook format: {"version":"v1","hooks":[...]}
     ├── validate-ast-safety.json    # PostFileSave on src/core, src/ai, src/storage
     └── enforce-1bit-ui.json        # PostFileSave on src/ui, src/engine/graphics, CSS

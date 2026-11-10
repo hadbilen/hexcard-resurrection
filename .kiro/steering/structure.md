@@ -14,8 +14,8 @@ hexcard/
 ├── .kiro/
 │   ├── steering/              # Always-included guardrails (product.md, tech.md, structure.md)
 │   ├── specs/                 # 01-core-stack-engine, 02-hextalk-ast-vm, 03-1bit-canvas-dither, 04-ui-audio-showcase,
-│   │                          # 05-authoring-loop
-│   │                          # Bugfix specs from Kiro's bugfix workflow also live here, next to 01-05 (currently partrenderer-test-timeouts)
+│   │                          # 05-authoring-loop, 06-hypercard-classics
+│   │                          # Bugfix specs from Kiro's bugfix workflow also live here, next to 01-06 (currently partrenderer-test-timeouts)
 │   └── hooks/                 # Kiro agent hooks (IDE 1.0 JSON format)
 ├── public/
 │   ├── favicon.svg            # 16x16 1-bit pixel-art favicon (linked from index.html)
@@ -23,30 +23,36 @@ hexcard/
 ├── scripts/                   # Committed build-time scripts, not shipped in any bundle                   [04]
 │   └── buildPresetArt.ts      # Draws preset art with the spec 03 engine and writes canonical rleData
 ├── src/
-│   ├── core/                  # Pure TypeScript, no React, no DOM          [spec 01 + 02 + 05]
-│   │   ├── schema.ts          # Persisted types: HexStack, HexBackground, HexCard, HexPart, THEME_PALETTES   [01]
-│   │   ├── stackValidator.ts  # Zod schema for persisted stacks (import/load gate)                         [01]
-│   │   ├── store.ts           # Observable stack store: history.execute() + applyRuntime() + ScriptCache   [01, 05]
-│   │   │                      # + UI state (tool, edit layer, selected part)
+│   ├── core/                  # Pure TypeScript, no React, no DOM          [spec 01 + 02 + 05 + 06]
+│   │   ├── schema.ts          # Persisted types: HexStack, HexBackground, HexCard, HexPart, THEME_PALETTES   [01, 06]
+│   │   ├── stackValidator.ts  # Zod schema for persisted stacks (import/load gate)                         [01, 06]
+│   │   ├── store.ts           # Observable stack store: history.execute() + applyRuntime() + ScriptCache   [01, 05, 06]
+│   │   │                      # + UI state (tool, edit layer, selected part, found text, FatBits view)
 │   │   ├── history.ts         # 50-step Undo/Redo Command Pattern ring buffer                               [01, 05]
 │   │   ├── messageBus.ts      # Message path, FIFO queue, idle timer, nested dispatch (design spec §3.2)  [01, 05]
 │   │   │                      # + menu command dispatches
 │   │   ├── authoringCommands.ts # New/Delete Card, New Background, New Button/Field, Delete Part commands;  [05]
 │   │   │                      # default names, ids, blank stack
+│   │   ├── icons.ts           # 32x32 icon data (isIconData, encodeIcon, decodeIcon), names, icon commands   [06]
+│   │   ├── find.ts            # Find: word-start matching and next-match search over cards and fields      [06]
+│   │   ├── messageBox.ts      # Message Box line classification, find command, statement/expression runner [06]
+│   │   ├── recentCards.ts     # Recent list of visited cards (12, newest first) and goToRecentCard        [06]
 │   │   ├── ast.ts             # HexScriptAST node types (design spec §4.2)                                  [02]
 │   │   ├── astValidator.ts    # Zod schema for ASTs (AI acceptance gate)                                    [02]
 │   │   ├── parser.ts          # parseHexTalk + printHexTalk (design spec §4.1)                              [02]
-│   │   ├── vm.ts              # Gas-limited async interpreter (design spec §4.3)                            [02]
+│   │   ├── vm.ts              # Gas-limited async interpreter (design spec §4.3)                            [02, 06]
 │   │   ├── fetchPolicy.ts     # Sandboxed fetch + JSON path (design spec §4.3)                              [02]
 │   │   └── __tests__/         # Vitest + fast-check tests for core
-│   ├── engine/                # Pure TypeScript, no React                  [spec 03 + 04]
+│   ├── engine/                # Pure TypeScript, no React                  [spec 03 + 04 + 06]
 │   │   ├── graphics/                                                                                       [03]
 │   │   │   ├── rleCodec.ts       # 2-bit packing + PackBits bitmap codec (design spec §5.4)
-│   │   │   ├── bitmapCanvas.ts   # Frame compositor (design spec §5.6)
-│   │   │   ├── partRenderer.ts   # Rasterizes buttons/fields into the frame; geometric hit testing
+│   │   │   ├── bitmapCanvas.ts   # Frame compositor (design spec §5.6)                       [06]
+│   │   │   ├── partRenderer.ts   # Rasterizes buttons/fields into the frame; geometric hit testing; icons, found box [06]
 │   │   │   ├── textRaster.ts     # renderCrisp1BitText + font mapping (design spec §5.5)
 │   │   │   ├── paintTools.ts     # Pencil, brush, eraser, line, rect, spray, bucket, select, lasso
-│   │   │   ├── atkinsonDither.ts # Bill Atkinson 6/8 error-diffusion dithering
+│   │   │   ├── atkinsonDither.ts # Bill Atkinson 6/8 error-diffusion dithering; size limits on decode      [06]
+│   │   │   ├── imageImport.ts    # Import Image: header checks, limits, dithered paste as one history command [06]
+│   │   │   ├── fatBits.ts        # FatBits zoom view: cell drawing, inset, pointer mapping, panning          [06]
 │   │   │   ├── patterns.ts       # 38 classic 8x8 bitmasks and 4-way flood fill
 │   │   │   ├── transitions.ts    # Visual effects on two composed frames (wipes, iris, blinds, ...)
 │   │   │   ├── lfsrDissolve.ts   # 18-bit Galois LFSR dissolve
@@ -76,14 +82,18 @@ hexcard/
 │   │   ├── index.ts           # SHOWCASE_STACKS catalog (File > Open Showcase Stack, first launch)
 │   │   ├── presetKit.ts       # Part/card/stack builders with schema defaults
 │   │   ├── presetArt.ts       # GENERATED by scripts/buildPresetArt.ts: canonical rleData, never hand-edited
+│   │   ├── builtInIcons.ts    # 12 original `hex-...` 32x32 button icons, drawn pixel by pixel            [06]
 │   │   └── __tests__/
 │   ├── ui/                    # React System 7 shell, tools palette, viewport, inspector, stack graph     [04]
-│   │                          # System7Shell.tsx, CardViewport.tsx, App.tsx, StackGraphModal.tsx, fileCommands.ts, system7.css: [04, 05]
+│   │                          # System7Shell.tsx, CardViewport.tsx, App.tsx, StackGraphModal.tsx, fileCommands.ts, system7.css, ObjectInspector.tsx: [04, 05, 06]
 │   │   ├── browseInput.ts     # React-free Browse input (pointer mapping, auto-hilite, bus posts), shared with the player
-│   │   ├── menuCommands.ts    # React-free menu model: layout, enabling rules, menu handlers, shortcuts     [05]
+│   │   ├── menuCommands.ts    # React-free menu model: layout, enabling rules, menu handlers, shortcuts     [05, 06]
 │   │   ├── ShowcaseChooser.tsx # File > Open Showcase Stack chooser window
+│   │   ├── MessageBox.tsx     # Floating Message Box window (Go > Message Box, Go > Find)                  [06]
+│   │   ├── RecentCards.tsx    # Go > Recent window: miniatures of the last visited cards                   [06]
+│   │   ├── IconEditor.tsx     # Edit > Icon Editor window: icon list and 32x32 editing grid                [06]
 │   │   └── __tests__/
-│   ├── main.tsx               # Studio entry: mounts ui/App.tsx into index.html's #root                   [04, 05]
+│   ├── main.tsx               # Studio entry: mounts ui/App.tsx into index.html's #root                   [04, 05, 06]
 │   └── vite-env.d.ts          # Ambient declaration of the virtual:hexcard-player module                  [04]
 ├── index.html                 # Studio HTML entry (Vite)
 ├── package.json               # Scripts: dev, build (build:player first), build:player, typecheck, test (vitest --run)

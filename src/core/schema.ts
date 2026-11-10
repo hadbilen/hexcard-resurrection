@@ -94,7 +94,7 @@ export interface HexButtonPart extends HexPartBase {
   style: ButtonStyle;
   title: string;
   showName: boolean;
-  iconId?: string;                // 32x32 1-bit sprite icon reference
+  iconId?: string;                // names a key of the stack's customIcons (spec 06)
   autoHilite: boolean;            // Invert black/white pixels on click
   hilite: boolean;                // Checked state for Checkbox/Radio
   family?: number;                // Mutually exclusive radio button group number (1-15)
@@ -157,7 +157,7 @@ export interface HexStack {
   };
   backgrounds: HexBackground[];
   cards: HexCard[];               // Sequential card array (Index 0 = First Card)
-  customIcons: Record<string, string>; // 32x32 1-bit Base64 icon library
+  customIcons: Record<string, string>; // icon name -> 32x32 1-bit icon: 128 bytes (32 rows x 4 bytes, row-major, MSB = leftmost pixel, 1 = dark) as padded standard Base64, 172 chars (spec 06)
   scriptSource: string;
 }
 

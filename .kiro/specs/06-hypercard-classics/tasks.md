@@ -2,7 +2,7 @@
 
 Tasks are in priority order (design §Overview, "Delivery order"): the list can be cut after any task and every finished feature works on its own. Each feature task removes only its own items from `ReservedCommand`, updates the spec 05 tests that list reserved items or the menu layout, and ends with its part of the headless Chrome check of design §Testing Strategy (tooling, colour check at k = 1 and k = 2 with `--disable-lcd-text`, auto-saved stack checked with the repository's `validateStack` through Vite's `runnerImport`; throw-away script outside the repository).
 
-- [ ] 1. Make the specification document changes
+- [x] 1. Make the specification document changes
   - `hexcard_design_spec.md` §2.1: the `iconId` and `customIcons` comments; the same comments in `src/core/schema.ts` (design §Document changes, item 1)
   - `hexcard_design_spec.md` §5.6: the button-icon bullet; §8: the `06-hypercard-classics/` entry (items 2 and 3)
   - Spec 03 `design.md` §3: the icon line points to this spec (item 4)

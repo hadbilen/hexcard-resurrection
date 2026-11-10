@@ -34,7 +34,7 @@ export function frameToImageData(frame: Uint8Array, palette: { darkBitHex: strin
 - `partRenderer.ts` provides the real `PartRasterizer` (§2); task 4 makes it the default `rasterizePart` of `composeFrame`.
 - One draw function per `ButtonStyle` and `FieldStyle`, drawing into the frame with 1-px lines; `roundRect` uses a fixed 1-bit corner mask; `shadow` adds a solid 1/2-px offset; `default` draws the double border.
 - `scrolling` fields draw a 1-bit scrollbar and keep a per-field scroll offset in UI state (not persisted).
-- Button icons (`iconId`, `customIcons`) are kept in the schema for forward compatibility but are not rendered in schema 2.0.0.
+- Button icons are rendered as `.kiro/specs/06-hypercard-classics/design.md` describes (spec 06).
 - `hitTest(stack, cardId, x, y) -> HexPart | null` (Requirement 3.3).
 
 ## 4. Text (`textRaster.ts`)
