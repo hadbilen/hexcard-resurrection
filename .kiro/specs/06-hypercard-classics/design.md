@@ -523,7 +523,8 @@ export function isReloadShortcut(event: Pick<KeyLike, "code" | "metaKey" | "ctrl
 - Matching stays as in spec 05 design §6.3: `metaKey || ctrlKey`, no `altKey`, `event.code` (`KeyM`, `KeyF`, `KeyR`), and Shift only where the table says.
 - An entry whose `platforms` excludes the current platform is skipped entirely: no label, no mapping and no `preventDefault`. On macOS Cmd+M and Ctrl+M therefore reach the browser (Requirement 1.5).
 - `buildMenus` shows a shortcut label only for the platform's entries (`Ctrl+M`, `Cmd+F` / `Ctrl+F`, `Cmd+R` / `Ctrl+R`).
-- Text inputs and open dialogs or windows behave as in spec 05 (`isTextInputTarget`, `shellShortcutKey`'s `blocked`).
+- Text inputs and open dialogs or windows behave as in spec 05 (`isTextInputTarget`, `shellShortcutKey`'s `blocked`), with one exception (Requirement 1.7). `shortcutCommand` recognises the Message Box text box by its class (`target.closest(".s7-message-box-input")`, `MESSAGE_BOX_INPUT_SELECTOR`) and, for that target only, maps `go.find` and `go.messageBox` (never another command, never Delete or Backspace) with `preventDefault`; on macOS only Command+F maps there (Control+F moves the caret forward one character in a text field, so it stays with the text box and is not prevented); every other text input still maps nothing.
+- The Message Box is a floating window that `windows.isOpen()` does not count, so `blocked` is false while only it is open; a dialog or a studio window (whose focus may still be in the Message Box text box) keeps `blocked` true and nothing runs.
 - **Reload guard (feature 6).** `System7Shell` adds `window.addEventListener("keydown", guard, { capture: true })` with `guard = (e) => { if (isReloadShortcut(e)) e.preventDefault(); }`.
   - The capture phase runs before `System7Window`'s `stopPropagation` and before text inputs, so Cmd/Ctrl+R never reloads.
   - The bubbling listener still runs Go > Recent only when spec 05 Requirements 2.4 and 16 allow it.

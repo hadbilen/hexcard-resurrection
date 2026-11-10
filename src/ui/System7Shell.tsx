@@ -755,7 +755,9 @@ export function MenuDropdown({ menu, onRun }: { menu: MenuModel; onRun: (command
 /**
  * One step of the shell's window `keydown` listener (spec 05 Requirements 2.4, 2.5, 16.1-16.3):
  * nothing while a dialog or studio window is open (`blocked`), otherwise `handleShortcutKey`,
- * which ignores text-input targets and runs only enabled items. Returns the command that ran.
+ * which ignores text-input targets (except Go > Find and Go > Message Box inside the Message Box
+ * text box, spec 06 Requirement 1.7) and runs only enabled items. `blocked` also covers a Message
+ * Box text box that still has the focus under a dialog or studio window. Returns the command that ran.
  */
 export function shellShortcutKey(
   event: Parameters<typeof handleShortcutKey>[0],

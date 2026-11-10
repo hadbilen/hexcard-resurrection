@@ -19,6 +19,7 @@ import {
   FIND_TEMPLATE,
   handleShortcutKey,
   isEnabled,
+  isMessageBoxInputTarget,
   isReservedCommand,
   isTextInputTarget,
   MENU_TOOLS,
@@ -567,18 +568,22 @@ describe("menu coverage (Requirement 15.3)", () => {
 interface FakeElement {
   tagName: string;
   attributes: ReadonlySet<string>;
+  classes: ReadonlySet<string>;
   parent?: FakeElement;
   closest(selector: string): FakeElement | null;
 }
 
-/** Just enough of `Element.closest` for tag and `[attribute]` selector lists. */
-function element(tag: string, attributes: string[] = [], parent?: FakeElement): FakeElement {
+/** Just enough of `Element.closest` for tag, `.class` and `[attribute]` selector lists. */
+function element(tag: string, attributes: string[] = [], parent?: FakeElement, classes: string[] = []): FakeElement {
   const matches = (node: FakeElement, selector: string): boolean =>
     selector.split(",").map((part) => part.trim()).some((part) =>
-      part.startsWith("[") ? node.attributes.has(part.slice(1, -1)) : node.tagName === part.toUpperCase());
+      part.startsWith("[") ? node.attributes.has(part.slice(1, -1))
+        : part.startsWith(".") ? node.classes.has(part.slice(1))
+          : node.tagName === part.toUpperCase());
   const self: FakeElement = {
     tagName: tag.toUpperCase(),
     attributes: new Set(attributes),
+    classes: new Set(classes),
     parent,
     closest(selector) {
       for (let node: FakeElement | undefined = self; node; node = node.parent) if (matches(node, selector)) return node;
@@ -703,8 +708,9 @@ describe("shortcuts", () => {
       "script editor": element("textarea", [], inspector),
       "Spellcaster prompt": element("textarea", [], inspector),
       "ask dialog text box": element("input", [], element("div", [], body)),
-      // Spec 06 Requirement 15.3: the Message Box text box is a text input too.
-      "Message Box text box": element("input", [], element("div", [], body)),
+      // Spec 06 Requirement 15.3: a text input that is not the Message Box text box (that one runs Find and
+      // Message Box only; see the test below).
+      "input with a Message Box-like parent": element("input", [], element("div", ["data-message-box"], body)),
       "select box": element("select", [], inspector),
       "contenteditable element": editable,
       "inside a contenteditable element": element("span", [], editable),
@@ -744,6 +750,72 @@ describe("shortcuts", () => {
     // The other shortcuts are the same on both platforms.
     expect(shortcutCommand(press(cmd("KeyB")), context, "mac")).toEqual({ command: "edit.background", preventDefault: true });
     expect(shortcutCommand(press(ctrl("KeyZ", true)), context, "mac")).toEqual({ command: "edit.redo", preventDefault: true });
+  });
+
+  it("inside the Message Box text box only Cmd/Ctrl+F (on macOS Cmd+F only) and (except on macOS) Cmd/Ctrl+M run, with the default prevented; every other text input is unchanged (spec 06 Requirement 1.7)", () => {
+    const context = enabledEverything();
+    const box = element("input", [], element("div", [], body), ["s7-message-box-input"]);
+    const nested = element("span", [], box);
+    const otherInput = element("input", [], element("div", [], body), ["s7-dialog-input"]);
+    expect(isMessageBoxInputTarget(box as unknown as EventTarget)).toBe(true);
+    expect(isMessageBoxInputTarget(otherInput as unknown as EventTarget)).toBe(false);
+    expect(isMessageBoxInputTarget(null)).toBe(false);
+
+    for (const target of [box, nested]) {
+      for (const make of [ctrl, cmd]) {
+        expect(shortcutCommand(press(make("KeyF"), target), context, "other")).toEqual({ command: "go.find", preventDefault: true });
+        expect(shortcutCommand(press(make("KeyM"), target), context, "other")).toEqual({ command: "go.messageBox", preventDefault: true });
+        // macOS: Cmd+M and Ctrl+M are neither handled nor prevented.
+        expect(shortcutCommand(press(make("KeyM"), target), context, "mac")).toBeUndefined();
+        const { handlers, ran } = recordingHandlers();
+        const onMac = press(make("KeyM"), target);
+        expect(handleShortcutKey(onMac, context, handlers, "mac")).toBeUndefined();
+        expect(onMac.prevented).toBe(false);
+        expect(ran).toEqual([]);
+        // Shift and Alt variants stay the text box's.
+        expect(shortcutCommand(press(make("KeyF", true), target), context, "other")).toBeUndefined();
+        expect(shortcutCommand(press({ ...make("KeyF"), altKey: true }, target), context, "other")).toBeUndefined();
+      }
+      const { handlers, ran } = recordingHandlers();
+      const event = press(ctrl("KeyF"), target);
+      expect(handleShortcutKey(event, context, handlers, "other")).toBe("go.find");
+      expect(event.prevented).toBe(true);
+      expect(ran).toEqual(["go.find"]);
+
+      // macOS: only Command+F runs Find; Control+F (caret forward) is neither handled nor prevented.
+      expect(shortcutCommand(press(cmd("KeyF"), target), context, "mac")).toEqual({ command: "go.find", preventDefault: true });
+      const macCmd = recordingHandlers();
+      const cmdEvent = press(cmd("KeyF"), target);
+      expect(handleShortcutKey(cmdEvent, context, macCmd.handlers, "mac")).toBe("go.find");
+      expect(cmdEvent.prevented).toBe(true);
+      expect(macCmd.ran).toEqual(["go.find"]);
+      expect(shortcutCommand(press(ctrl("KeyF"), target), context, "mac")).toBeUndefined();
+      const macCtrl = recordingHandlers();
+      const ctrlEvent = press(ctrl("KeyF"), target);
+      expect(handleShortcutKey(ctrlEvent, context, macCtrl.handlers, "mac")).toBeUndefined();
+      expect(ctrlEvent.prevented).toBe(false);
+      expect(macCtrl.ran).toEqual([]);
+      // Command+Control+F is not Command alone: left to the text box too.
+      expect(shortcutCommand(press({ ...cmd("KeyF"), ctrlKey: true }, target), context, "mac")).toBeUndefined();
+
+      // Every other studio shortcut is still left to the text box.
+      for (const init of [ctrl("KeyB"), cmd("KeyB"), ctrl("KeyZ"), cmd("KeyZ"), ctrl("KeyZ", true), cmd("KeyZ", true),
+        { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }]) {
+        const other = recordingHandlers();
+        const keyEvent = press(init, target);
+        expect(shortcutCommand(keyEvent, context, "other"), init.key).toBeUndefined();
+        expect(handleShortcutKey(keyEvent, context, other.handlers, "other")).toBeUndefined();
+        expect(other.ran).toEqual([]);
+        expect(keyEvent.prevented, init.key).toBe(false);
+      }
+    }
+
+    // Any other text input (the ask dialog's, here) keeps every shortcut, F and M included.
+    for (const init of [ctrl("KeyF"), cmd("KeyF"), ctrl("KeyM"), cmd("KeyM")]) {
+      const event = press(init, otherInput);
+      expect(shortcutCommand(event, context, "other")).toBeUndefined();
+      expect(event.prevented).toBe(false);
+    }
   });
 
   it("maps Cmd and Ctrl + F to Go > Find on every platform and prevents the default (spec 06 Requirements 1.4, 1.6, 1.7)", () => {

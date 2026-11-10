@@ -217,6 +217,49 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
   };
   /** A duck-typed element: `closest` finds a text input only when `textInput` is set. */
   const element = (textInput: boolean) => ({ closest: (selector: string) => (textInput && selector.includes("textarea") ? {} : null) }) as unknown as EventTarget;
+  /** The Message Box text box: a text input that also matches the `.s7-message-box-input` class selector. */
+  const messageBoxInput = { closest: (selector: string) => (selector.includes("textarea") || selector === ".s7-message-box-input" ? {} : null) } as unknown as EventTarget;
+
+  it("runs Go > Find and Go > Message Box from the Message Box text box with the default prevented, and nothing else; a dialog or studio window still blocks (spec 06 Requirement 1.7)", () => {
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+      const find = recordingHandlers();
+      const findEvent = press({ key: "f", code: "KeyF", ...modifier, target: messageBoxInput });
+      expect(shellShortcutKey(findEvent, { blocked: false, context: () => contextWith(), handlers: find.handlers, platform: "other" })).toBe("go.find");
+      expect(find.ran).toEqual(["go.find"]);
+      expect(findEvent.prevented).toBe(1);
+
+      const box = recordingHandlers();
+      const boxEvent = press({ key: "m", code: "KeyM", ...modifier, target: messageBoxInput });
+      expect(shellShortcutKey(boxEvent, { blocked: false, context: () => contextWith(), handlers: box.handlers, platform: "other" })).toBe("go.messageBox");
+      expect(box.ran).toEqual(["go.messageBox"]);
+      expect(boxEvent.prevented).toBe(1);
+
+      // Blocked by a dialog or a studio window: nothing, even with the focus still in the Message Box.
+      const blocked = recordingHandlers();
+      const blockedEvent = press({ key: "f", code: "KeyF", ...modifier, target: messageBoxInput });
+      expect(shellShortcutKey(blockedEvent, { blocked: true, context: () => contextWith(), handlers: blocked.handlers, platform: "other" })).toBeUndefined();
+      expect(blocked.ran).toEqual([]);
+      expect(blockedEvent.prevented).toBe(0);
+    }
+    // Cmd+M and Ctrl+M on macOS stay the browser's, in the Message Box text box too.
+    const mac = recordingHandlers();
+    const onMac = press({ key: "m", code: "KeyM", metaKey: true, target: messageBoxInput });
+    expect(shellShortcutKey(onMac, { blocked: false, context: () => contextWith(), handlers: mac.handlers, platform: "mac" })).toBeUndefined();
+    expect(mac.ran).toEqual([]);
+    expect(onMac.prevented).toBe(0);
+
+    // On macOS only Command+F runs Find in the text box; Control+F (caret forward) is left to it.
+    const macFind = recordingHandlers();
+    const cmdF = press({ key: "f", code: "KeyF", metaKey: true, target: messageBoxInput });
+    expect(shellShortcutKey(cmdF, { blocked: false, context: () => contextWith(), handlers: macFind.handlers, platform: "mac" })).toBe("go.find");
+    expect(macFind.ran).toEqual(["go.find"]);
+    expect(cmdF.prevented).toBe(1);
+    const macCtrlFind = recordingHandlers();
+    const ctrlF = press({ key: "f", code: "KeyF", ctrlKey: true, target: messageBoxInput });
+    expect(shellShortcutKey(ctrlF, { blocked: false, context: () => contextWith(), handlers: macCtrlFind.handlers, platform: "mac" })).toBeUndefined();
+    expect(macCtrlFind.ran).toEqual([]);
+    expect(ctrlF.prevented).toBe(0);
+  });
 
   it("runs Edit Background for Ctrl+B and Cmd+B and prevents the browser default", () => {
     for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {

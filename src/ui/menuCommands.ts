@@ -317,23 +317,49 @@ export function isTextInputTarget(target: EventTarget | null): boolean {
   return element.closest(TEXT_INPUT_SELECTOR) !== null;
 }
 
+/** Spec 06 Requirement 1.7: the class that marks the Message Box text box (`MessageBox.tsx`). */
+export const MESSAGE_BOX_INPUT_SELECTOR = ".s7-message-box-input";
+
+/** True when the event target is (inside) the Message Box text box. */
+export function isMessageBoxInputTarget(target: EventTarget | null): boolean {
+  const element = target as { closest?: (selector: string) => unknown } | null;
+  if (element === null || typeof element !== "object" || typeof element.closest !== "function") return false;
+  return element.closest(MESSAGE_BOX_INPUT_SELECTOR) !== null;
+}
+
+/**
+ * Spec 06 Requirement 1.7: the only studio shortcuts that run inside the Message Box text box.
+ * Modifier + F and + M have no text-editing meaning in a one-line text box, except Control+F on
+ * macOS (Emacs-style: caret forward one character), so there only Command+F runs Find.
+ */
+const MESSAGE_BOX_INPUT_COMMANDS: ReadonlySet<MenuCommand> = new Set<MenuCommand>(["go.find", "go.messageBox"]);
+
 /**
  * The command a key press maps to (design §6.3), with `preventDefault` advice; undefined for
  * text-input targets and for keys that are not studio shortcuts. Table matches are prevented
  * whether or not their item is enabled (Requirement 2.4); Delete / Backspace map to Delete Part
  * only while it is enabled, so Browse-mode `keyDown` forwarding keeps them otherwise (Requirement 2.5).
+ * The one text-input exception is the Message Box text box (spec 06 Requirement 1.7): there only
+ * Go > Find and Go > Message Box map, and nothing else.
  */
 export function shortcutCommand(
   event: KeyLike,
   context: MenuContext,
   platform: Platform,
 ): { command: MenuCommand; preventDefault: boolean } | undefined {
-  if (isTextInputTarget(event.target)) return undefined;
+  const inTextInput = isTextInputTarget(event.target);
+  const inMessageBox = inTextInput && isMessageBoxInputTarget(event.target);
+  if (inTextInput && !inMessageBox) return undefined;
   if ((event.metaKey || event.ctrlKey) && !event.altKey) {
     const key = Object.hasOwn(SHORTCUT_KEY_CODES, event.code) ? SHORTCUT_KEY_CODES[event.code] : undefined;
     const match = platformShortcuts(platform).find(({ shortcut }) => shortcut.key === key && shortcut.shift === event.shiftKey);
-    return match ? { command: match.command, preventDefault: true } : undefined;
+    if (!match || (inMessageBox && !MESSAGE_BOX_INPUT_COMMANDS.has(match.command))) return undefined;
+    // On macOS, Control+F moves the caret forward one character in a text field: in the Message Box
+    // text box only Command+F (without Control) runs Find there.
+    if (inMessageBox && platform === "mac" && !(event.metaKey && !event.ctrlKey)) return undefined;
+    return { command: match.command, preventDefault: true };
   }
+  if (inTextInput) return undefined;
   const plain = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
   if (plain && (event.key === "Delete" || event.key === "Backspace") && isEnabled("objects.deletePart", context)) {
     return { command: "objects.deletePart", preventDefault: true };
