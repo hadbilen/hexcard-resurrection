@@ -7,6 +7,7 @@ import { validateStack } from "../../core/stackValidator.ts";
 import { createHexStore, type HexRuntimeState, type HexStore } from "../../core/store.ts";
 import { HexScriptError, type DispatchContext, type HexHost } from "../../core/vm.ts";
 import { createStackLoader } from "../../storage/stackLoader.ts";
+import type { ImageFileLike } from "../../engine/graphics/imageImport.ts";
 import { TOOLS } from "../FloatingTools.tsx";
 import { CANCEL_BUTTON, createChangeTracker, createFileCommands, DONT_SAVE_BUTTON } from "../fileCommands.ts";
 import {
@@ -131,7 +132,12 @@ interface Harness {
 }
 
 /** Real store, history and message bus; recording studio windows, file commands and alerts. */
-function setup(stack: HexStack, behaviours: Record<string, Behaviour> = {}, files?: MenuHandlerDeps["files"]): Harness {
+function setup(
+  stack: HexStack,
+  behaviours: Record<string, Behaviour> = {},
+  files?: MenuHandlerDeps["files"],
+  pickedImage?: ImageFileLike,
+): Harness {
   const store = createHexStore({ stack, compile: parseHexTalk });
   const history = createHistory(store);
   const log: string[] = [];
@@ -178,6 +184,10 @@ function setup(stack: HexStack, behaviours: Record<string, Behaviour> = {}, file
       calls.push("exportStandaloneHtml");
       return true;
     },
+    pickImageFile: async () => {
+      calls.push("pickImageFile");
+      return pickedImage;
+    },
   };
 
   let seed = 0;
@@ -191,6 +201,12 @@ function setup(stack: HexStack, behaviours: Record<string, Behaviour> = {}, file
       openShowcaseChooser: () => void calls.push("showcaseChooser"),
     },
     files: recordingFiles,
+    images: {
+      importFile: async (file) => {
+        calls.push(`importFile:${file.type}`);
+        return true;
+      },
+    },
     modals: {
       alert: async (message) => {
         alerts.push(message);
@@ -407,6 +423,20 @@ describe("enabling rules", () => {
     expect(isEnabled("objects.deleteCard", contextOf(threeCards({ bkg2CantDelete: true }), { currentCardId: "crd_1" }))).toBe(true);
   });
 
+  it("enables Import Image only while a paint tool is active (spec 06 Requirement 1.3)", () => {
+    const paint = ["select", "lasso", "pencil", "brush", "eraser", "line", "spray", "rect", "paintBucket"];
+    for (const { id } of MENU_TOOLS) {
+      for (const editLayer of ["card", "background"] as const) {
+        const context = contextOf(threeCards(), { tool: id, editLayer });
+        expect(isEnabled("file.importImage", context), `${id} ${editLayer}`).toBe(paint.includes(id));
+        expect(findItem(context, "file.importImage").disabled).toBe(!paint.includes(id));
+      }
+    }
+    expect(isReservedCommand("file.importImage")).toBe(false);
+    expect(findItem(contextOf(threeCards(), { tool: "pencil" }), "file.importImage")).toMatchObject({ label: "Import Image..." });
+    expect(findItem(contextOf(threeCards(), { tool: "pencil" }), "file.importImage").shortcut).toBeUndefined();
+  });
+
   it("draws the item disabled exactly when its rule fails", () => {
     const context = contextOf(threeCards(), { currentCardId: "crd_1" });
     for (const entry of items(buildMenus(context, "mac"))) expect(entry.disabled).toBe(!isEnabled(entry.command, context));
@@ -445,6 +475,7 @@ const STATES: RepresentativeState[] = [
       t.store.setSelectedPart("prt_f1");
     },
   },
+  { name: "Pencil tool (spec 06: Import Image enabled)", stack: threeCards, prepare: (t) => t.store.setTool("pencil") },
   {
     name: "non-empty back history",
     stack: threeCards,
@@ -983,6 +1014,37 @@ describe("parts", () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// File > Import Image (spec 06 Requirements 1.1, 1.3, 6.1)
+// ---------------------------------------------------------------------------------------------
+
+describe("File > Import Image", () => {
+  const png: ImageFileLike = { type: "image/png", size: 8, arrayBuffer: async () => new ArrayBuffer(8) };
+
+  it("opens the file chooser, then imports the chosen file, and sends no message", async () => {
+    const t = setup(threeCards(), {}, undefined, png);
+    t.store.setTool("brush");
+    expect(await t.choose("file.importImage")).toBe(true);
+    expect(t.calls).toEqual(["pickImageFile", "importFile:image/png"]);
+    expect(t.log).toEqual([]);
+  });
+
+  it("imports nothing when the chooser is cancelled", async () => {
+    const t = setup(threeCards());
+    t.store.setTool("pencil");
+    expect(await t.choose("file.importImage")).toBe(true);
+    expect(t.calls).toEqual(["pickImageFile"]);
+  });
+
+  it("does not run without a paint tool", async () => {
+    const t = setup(threeCards(), {}, undefined, png);
+    expect(await t.choose("file.importImage")).toBe(false);
+    t.store.setTool("button");
+    expect(await t.choose("file.importImage")).toBe(false);
+    expect(t.calls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // File > New Stack (Requirements 3.1, 3.4, 3.5)
 // ---------------------------------------------------------------------------------------------
 
@@ -1000,6 +1062,7 @@ describe("File > New Stack", () => {
       saveStackFile: () => real().saveStackFile(),
       copyShareLink: () => real().copyShareLink(),
       exportStandaloneHtml: () => real().exportStandaloneHtml(),
+      pickImageFile: () => real().pickImageFile(),
     };
     let commands: ReturnType<typeof createFileCommands> | undefined;
     const real = () => {
@@ -1018,6 +1081,7 @@ describe("File > New Stack", () => {
         browser: {
           download: () => {},
           pickFile: async () => undefined,
+          pickImage: async () => undefined,
           copyText: async () => {},
           pageUrl: () => "https://example.com/",
         },

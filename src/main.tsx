@@ -25,6 +25,7 @@ import { parseHexTalk } from "./core/parser.ts";
 import { validateStack } from "./core/stackValidator.ts";
 import { createHexStore } from "./core/store.ts";
 import { getHexAudioSynth, playSound } from "./engine/audio/synth.ts";
+import { importDroppedImage, importImageFile, type ImageFileLike, type ImageImportDeps } from "./engine/graphics/imageImport.ts";
 import { createPaintController } from "./engine/graphics/paintTools.ts";
 import { PATTERNS } from "./engine/graphics/patterns.ts";
 import { loadBundledFonts } from "./engine/graphics/textRaster.ts";
@@ -153,6 +154,17 @@ async function main(): Promise<void> {
     });
   });
 
+  // Spec 06 Requirement 6: File > Import Image and drops on the card, each one "Import Image" command.
+  const imageDeps: ImageImportDeps = { store, history, alert: (message) => void modals.alert(message) };
+  const reportImportError = (error: unknown): false => {
+    console.error("HexCard: the image could not be imported", error);
+    return false;
+  };
+  const images = {
+    importFile: (file: ImageFileLike) => importImageFile(file, imageDeps).catch(reportImportError),
+    dropFile: (file: ImageFileLike) => importDroppedImage(file, imageDeps).catch(reportImportError),
+  };
+
   const uiStore = createUiStoreView(store);
   const readyBus: MessageBus = bus; // `bus` is a `let`, so its narrowing does not reach the closure below
   // Spec 05 design §3.5: every menu item's handler, built from the narrowed store view (no
@@ -163,6 +175,7 @@ async function main(): Promise<void> {
     bus: readyBus,
     windows,
     files: fileCommands,
+    images,
     modals,
   });
   const platform = detectPlatform(navigator);
@@ -190,6 +203,7 @@ async function main(): Promise<void> {
             platform={platform}
             showcases={showcases}
             onOpenShowcase={openShowcase}
+            onDropImage={(file) => void images.dropFile(file)}
           />
         </StrictMode>,
       );

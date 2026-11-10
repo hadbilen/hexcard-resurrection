@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
 import {
   applyAtkinsonDithering,
+  decodeImageBlobToRgba,
   fitSize,
   importImageToBitmap,
   resampleGray,
@@ -105,5 +106,45 @@ describe("importImageToBitmap", () => {
       expect(out[y * BITMAP_WIDTH + ox + 341]).toBe(2);
       expect(out[y * BITMAP_WIDTH + ox + 342]).toBe(0);
     }
+  });
+});
+
+describe("decodeImageBlobToRgba limits (spec 06 Requirement 6.5)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Browser decoding APIs replaced by recorders: what was decoded, closed and allocated. */
+  function stubDecoder(width: number, height: number) {
+    const record = { closed: 0, canvases: 0 };
+    vi.stubGlobal("createImageBitmap", async () => ({ width, height, close: () => void record.closed++ }));
+    vi.stubGlobal("OffscreenCanvas", class {
+      constructor() {
+        record.canvases++;
+      }
+      getContext() {
+        return {
+          drawImage: () => undefined,
+          getImageData: (_x: number, _y: number, w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+        };
+      }
+    });
+    return record;
+  }
+  const limits = { maxSide: 8192, maxPixels: 16_777_216 };
+
+  it("throws a RangeError before any canvas is allocated when the decoded size is over the limits", async () => {
+    for (const [w, h] of [[8193, 1], [1, 8193], [8192, 2049]]) {
+      const record = stubDecoder(w, h);
+      await expect(decodeImageBlobToRgba(new Blob([]), limits)).rejects.toBeInstanceOf(RangeError);
+      expect(record).toEqual({ closed: 1, canvases: 0 });
+    }
+  });
+
+  it("decodes within the limits, and without limits as before", async () => {
+    const within = stubDecoder(8192, 2048);
+    expect((await decodeImageBlobToRgba(new Blob([]), limits)).width).toBe(8192);
+    expect(within).toEqual({ closed: 1, canvases: 1 });
+    const unlimited = stubDecoder(9000, 3);
+    expect((await decodeImageBlobToRgba(new Blob([]))).height).toBe(3);
+    expect(unlimited).toEqual({ closed: 1, canvases: 1 });
   });
 });

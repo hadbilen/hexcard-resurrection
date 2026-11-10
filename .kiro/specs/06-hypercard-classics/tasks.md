@@ -11,7 +11,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
   - No other document outside this spec changes; no application code changes except the two comments in `schema.ts`
   - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7_
 
-- [ ] 2. Implement Import Image
+- [x] 2. Implement Import Image
   - `src/engine/graphics/imageImport.ts`: types, limits and messages, `readImageHeader` (PNG, GIF, BMP, JPEG, WebP), `withinImportLimits`, `importRect`, `createImportImageCommand` (a `PaintStrokeCommand` labelled `Import Image` on the edit target), `importImageFile`, `importDroppedImage` (design §imageImport.ts)
   - `atkinsonDither.ts`: optional `limits` on `decodeImageBlobToRgba`, throwing `RangeError` before any canvas is allocated
   - `fileCommands.ts`: `FileBrowserAccess.pickImage` and `FileCommands.pickImageFile`

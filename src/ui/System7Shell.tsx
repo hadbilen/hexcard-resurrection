@@ -765,6 +765,31 @@ export function shellShortcutKey(
   return handleShortcutKey(event, options.context(), options.handlers);
 }
 
+/** The fields of a `DragEvent` the file-drop handling reads (spec 06 Requirements 6.2, 6.3). */
+export interface FileDragLike {
+  readonly defaultPrevented?: boolean;
+  readonly dataTransfer: { readonly types: ArrayLike<string>; dropEffect: string; readonly files?: ArrayLike<unknown> } | null;
+  preventDefault(): void;
+}
+
+/** True when the drag carries files (`dataTransfer.types` includes "Files"). */
+export function hasDraggedFiles(dataTransfer: FileDragLike["dataTransfer"]): boolean {
+  return dataTransfer !== null && Array.from(dataTransfer.types).includes("Files");
+}
+
+/**
+ * Spec 06 Requirement 6.3: the shell's window `dragover` / `drop` guard. A file drag that no
+ * handler has already prevented (the card viewport prevents its own) is refused with
+ * `dropEffect = "none"` and prevented, so the browser never opens the dropped file in place of
+ * the studio. Returns whether it acted.
+ */
+export function guardFileDrag(event: FileDragLike): boolean {
+  if (event.defaultPrevented || !hasDraggedFiles(event.dataTransfer)) return false;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+  return true;
+}
+
 /**
  * Keeps menu titles from taking focus on a pointer press (System 7 menus never take focus), so
  * a title can only be focused, and shown inverted through `:focus-visible`, from the keyboard.
@@ -821,6 +846,17 @@ export function System7Shell({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [modals, isWindowOpen]);
+
+  // Spec 06 Requirement 6.3: files dropped anywhere but the card are refused, never opened by the browser.
+  useEffect(() => {
+    const guard = (event: DragEvent): void => void guardFileDrag(event);
+    window.addEventListener("dragover", guard);
+    window.addEventListener("drop", guard);
+    return () => {
+      window.removeEventListener("dragover", guard);
+      window.removeEventListener("drop", guard);
+    };
+  }, []);
 
   // Close an open menu on an outside press or Escape.
   useEffect(() => {

@@ -10,6 +10,7 @@
  */
 import type { HexStack } from "../core/schema.ts";
 import type { HexStore } from "../core/store.ts";
+import { IMAGE_IMPORT_ACCEPT, type ImageFileLike } from "../engine/graphics/imageImport.ts";
 import { decodeStackFile, encodeStackFile, STACK_FILE_EXTENSION, STACK_FILE_MIME_TYPE, stackFileName } from "../storage/stackFile.ts";
 import type { LoadStackResult, StackLoader } from "../storage/stackLoader.ts";
 import { MAX_SHARE_LINK_LENGTH, buildShareLink, decodeSharePayload, readShareHash } from "../storage/urlCodec.ts";
@@ -24,6 +25,8 @@ export interface FileBrowserAccess {
   download(fileName: string, text: string, mimeType: string): void;
   /** Lets the user choose one file; resolves undefined when the picker is cancelled. */
   pickFile(accept: string): Promise<PickedFile | undefined>;
+  /** Spec 06 Requirement 6.1: the same file chooser, for an image to import. */
+  pickImage(accept: string): Promise<ImageFileLike | undefined>;
   copyText(text: string): Promise<void>;
   /** The current page URL, e.g. `location.href`. */
   pageUrl(): string;
@@ -112,7 +115,14 @@ export interface FileCommands {
   confirmReplace(): Promise<boolean>;
   /** Replaces the stack from `read` (e.g. a showcase stack) after `confirmReplace`; undefined when cancelled. */
   replaceStackFrom(read: () => unknown): Promise<LoadStackResult | undefined>;
+  /**
+   * Spec 06 Requirement 6.1: the file chooser offering PNG, JPEG, GIF, WebP and BMP files. Resolves
+   * undefined when the chooser is cancelled or fails (after an alert).
+   */
+  pickImageFile(): Promise<ImageFileLike | undefined>;
 }
+
+export const IMAGE_PICK_FAILED_MESSAGE = "The image file could not be opened.";
 
 export const SAVE_STACK_FILE_BUTTON = "Save Stack File";
 /** Shown by Export Standalone HTML when no player bundle was built (spec 04 design.md §6). */
@@ -233,6 +243,15 @@ export function createFileCommands({
     return true;
   };
 
+  const pickImageFile = async (): Promise<ImageFileLike | undefined> => {
+    try {
+      return await browser.pickImage(IMAGE_IMPORT_ACCEPT);
+    } catch (error) {
+      fail(IMAGE_PICK_FAILED_MESSAGE, error);
+      return undefined;
+    }
+  };
+
   return {
     saveStackFile,
     openStackFile,
@@ -240,6 +259,7 @@ export function createFileCommands({
     exportStandaloneHtml,
     confirmReplace,
     replaceStackFrom,
+    pickImageFile,
   };
 }
 
@@ -255,6 +275,16 @@ export async function loadShareHash(hash: string, loader: Pick<StackLoader, "loa
 
 /** DOM implementation of `FileBrowserAccess`. */
 export function createBrowserFileAccess(): FileBrowserAccess {
+  /** One hidden file input per pick; resolves the chosen `File`, or undefined on cancel. */
+  const chooseFile = (accept: string): Promise<File | undefined> =>
+    new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = accept;
+      input.addEventListener("change", () => resolve(input.files?.[0] ?? undefined), { once: true });
+      input.addEventListener("cancel", () => resolve(undefined), { once: true });
+      input.click();
+    });
   return {
     download(fileName, text, mimeType) {
       const url = URL.createObjectURL(new Blob([text], { type: mimeType }));
@@ -268,16 +298,8 @@ export function createBrowserFileAccess(): FileBrowserAccess {
       // Revoke after the click has been handled; revoking at once can cancel the download.
       setTimeout(() => URL.revokeObjectURL(url), 0);
     },
-    pickFile(accept) {
-      return new Promise((resolve) => {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = accept;
-        input.addEventListener("change", () => resolve(input.files?.[0] ?? undefined), { once: true });
-        input.addEventListener("cancel", () => resolve(undefined), { once: true });
-        input.click();
-      });
-    },
+    pickFile: chooseFile,
+    pickImage: chooseFile,
     copyText: (text) => navigator.clipboard.writeText(text),
     pageUrl: () => window.location.href,
   };

@@ -7,10 +7,12 @@ import { decodeStackFile, encodeStackFile, encodeStackPayload } from "../../stor
 import { DAMAGED_STACK_MESSAGE, createStackLoader } from "../../storage/stackLoader.ts";
 import { SHARE_HASH_PREFIX } from "../../storage/urlCodec.ts";
 import { parseEmbeddedStack } from "../../player/embedded.ts";
+import { IMAGE_IMPORT_ACCEPT } from "../../engine/graphics/imageImport.ts";
 import {
   CANCEL_BUTTON,
   DONT_SAVE_BUTTON,
   EXPORT_NEEDS_BUILD_MESSAGE,
+  IMAGE_PICK_FAILED_MESSAGE,
   SAVE_CHANGES_BUTTON,
   SAVE_CHANGES_MESSAGE,
   SAVE_STACK_FILE_BUTTON,
@@ -34,7 +36,11 @@ async function nextDialog(modals: ReturnType<typeof createModalManager>) {
   return dialog;
 }
 
-function setup(pickedText?: string, loadPlayer?: () => Promise<string | null>) {
+function setup(
+  pickedText?: string,
+  loadPlayer?: () => Promise<string | null>,
+  pickImage: FileBrowserAccess["pickImage"] = async () => undefined,
+) {
   const store = createHexStore({ stack: makeStack({ name: "Current" }), compile: parseHexTalk });
   const history = createHistory(store);
   const modals = createModalManager();
@@ -45,6 +51,7 @@ function setup(pickedText?: string, loadPlayer?: () => Promise<string | null>) {
     download: (fileName, text, mimeType) => downloads.push({ fileName, text, mimeType }),
     pickFile: async (): Promise<PickedFile | undefined> =>
       pickedText === undefined ? undefined : { text: async () => pickedText },
+    pickImage,
     copyText: async (text) => {
       copied.push(text);
     },
@@ -116,7 +123,7 @@ describe("File menu commands", () => {
       getStack: () => ({ ...store.getSnapshot().stack, name: 1n as unknown as string }), // BigInt: JSON.stringify throws
       loader: createStackLoader({ store, history: createHistory(store), alert: () => undefined }),
       modals,
-      browser: { download: () => downloads.push({ fileName: "", text: "", mimeType: "" }), pickFile: async () => undefined, copyText: async () => undefined, pageUrl: () => "" },
+      browser: { download: () => downloads.push({ fileName: "", text: "", mimeType: "" }), pickFile: async () => undefined, pickImage: async () => undefined, copyText: async () => undefined, pageUrl: () => "" },
     });
     expect(await commands.saveStackFile()).toBe(true);
     expect(await broken.saveStackFile()).toBe(false);
@@ -158,6 +165,33 @@ describe("File menu commands", () => {
 // Requirement 7.6: unsaved changes before a File command replaces the stack
 // ---------------------------------------------------------------------------------------------
 
+describe("File > Import Image picker (spec 06 Requirement 6.1)", () => {
+  it("offers PNG, JPEG, GIF, WebP and BMP and resolves the chosen file without touching the stack", async () => {
+    const accepts: string[] = [];
+    const file = { type: "image/png", size: 3, arrayBuffer: async () => new ArrayBuffer(3) };
+    const { store, commands } = setup(undefined, undefined, async (accept) => {
+      accepts.push(accept);
+      return file;
+    });
+    const before = store.getSnapshot();
+    expect(await commands.pickImageFile()).toBe(file);
+    expect(accepts).toEqual([IMAGE_IMPORT_ACCEPT]);
+    expect(IMAGE_IMPORT_ACCEPT).toBe("image/png,image/jpeg,image/gif,image/webp,image/bmp");
+    expect(store.getSnapshot()).toBe(before);
+  });
+
+  it("resolves undefined when the chooser is cancelled, and alerts when it fails", async () => {
+    expect(await setup().commands.pickImageFile()).toBeUndefined();
+    const { commands, modals } = setup(undefined, undefined, async () => {
+      throw new Error("no chooser");
+    });
+    const result = commands.pickImageFile();
+    const dialog = await nextDialog(modals);
+    expect(dialog.message).toBe(IMAGE_PICK_FAILED_MESSAGE);
+    expect(await result).toBeUndefined();
+  });
+});
+
 describe("unsaved-changes guard", () => {
   async function guarded() {
     const opened = makeStack({ id: "stk_opened", name: "Opened" });
@@ -171,6 +205,7 @@ describe("unsaved-changes guard", () => {
       browser: {
         download: (fileName, text, mimeType) => base.downloads.push({ fileName, text, mimeType }),
         pickFile: async () => ({ text: async () => encodeStackFile(opened) }),
+        pickImage: async () => undefined,
         copyText: async () => undefined,
         pageUrl: () => "https://example.org/",
       },

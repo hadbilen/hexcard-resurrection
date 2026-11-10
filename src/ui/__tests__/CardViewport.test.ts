@@ -16,8 +16,11 @@ import { createHexStore, type HexStore } from "../../core/store.ts";
 import type { HexValue } from "../../core/vm.ts";
 import { createPaintController, DEFAULT_PAINT_SETTINGS } from "../../engine/graphics/paintTools.ts";
 import { createUiStoreView } from "../App.tsx";
+import { importDroppedImage } from "../../engine/graphics/imageImport.ts";
 import {
   CardViewport,
+  cardDragOver,
+  cardDrop,
   PartSelection,
   SelectionMarquee,
   cardRectStyle,
@@ -34,7 +37,7 @@ import {
 } from "../CardViewport.tsx";
 import { CARD_FRAME_WIDTH, computeUiScale, menuBarHeight } from "../FloatingTools.tsx";
 import { createStarterStack } from "../starterStack.ts";
-import { createModalManager, System7Shell } from "../System7Shell.tsx";
+import { createModalManager, guardFileDrag, System7Shell } from "../System7Shell.tsx";
 import { buildMenus, isReservedCommand, type MenuContext, type ShellMenuHandlers } from "../menuCommands.ts";
 
 // Read as plain text: Vitest's CSS handling turns `system7.css?raw` into "".
@@ -384,6 +387,89 @@ describe("part selection through the store (spec 05 Requirements 10.1, 10.2, 14.
     expect(VIEWPORT_SOURCE).toContain("store.setSelectedPart(hit?.id ?? null)");
     expect(VIEWPORT_SOURCE).not.toMatch(/useState<HexID \| null>/);
     expect(VIEWPORT_SOURCE).not.toMatch(/setSelectedPartId/);
+  });
+});
+
+describe("image drops (spec 06 Requirements 6.2, 6.3)", () => {
+  interface Drag {
+    defaultPrevented: boolean;
+    dataTransfer: { types: string[]; dropEffect: string; files: unknown[] } | null;
+    preventDefault(): void;
+  }
+  const png = { type: "image/png", size: 4, arrayBuffer: async () => new ArrayBuffer(4) };
+  const drag = (types: string[], files: unknown[] = []): Drag => {
+    const event: Drag = {
+      defaultPrevented: false,
+      dataTransfer: { types, dropEffect: "none", files },
+      preventDefault() {
+        event.defaultPrevented = true;
+      },
+    };
+    return event;
+  };
+
+  it("accepts a file drag over the card as a copy and leaves other drags alone", () => {
+    const files = drag(["Files"]);
+    cardDragOver(files);
+    expect(files.defaultPrevented).toBe(true);
+    expect(files.dataTransfer?.dropEffect).toBe("copy");
+    const text = drag(["text/plain"]);
+    cardDragOver(text);
+    expect(text.defaultPrevented).toBe(false);
+  });
+
+  it("hands the first dropped file on, and prevents the drop even while a window is open", () => {
+    const dropped: unknown[] = [];
+    const onDropImage = (file: unknown) => void dropped.push(file);
+    const event = drag(["Files"], [png, { type: "image/gif" }]);
+    expect(cardDrop(event, { isModalOpen: () => false, onDropImage })).toBe(true);
+    expect(dropped).toEqual([png]);
+    expect(event.defaultPrevented).toBe(true);
+
+    const blocked = drag(["Files"], [png]);
+    expect(cardDrop(blocked, { isModalOpen: () => true, onDropImage })).toBe(false);
+    expect(blocked.defaultPrevented).toBe(true);
+    expect(dropped).toHaveLength(1);
+    expect(cardDrop(drag(["text/plain"]), { isModalOpen: () => false, onDropImage })).toBe(false);
+  });
+
+  it("the shell guard refuses file drags elsewhere and leaves drags the card already took", () => {
+    const elsewhere = drag(["Files"]);
+    expect(guardFileDrag(elsewhere)).toBe(true);
+    expect(elsewhere.defaultPrevented).toBe(true);
+    expect(elsewhere.dataTransfer?.dropEffect).toBe("none");
+
+    const onCard = drag(["Files"]);
+    cardDragOver(onCard);
+    expect(guardFileDrag(onCard)).toBe(false);
+    expect(onCard.dataTransfer?.dropEffect).toBe("copy");
+    expect(guardFileDrag(drag(["text/plain"]))).toBe(false);
+    expect(guardFileDrag({ defaultPrevented: false, dataTransfer: null, preventDefault: () => {} })).toBe(false);
+  });
+
+  it("a drop with the Browse tool alerts and changes nothing (end to end with importDroppedImage)", async () => {
+    const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
+    const history = createHistory(store);
+    const alerts: string[] = [];
+    const before = store.getSnapshot();
+    const results: Promise<boolean>[] = [];
+    cardDrop(drag(["Files"], [png]), {
+      isModalOpen: () => false,
+      onDropImage: (file) => void results.push(importDroppedImage(file, { store, history, alert: (m) => void alerts.push(m) })),
+    });
+    expect(await Promise.all(results)).toEqual([false]);
+    expect(alerts).toEqual(["Choose a paint tool to import an image."]);
+    expect(store.getSnapshot()).toBe(before);
+    expect(history.canUndo()).toBe(false);
+  });
+
+  it("puts the drop handlers on the viewport wrapper and the guard on window dragover and drop", () => {
+    const viewport = readFileSync(new URL("../CardViewport.tsx", import.meta.url), "utf8");
+    expect(viewport).toContain("onDragOver={(event) => cardDragOver(event)}");
+    expect(viewport).toContain("onDrop={(event) => void cardDrop(event, { isModalOpen, onDropImage })}");
+    const shell = readFileSync(new URL("../System7Shell.tsx", import.meta.url), "utf8");
+    expect(shell).toContain('window.addEventListener("dragover", guard)');
+    expect(shell).toContain('window.addEventListener("drop", guard)');
   });
 });
 

@@ -176,13 +176,26 @@ export function importImageToBitmap(img: RgbaImage): Uint8Array {
 /**
  * Browser adapter: decodes an image file (PNG, JPEG, GIF, WebP, ...) to RGBA through
  * `createImageBitmap` and `OffscreenCanvas`. Not usable in Node.
+ *
+ * Spec 06 (Import Image): with `limits`, a decoded bitmap wider or taller than `maxSide` or with
+ * more than `maxPixels` pixels is closed and a `RangeError` is thrown before any canvas is
+ * allocated. Without `limits`, behaviour is unchanged.
  */
-export async function decodeImageBlobToRgba(blob: Blob): Promise<RgbaImage> {
+export async function decodeImageBlobToRgba(
+  blob: Blob,
+  limits?: { maxSide: number; maxPixels: number },
+): Promise<RgbaImage> {
   if (typeof createImageBitmap !== "function" || typeof OffscreenCanvas !== "function") {
     throw new Error("Image decoding is not available in this environment");
   }
   const bitmap = await createImageBitmap(blob);
   try {
+    if (limits) {
+      const { width, height } = bitmap;
+      if (width > limits.maxSide || height > limits.maxSide || width * height > limits.maxPixels) {
+        throw new RangeError(`Decoded image ${width}x${height} exceeds the import limits`);
+      }
+    }
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context is not available");

@@ -8,6 +8,7 @@ import type { HexHistory } from "../core/history.ts";
 import type { MessageBus } from "../core/messageBus.ts";
 import type { HexID } from "../core/schema.ts";
 import type { HexStore } from "../core/store.ts";
+import type { ImageFileLike } from "../engine/graphics/imageImport.ts";
 import type { PaintController } from "../engine/graphics/paintTools.ts";
 import { CardViewport } from "./CardViewport.tsx";
 import { ObjectInspector, type StudioWindows } from "./ObjectInspector.tsx";
@@ -62,11 +63,13 @@ export interface AppProps {
   showcases?: readonly ShowcaseChoice[];
   /** Loads the chosen showcase stack (through the stack loader). */
   onOpenShowcase?: (id: string) => void;
+  /** Spec 06 Requirement 6.2: imports a file dropped on the card (paint-tool check included). */
+  onDropImage?: (file: ImageFileLike) => void;
 }
 
 export function App({
   store, history, modals, windows, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady, handlers,
-  platform, showcases = [], onOpenShowcase,
+  platform, showcases = [], onOpenShowcase, onDropImage,
 }: AppProps) {
   const [patternIndex, setPatternIndex] = useState(initialPatternIndex);
   const open = useSyncExternalStore(windows.subscribe, windows.getSnapshot, windows.getSnapshot);
@@ -103,6 +106,7 @@ export function App({
         mouse={mouse}
         isModalOpen={() => modals.isOpen() || windows.isOpen()}
         onInspectPart={(partId) => windows.openInspector(partId)}
+        onDropImage={onDropImage}
       />
       {open?.kind === "inspector" ? (
         <ObjectInspector key={open.id} store={store} history={history} request={open} onClose={windows.close} />

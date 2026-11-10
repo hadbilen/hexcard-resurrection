@@ -28,6 +28,8 @@ import type { HexCommand, HexHistory } from "../core/history.ts";
 import { resolveRelativeCard, type CardChangeTarget, type MessageBus } from "../core/messageBus.ts";
 import { THEME_PALETTES, type AuthoringTool, type HexID, type HexStack, type PartType, type ThemePaletteName } from "../core/schema.ts";
 import type { HexRuntimeState, HexStore } from "../core/store.ts";
+import type { ImageFileLike } from "../engine/graphics/imageImport.ts";
+import { isPaintTool } from "../engine/graphics/paintTools.ts";
 import type { FileCommands } from "./fileCommands.ts";
 import type { StudioWindows } from "./ObjectInspector.tsx";
 import type { ModalManager } from "./System7Shell.tsx";
@@ -38,7 +40,6 @@ import type { ModalManager } from "./System7Shell.tsx";
 
 /** Items whose feature belongs to a later spec: always disabled, no shortcut label, no handler (Requirement 1.5). */
 export type ReservedCommand =
-  | "file.importImage"
   | "edit.iconEditor"
   | "go.recent"
   | "go.find"
@@ -57,6 +58,7 @@ export type MenuCommand =
   | "file.openShowcase"
   | "file.openStackFile"
   | "file.saveStackFile"
+  | "file.importImage"
   | "file.copyShareLink"
   | "file.exportHtml"
   | "edit.undo"
@@ -83,7 +85,6 @@ export type MenuCommand =
   | "ai.conjure";
 
 export const RESERVED_COMMANDS: ReadonlySet<MenuCommand> = new Set<ReservedCommand>([
-  "file.importImage",
   "edit.iconEditor",
   "go.recent",
   "go.find",
@@ -210,6 +211,8 @@ export function isEnabled(command: MenuCommand, context: MenuContext): boolean {
       return state.selectedPartId !== null;
     case "objects.deleteCard":
       return canDeleteCard(state.stack, state.currentCardId);
+    case "file.importImage":
+      return isPaintTool(state.tool); // spec 06 Requirement 1.3
     default:
       return true;
   }
@@ -462,7 +465,12 @@ export interface MenuHandlerDeps {
   /** `backHistory` is read by the enabling rule of Go > Back when its dispatch starts. */
   bus: Pick<MessageBus, "runCommand" | "changeCard" | "changeCardBy" | "sendNested" | "backHistory">;
   windows: Pick<StudioWindows, "openInspector" | "openStackGraph" | "openShowcaseChooser">;
-  files: Pick<FileCommands, "replaceStackFrom" | "openStackFile" | "saveStackFile" | "copyShareLink" | "exportStandaloneHtml">;
+  files: Pick<
+    FileCommands,
+    "replaceStackFrom" | "openStackFile" | "saveStackFile" | "copyShareLink" | "exportStandaloneHtml" | "pickImageFile"
+  >;
+  /** Spec 06 Requirement 6: imports a chosen image file into the edit target (main.tsx wiring). */
+  images: { importFile(file: ImageFileLike): Promise<unknown> };
   modals: Pick<ModalManager, "alert">;
   /** Id source of new objects; Math.random by default. */
   random?: RandomSource;
@@ -487,7 +495,7 @@ export function createThemeCommand(name: ThemePaletteName): HexCommand {
 }
 
 export function createMenuHandlers(deps: MenuHandlerDeps): ShellMenuHandlers {
-  const { store, history, bus, windows, files, modals, random } = deps;
+  const { store, history, bus, windows, files, images, modals, random } = deps;
 
   /** Requirement 1.6: the enabling rule on the live snapshot, when a command dispatch starts. */
   const stillEnabled = (command: MenuCommand): boolean =>
@@ -571,6 +579,8 @@ export function createMenuHandlers(deps: MenuHandlerDeps): ShellMenuHandlers {
     "file.openShowcase": () => windows.openShowcaseChooser(),
     "file.openStackFile": () => void files.openStackFile(),
     "file.saveStackFile": () => void files.saveStackFile(),
+    // Spec 06 Requirement 6.1: the file chooser, then the import of the chosen file.
+    "file.importImage": () => void files.pickImageFile().then((file) => (file ? images.importFile(file) : undefined)),
     "file.copyShareLink": () => void files.copyShareLink(),
     "file.exportHtml": () => void files.exportStandaloneHtml(),
     "edit.undo": () => void history.undo(),

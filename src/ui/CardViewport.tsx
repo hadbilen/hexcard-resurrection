@@ -39,7 +39,8 @@ import { createPartRasterizer, fieldCaretIndexAt, hitTest, layoutFieldText } fro
 import { isPaintTool, type PaintController } from "../engine/graphics/paintTools.ts";
 import { BITMAP_HEIGHT, BITMAP_WIDTH, encodeBitmapRLE } from "../engine/graphics/rleCodec.ts";
 import { CARD_FRAME_WIDTH } from "./FloatingTools.tsx";
-import { gridSnapOffset, useUiScale, type UiStore } from "./System7Shell.tsx";
+import type { ImageFileLike } from "../engine/graphics/imageImport.ts";
+import { gridSnapOffset, hasDraggedFiles, useUiScale, type FileDragLike, type UiStore } from "./System7Shell.tsx";
 import type { EffectStage, MouseTracker } from "./vmHost.ts";
 import {
   CONTINUOUS_MESSAGE_INTERVAL_MS,
@@ -253,6 +254,30 @@ function snapViewportToGrid(viewport: HTMLElement, k: number): void {
   viewport.style.top = `${gridSnapOffset(box.top, k)}px`;
 }
 
+/** Spec 06 Requirements 6.2, 6.3: a file drag over the card is accepted as a copy. */
+export function cardDragOver(event: FileDragLike): void {
+  if (!hasDraggedFiles(event.dataTransfer)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+}
+
+/**
+ * Spec 06 Requirements 6.2, 6.3: a file drop on the card is always prevented (the browser never
+ * opens the file); with no dialog or studio window open, the first file goes to `onDropImage`,
+ * which checks the paint tool. Returns whether a file was handed on.
+ */
+export function cardDrop(
+  event: FileDragLike,
+  options: { isModalOpen: () => boolean; onDropImage?: (file: ImageFileLike) => void },
+): boolean {
+  if (!hasDraggedFiles(event.dataTransfer)) return false;
+  event.preventDefault();
+  const file = event.dataTransfer?.files?.[0] as ImageFileLike | undefined;
+  if (options.isModalOpen() || file === undefined || options.onDropImage === undefined) return false;
+  options.onDropImage(file);
+  return true;
+}
+
 /** Focus targets whose own keyboard handling must not be forwarded as `keyDown`. */
 function isTextEntryTarget(target: EventTarget | null): boolean {
   if (typeof Element === "undefined" || !(target instanceof Element)) return false;
@@ -274,6 +299,8 @@ export interface CardViewportProps {
   isModalOpen: () => boolean;
   /** Opens the Object Inspector on a part double-clicked with the button or field tool (Req 3.1). */
   onInspectPart?: (partId: HexID) => void;
+  /** Spec 06 Requirement 6.2: the first file dropped on the card (paint-tool check included). */
+  onDropImage?: (file: ImageFileLike) => void;
 }
 
 interface EditingSession extends FieldEditTarget {
@@ -303,7 +330,9 @@ function selectedPartOf(state: HexRuntimeState, partId: HexID | null): HexPart |
   return resolveEditTarget(state).owner.parts.find((part) => part.id === partId && part.type === state.tool) ?? null;
 }
 
-export function CardViewport({ store, history, bus, painter, effects, mouse, isModalOpen, onInspectPart }: CardViewportProps) {
+export function CardViewport({
+  store, history, bus, painter, effects, mouse, isModalOpen, onInspectPart, onDropImage,
+}: CardViewportProps) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -749,7 +778,14 @@ export function CardViewport({ store, history, bus, painter, effects, mouse, isM
   const card = state.stack.cards.find((candidate) => candidate.id === state.currentCardId);
 
   return (
-    <div ref={wrapperRef} className="hc-viewport" style={{ width, height, borderWidth: frame }} data-tool={state.tool}>
+    <div
+      ref={wrapperRef}
+      className="hc-viewport"
+      style={{ width, height, borderWidth: frame }}
+      data-tool={state.tool}
+      onDragOver={(event) => cardDragOver(event)}
+      onDrop={(event) => void cardDrop(event, { isModalOpen, onDropImage })}
+    >
       <canvas
         ref={canvasRef}
         className="hc-card-canvas"
