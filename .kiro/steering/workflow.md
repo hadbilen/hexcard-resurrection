@@ -11,3 +11,4 @@ These rules apply to every spec task.
 3. **Spec documents are read-only:** do not edit any spec's `requirements.md` or `design.md`, or `hexcard_design_spec.md`. If one of them is wrong or incomplete, stop and report the gap instead of working around it.
 4. **Git:** never commit or push.
 5. **Report ending:** end the report with a "Decisions for review" section listing every choice the spec did not dictate.
+6. **Usage log:** after ticking a task, append one entry for it to the Session log in `KIRO_USAGE.md` (date, feature tags, what was done, verification summary, commit-pending).

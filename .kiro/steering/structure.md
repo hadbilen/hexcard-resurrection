@@ -91,6 +91,7 @@ hexcard/
 ├── vite.config.ts             # Studio build (base from BASE_PATH, default "/") + Vitest config (Node environment)
 │                              # + virtual:hexcard-player plugin (dist-player/player.js text, or null if not built)
 ├── vite.player.config.ts      # Player build (single IIFE, dist-player/player.js, read by the studio via virtual:hexcard-player)
+├── KIRO_USAGE.md              # How Kiro was used to build HexCard: feature index and dated session log (workflow rule 6)
 ├── LICENSE                    # MIT (required: OSI open-source licence file in the repo)
 └── hexcard_design_spec.md     # Master reference specification (canonical shared contracts)
 ~~~
