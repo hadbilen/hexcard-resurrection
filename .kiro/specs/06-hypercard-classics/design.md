@@ -82,8 +82,8 @@ export function decodeIcon(data: string): Uint8Array;
 /** 32 rows of 32 characters, "#" = dark, "." = clear (built-in icon art). Throws on any other shape. */
 export function iconFromRows(rows: readonly string[]): string;
 export const BLANK_ICON: string;                                    // 171 "A" + "="
-/** `base` if free, else `${base} N` with the lowest free N >= first, base shortened to fit 32 chars; case-insensitive. */
-export function freeIconName(base: string, taken: Iterable<string>, first?: number): string;
+/** `base` if free, else `${base} N` with the lowest free N >= 2, base shortened to fit 32 chars; case-insensitive. */
+export function freeIconName(base: string, taken: Iterable<string>): string;
 /** Why `name` cannot become a stack icon name (Requirement 10.6), or undefined. `except` is the icon being renamed. */
 export function iconNameError(stack: HexStack, name: string, except?: string): string | undefined;
 
@@ -91,7 +91,7 @@ export function iconNameError(stack: HexStack, name: string, except?: string): s
 export interface IconCommand extends HexCommand { readonly name?: string }
 export function createNewIconCommand(stack: HexStack): IconCommand;                                   // "New Icon"
 export function createCopyIconCommand(stack: HexStack, base: string, data: string,
-  label: "Duplicate Icon" | "Add Icon", first: 1 | 2): IconCommand;                                    // Requirements 10.5, 10.8
+  label: "Duplicate Icon" | "Add Icon"): IconCommand;                                                  // Requirements 10.5, 10.8
 export function createRenameIconCommand(stack: HexStack, from: string, to: string): IconCommand;       // "Rename Icon"
 export function createDeleteIconCommand(stack: HexStack, name: string): IconCommand;                   // "Delete Icon"
 export function createEditIconCommand(name: string, before: string, after: string): IconCommand;       // "Edit Icon"
@@ -99,6 +99,7 @@ export function createEditIconCommand(name: string, before: string, after: strin
 export function createButtonIconCommand(stack: HexStack, partId: HexID, iconId: string | undefined,
   add?: { name: string; data: string }): IconCommand;
 ~~~
+- `"Duplicate Icon"` always numbers the copy (the base counts as taken, Requirement 10.5); `"Add Icon"` keeps the base when it is free (Requirement 10.8); both number from 2 with `freeIconName`.
 - Base64 uses `btoa` / `atob`, as `rleCodec.ts` does; both exist in Node 16+ and in browsers.
 - Names and ids are fixed when a factory runs, so Redo recreates the same names (as spec 05 Requirement 8.4 does for structural commands).
 - `apply` throws `HexMutationError` when its precondition fails on the stack it receives (a missing icon, a taken name, an `Edit Icon` whose `before` no longer matches), so the history does not record it.
@@ -398,11 +399,11 @@ Behaviour:
 - **Editing (Requirement 10.3).** A press on the grid computes the cell from the pointer (`floor(offset / (8k))`) and the paint value from the opposite of that pixel. A local working copy is shown live, and the pointer is captured. On release, if the working copy differs, `history.execute(createEditIconCommand(name, before, encodeIcon(working)))`. Built-in icons ignore presses.
 - **Buttons (Requirements 10.4–10.9, 10.11, 10.12).**
   - **New** runs `createNewIconCommand`.
-  - **Duplicate** runs `createCopyIconCommand(stack, name, data, "Duplicate Icon", 2)`.
+  - **Duplicate** runs `createCopyIconCommand(stack, name, data, "Duplicate Icon")`.
   - **Rename...** runs `modals.ask("Icon name:", name)`. An empty answer (Cancel) does nothing. An invalid name or a case-insensitive clash shows the alert from `iconNameError`. Otherwise it runs `createRenameIconCommand`.
   - **Delete** runs `createDeleteIconCommand`.
-  - **Add to Stack** runs `createCopyIconCommand(stack, builtIn.name, builtIn.data, "Add Icon", 1)`.
-  - **Use for Button** runs `createButtonIconCommand(stack, selectedPartId, name, add?)`, with `add` set for a built-in icon.
+  - **Add to Stack** runs `createCopyIconCommand(stack, builtIn.name, builtIn.data, "Add Icon")`.
+  - **Use for Button** runs `createButtonIconCommand(stack, selectedPartId, name, add?)`. For a built-in icon, `add = { name: freeIconName(builtIn.name, Object.keys(stack.customIcons)), data: builtIn.data }` and `iconId = add.name` (Requirement 10.9).
   - **No Icon** runs `createButtonIconCommand(stack, selectedPartId, undefined)`.
   - **Undo** runs `history.undo()`.
   - Enabled states follow Requirements 10.9 and 10.12. "A button is selected" means `selectedPartId` names a button part (the store only allows that with the Button tool).

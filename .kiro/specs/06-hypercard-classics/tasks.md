@@ -37,9 +37,10 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
   - [ ] 3.2 Icon Editor
     - `src/ui/IconEditor.tsx`: the window, list, editing grid, buttons, enabled states, store sync and `initialIconChoice` (design §IconEditor.tsx)
     - `src/engine/graphics/fatBits.ts`: create the module with `drawFatCell` only, which the grid uses (design §fatBits.ts); task 5 adds the rest
+    - `src/core/icons.ts`: remove the `first` parameter from `createCopyIconCommand` and `freeIconName`; Duplicate always numbers the copy (design §icons.ts); update `icons.test.ts`
     - `ObjectInspector.tsx`: `{ kind: "iconEditor" }` and `openIconEditor()`; `App.tsx` renders the window; `menuCommands.ts`: `edit.iconEditor` becomes a real item, always enabled
     - `system7.css`: `.s7-icon-editor*` rules (1-bit rules of steering `tech.md`)
-    - Unit tests in `IconEditor.test.ts` (labels in printable ASCII, enabled states with and without a selected button and for built-in icons, initial choice, the choice after Undo and Delete) and for the menu item
+    - Unit tests in `IconEditor.test.ts` (labels in printable ASCII, enabled states with and without a selected button and for built-in icons, initial choice, the choice after Undo and Delete, Duplicate of a built-in icon whose name is free gives "<name> 2", Use for Button with a built-in icon whose name is already a stack icon adds "<name> 2" and sets it) and for the menu item
     - Headless Chrome: New Button; Edit > Icon Editor; select `hex-star`, **Use for Button**; screenshot the window and the card; Undo, Redo; edit a pixel; New, Duplicate, Rename (through the `ask` dialog), Delete; Export Standalone HTML, open it offline and confirm the icon is drawn, no request was made and the screenshot has two colours; colour-check every screenshot
     - _Requirements: 1.1, 1.3, 1.10, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9, 10.10, 10.11, 10.12, 11.3, 12.1, 12.4, 12.5, 13.1, 13.2, 13.3, 15.1, 15.4_
 
