@@ -14,6 +14,7 @@ import { CardViewport } from "./CardViewport.tsx";
 import { IconEditor } from "./IconEditor.tsx";
 import { MessageBoxWindow, type MessageBoxController } from "./MessageBox.tsx";
 import { ObjectInspector, type StudioWindows } from "./ObjectInspector.tsx";
+import { RecentWindow } from "./RecentCards.tsx";
 import { ShowcaseChooser, type ShowcaseChoice } from "./ShowcaseChooser.tsx";
 import { StackGraphModal } from "./StackGraphModal.tsx";
 import type { Platform, ShellMenuHandlers } from "./menuCommands.ts";
@@ -73,11 +74,15 @@ export interface AppProps {
   messageBox?: MessageBoxController;
   /** Spec 06 Requirement 3: runs a Message Box line (Return); `createMessageBoxRunner` in main.tsx. */
   onMessageBoxReturn?: (line: string) => void;
+  /** Spec 06 Requirement 5.1: the Recent list (`RecentCards.list`), read by the Recent window. */
+  recent?: () => readonly HexID[];
+  /** Spec 06 Requirement 5.5: a miniature was chosen; the composition root closes the window and goes there. */
+  onChooseRecent?: (cardId: HexID) => void;
 }
 
 export function App({
   store, history, modals, windows, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady, handlers,
-  platform, showcases = [], onOpenShowcase, onDropImage, messageBox, onMessageBoxReturn,
+  platform, showcases = [], onOpenShowcase, onDropImage, messageBox, onMessageBoxReturn, recent, onChooseRecent,
 }: AppProps) {
   const [patternIndex, setPatternIndex] = useState(initialPatternIndex);
   const open = useSyncExternalStore(windows.subscribe, windows.getSnapshot, windows.getSnapshot);
@@ -123,6 +128,15 @@ export function App({
       {open?.kind === "stackGraph" ? <StackGraphModal key={open.id} store={store} onClose={windows.close} /> : null}
       {open?.kind === "iconEditor" ? (
         <IconEditor key={open.id} store={store} history={history} modals={modals} onClose={windows.close} />
+      ) : null}
+      {open?.kind === "recent" && recent ? (
+        <RecentWindow
+          key={open.id}
+          store={store}
+          recent={recent}
+          onChoose={(cardId) => onChooseRecent?.(cardId)}
+          onClose={windows.close}
+        />
       ) : null}
       {open?.kind === "showcaseChooser" ? (
         <ShowcaseChooser

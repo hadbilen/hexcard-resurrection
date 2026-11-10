@@ -931,6 +931,54 @@ body {
   font-family: "HexCard PixelOperator", monospace;
 }
 
+/* Go > Recent (spec 06 task 6): four miniatures per row, each a button with a 1 px solid frame like
+   a Stack Graph node and the card name below it; the current card's name is inverted. The window
+   keeps the .s7-window maximum size, so on a small desktop its body scrolls. */
+.s7-recent-grid {
+  display: grid;
+  grid-template-columns: repeat(4, calc(130 * var(--px)));
+  gap: calc(4 * var(--px));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.s7-recent-item {
+  margin: 0;
+  padding: 0;
+}
+
+.s7-shell .s7-recent-card {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  background: var(--light-bit);
+  color: var(--dark-bit);
+  text-align: left;
+}
+
+/* The keyboard focus ring goes round the miniature, in the 4 px gap, not over the card art. */
+.s7-shell .s7-recent-card:focus-visible {
+  outline-offset: calc(1 * var(--px));
+}
+
+.s7-recent-label {
+  display: block;
+  height: calc(16 * var(--px));
+  padding: 0 calc(4 * var(--px));
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-recent-card-current .s7-recent-label {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
 /* Edit > Icon Editor (spec 06 task 3.2): a list box of icon previews with the buttons below it on
    the left, the 32 x 32 editing grid on the right. The selected row is inverted, as in the
    showcase chooser. Only 1 px solid frames and the theme variables are used. */

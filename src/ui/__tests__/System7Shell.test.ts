@@ -27,6 +27,8 @@ import {
   pushButtonLabelPadding,
   createModalManager,
   defaultPalettePosition,
+  guardReloadKey,
+  installReloadGuard,
   shellShortcutKey,
   shouldTearOff,
   tearOffThreshold,
@@ -370,6 +372,8 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
       { key: "m", code: "KeyM", ctrlKey: true },
       { key: "f", code: "KeyF", ctrlKey: true },
       { key: "f", code: "KeyF", metaKey: true },
+      { key: "r", code: "KeyR", ctrlKey: true },
+      { key: "r", code: "KeyR", metaKey: true },
       { key: "Delete", code: "Delete" },
       { key: "Backspace", code: "Backspace" },
     ]) {
@@ -416,7 +420,93 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
 
   it("is the shell's only keydown shortcut path: no other key test is left in the shell", () => {
     expect(SHELL_SOURCE).not.toMatch(/isEditBackgroundShortcut|onCommand|ForwardedCommand/);
-    expect(SHELL_SOURCE.match(/addEventListener\("keydown"/g)).toHaveLength(2); // shortcuts + closing an open menu
+    // shortcuts + closing an open menu + the reload guard (installReloadGuard)
+    expect(SHELL_SOURCE.match(/addEventListener\("keydown"/g)).toHaveLength(3);
+  });
+
+  it("runs Go > Recent from Cmd/Ctrl+R outside a text input, with the default prevented (spec 06 Requirements 1.4, 1.7)", () => {
+    for (const platform of ["mac", "other"] as const) {
+      for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+        const { handlers, ran } = recordingHandlers();
+        const event = press({ key: "r", code: "KeyR", ...modifier, target: element(false) });
+        expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers, platform })).toBe("go.recent");
+        expect(ran).toEqual(["go.recent"]);
+        expect(event.prevented).toBe(1);
+      }
+    }
+  });
+
+  it("does not run Go > Recent from a text input, the Message Box text box or while a dialog or studio window is open (spec 06 Requirement 1.8)", () => {
+    for (const target of [element(true), messageBoxInput]) {
+      const { handlers, ran } = recordingHandlers();
+      const event = press({ key: "r", code: "KeyR", ctrlKey: true, target });
+      expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers, platform: "other" })).toBeUndefined();
+      expect(ran).toEqual([]);
+      expect(event.prevented).toBe(0); // the capture-phase reload guard prevents the reload, see below
+    }
+    const { handlers, ran } = recordingHandlers();
+    const blocked = press({ key: "r", code: "KeyR", metaKey: true, target: element(false) });
+    expect(shellShortcutKey(blocked, { blocked: true, context: () => contextWith(), handlers, platform: "mac" })).toBeUndefined();
+    expect(ran).toEqual([]);
+  });
+});
+
+describe("reload guard (spec 06 Requirement 1.8)", () => {
+  type Reload = Parameters<typeof guardReloadKey>[0] & { prevented: number };
+  const key = (init: Partial<Reload>): Reload => {
+    const event: Reload = {
+      code: "KeyR", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, prevented: 0,
+      preventDefault() {
+        event.prevented++;
+      },
+      ...init,
+    };
+    return event;
+  };
+
+  it("prevents Cmd+R and Ctrl+R in every case, and nothing else", () => {
+    for (const init of [{ ctrlKey: true }, { metaKey: true }]) {
+      const event = key(init);
+      expect(guardReloadKey(event)).toBe(true);
+      expect(event.prevented).toBe(1);
+    }
+    for (const init of [
+      {}, { ctrlKey: true, shiftKey: true }, { metaKey: true, shiftKey: true }, { ctrlKey: true, altKey: true },
+      { ctrlKey: true, code: "KeyF" }, { code: "F5" }, { ctrlKey: true, code: "KeyB" },
+    ]) {
+      const event = key(init);
+      expect(guardReloadKey(event), JSON.stringify(init)).toBe(false);
+      expect(event.prevented).toBe(0);
+    }
+  });
+
+  it("is registered on the window for keydown in the capture phase and removed with the same options", () => {
+    const added: { type: string; listener: (event: KeyboardEvent) => void; options: unknown }[] = [];
+    const removed: { type: string; listener: unknown; options: unknown }[] = [];
+    const target = {
+      addEventListener: (type: string, listener: (event: KeyboardEvent) => void, options: unknown) => void added.push({ type, listener, options }),
+      removeEventListener: (type: string, listener: unknown, options: unknown) => void removed.push({ type, listener, options }),
+    } as unknown as Parameters<typeof installReloadGuard>[0];
+    const remove = installReloadGuard(target);
+    expect(added).toHaveLength(1);
+    expect(added[0].type).toBe("keydown");
+    expect(added[0].options).toEqual({ capture: true });
+
+    const event = key({ ctrlKey: true });
+    added[0].listener(event as unknown as KeyboardEvent);
+    expect(event.prevented).toBe(1);
+    const other = key({ ctrlKey: true, code: "KeyF" });
+    added[0].listener(other as unknown as KeyboardEvent);
+    expect(other.prevented).toBe(0);
+
+    expect(removed).toHaveLength(0);
+    remove();
+    expect(removed).toEqual([{ type: "keydown", listener: added[0].listener, options: { capture: true } }]);
+  });
+
+  it("is installed by the shell on the window", () => {
+    expect(SHELL_SOURCE).toMatch(/useEffect\(\(\) => installReloadGuard\(window\), \[\]\)/);
+    expect(SHELL_SOURCE).toMatch(/addEventListener\("keydown", guard, \{ capture: true \}\)/);
   });
 });
 

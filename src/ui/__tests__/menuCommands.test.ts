@@ -20,6 +20,7 @@ import {
   handleShortcutKey,
   isEnabled,
   isMessageBoxInputTarget,
+  isReloadShortcut,
   isReservedCommand,
   isTextInputTarget,
   MENU_TOOLS,
@@ -207,6 +208,7 @@ function setup(
       openStackGraph: () => void calls.push("stackGraph"),
       openShowcaseChooser: () => void calls.push("showcaseChooser"),
       openIconEditor: () => void calls.push("iconEditor"),
+      openRecent: () => void calls.push("recent"),
     },
     files: recordingFiles,
     images: {
@@ -349,18 +351,18 @@ describe("menu layout", () => {
     expect(MENU_TOOLS).toEqual(TOOLS.map(({ id, label }) => ({ id, label })));
   });
 
-  it("gives only Edit Background, Undo, Redo, Find and (except on macOS) Message Box a shortcut label (Requirements 2.2, 2.3)", () => {
+  it("gives only Edit Background, Undo, Redo, Recent, Find and (except on macOS) Message Box a shortcut label (Requirements 2.2, 2.3)", () => {
     const labelled = (platform: "mac" | "other") =>
       items(buildMenus(contextOf(threeCards()), platform))
         .filter((entry) => entry.shortcut !== undefined)
         .map((entry) => [entry.command, entry.shortcut]);
-    // Spec 06 Requirements 1.4-1.6: Go > Find has Cmd+F / Ctrl+F; Go > Message Box has Ctrl+M everywhere
+    // Spec 06 Requirements 1.4-1.6: Go > Find has Cmd+F / Ctrl+F; Go > Recent has Cmd+R / Ctrl+R; Go > Message Box has Ctrl+M everywhere
     // but macOS, which gets no label.
     expect(labelled("mac")).toEqual([
-      ["edit.undo", "Cmd+Z"], ["edit.redo", "Cmd+Shift+Z"], ["edit.background", "Cmd+B"], ["go.find", "Cmd+F"],
+      ["edit.undo", "Cmd+Z"], ["edit.redo", "Cmd+Shift+Z"], ["edit.background", "Cmd+B"], ["go.recent", "Cmd+R"], ["go.find", "Cmd+F"],
     ]);
     expect(labelled("other")).toEqual([
-      ["edit.undo", "Ctrl+Z"], ["edit.redo", "Ctrl+Shift+Z"], ["edit.background", "Ctrl+B"], ["go.find", "Ctrl+F"],
+      ["edit.undo", "Ctrl+Z"], ["edit.redo", "Ctrl+Shift+Z"], ["edit.background", "Ctrl+B"], ["go.recent", "Ctrl+R"], ["go.find", "Ctrl+F"],
       ["go.messageBox", "Ctrl+M"],
     ]);
     expect(shortcutLabel({ key: "Z", shift: true }, "mac")).toBe("Cmd+Shift+Z");
@@ -377,7 +379,7 @@ describe("enabling rules", () => {
     "hex.about", "theme:AmberCRT", "file.newStack", "file.openShowcase", "file.openStackFile", "file.saveStackFile",
     "file.copyShareLink", "file.exportHtml", "edit.background", "go.stackGraph", "tool:pencil", "objects.cardInfo",
     "objects.backgroundInfo", "objects.stackInfo", "objects.newButton", "objects.newField", "objects.newCard",
-    "objects.newBackground", "paint.togglePalette", "ai.conjure",
+    "objects.newBackground", "paint.togglePalette", "ai.conjure", "go.recent",
   ];
 
   it("keeps the always-enabled items enabled in Browse, authoring tools and Edit Background mode", () => {
@@ -554,7 +556,7 @@ describe("menu coverage (Requirement 15.3)", () => {
   it("ignores a disabled item: runMenuCommand neither runs nor reports it", async () => {
     const t = setup(oneCard());
     const before = observe(t);
-    for (const command of ["objects.deleteCard", "go.next", "edit.undo", "objects.deletePart", "go.recent"] as const) {
+    for (const command of ["objects.deleteCard", "go.next", "edit.undo", "objects.deletePart", "ai.conjureStack"] as const) {
       expect(await t.choose(command)).toBe(false);
     }
     expect(observe(t)).toEqual(before);
@@ -613,9 +615,9 @@ function press(init: Partial<KeyLike> & { key: string }, target: unknown = deskt
   return event;
 }
 
-const ctrl = (code: "KeyB" | "KeyZ" | "KeyM" | "KeyF", shiftKey = false, extra: Partial<KeyLike> = {}) =>
+const ctrl = (code: "KeyB" | "KeyZ" | "KeyM" | "KeyF" | "KeyR", shiftKey = false, extra: Partial<KeyLike> = {}) =>
   ({ key: code.slice(3).toLowerCase(), code, ctrlKey: true, shiftKey, ...extra });
-const cmd = (code: "KeyB" | "KeyZ" | "KeyM" | "KeyF", shiftKey = false) => ({ key: code.slice(3).toLowerCase(), code, metaKey: true, shiftKey });
+const cmd = (code: "KeyB" | "KeyZ" | "KeyM" | "KeyF" | "KeyR", shiftKey = false) => ({ key: code.slice(3).toLowerCase(), code, metaKey: true, shiftKey });
 
 /** Records every handler call; every command is enabled except what the context rules out. */
 function recordingHandlers(): { handlers: MenuHandlers; ran: MenuCommand[] } {
@@ -633,7 +635,7 @@ const enabledEverything = (): MenuContext =>
 
 describe("shortcuts", () => {
   it("assigns no shortcut that browsers reserve (Requirement 2.1)", () => {
-    expect(SHORTCUTS).toHaveLength(5);
+    expect(SHORTCUTS).toHaveLength(6);
     // Spec 06 Requirement 1.9: no new shortcut collides with a reserved combination either.
     for (const { shortcut } of SHORTCUTS) {
       const clash = RESERVED_BROWSER_SHORTCUTS.find((reserved) => reserved.key === shortcut.key && reserved.shift === shortcut.shift);
@@ -716,7 +718,8 @@ describe("shortcuts", () => {
       "inside a contenteditable element": element("span", [], editable),
     };
     const shortcuts = [ctrl("KeyB"), cmd("KeyB"), ctrl("KeyZ"), cmd("KeyZ"), ctrl("KeyZ", true), cmd("KeyZ", true),
-      ctrl("KeyM"), cmd("KeyM"), ctrl("KeyF"), cmd("KeyF"), { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }];
+      ctrl("KeyM"), cmd("KeyM"), ctrl("KeyF"), cmd("KeyF"), ctrl("KeyR"), cmd("KeyR"),
+      { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }];
     for (const [name, target] of Object.entries(targets)) {
       expect(isTextInputTarget(target as unknown as EventTarget), name).toBe(true);
       for (const init of shortcuts) {
@@ -799,8 +802,10 @@ describe("shortcuts", () => {
       expect(shortcutCommand(press({ ...cmd("KeyF"), ctrlKey: true }, target), context, "mac")).toBeUndefined();
 
       // Every other studio shortcut is still left to the text box.
+      // Go > Recent is one of them (spec 06 Requirements 1.7, 1.8): no Recent window, and the reload
+      // is prevented by the shell's capture-phase guard, not by this mapping.
       for (const init of [ctrl("KeyB"), cmd("KeyB"), ctrl("KeyZ"), cmd("KeyZ"), ctrl("KeyZ", true), cmd("KeyZ", true),
-        { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }]) {
+        ctrl("KeyR"), cmd("KeyR"), { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }]) {
         const other = recordingHandlers();
         const keyEvent = press(init, target);
         expect(shortcutCommand(keyEvent, context, "other"), init.key).toBeUndefined();
@@ -834,6 +839,39 @@ describe("shortcuts", () => {
     }
     // Another keyboard layout: the physical key decides.
     expect(shortcutCommand(press({ key: "u", code: "KeyF", ctrlKey: true }), context, "other")?.command).toBe("go.find");
+  });
+
+  it("maps Cmd and Ctrl + R to Go > Recent on every platform and prevents the default (spec 06 Requirements 1.4, 1.6, 1.7)", () => {
+    const context = enabledEverything();
+    for (const platform of ["mac", "other"] as const) {
+      for (const make of [ctrl, cmd]) {
+        expect(shortcutCommand(press(make("KeyR")), context, platform)).toEqual({ command: "go.recent", preventDefault: true });
+        expect(shortcutCommand(press(make("KeyR", true)), context, platform)).toBeUndefined(); // no Shift variant: it reloads
+        expect(shortcutCommand(press({ ...make("KeyR"), altKey: true }), context, platform)).toBeUndefined();
+        const { handlers, ran } = recordingHandlers();
+        const event = press(make("KeyR"));
+        expect(handleShortcutKey(event, context, handlers, platform)).toBe("go.recent");
+        expect(event.prevented).toBe(true);
+        expect(ran).toEqual(["go.recent"]);
+      }
+    }
+    // Another keyboard layout: the physical key decides.
+    expect(shortcutCommand(press({ key: "k", code: "KeyR", ctrlKey: true }), context, "other")?.command).toBe("go.recent");
+  });
+
+  it("recognises the reload shortcut: Cmd or Ctrl + R without Shift or Alt (spec 06 Requirement 1.8)", () => {
+    const key = (init: Partial<Pick<KeyLike, "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">>) =>
+      isReloadShortcut({ code: "KeyR", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...init });
+    expect(key({ ctrlKey: true })).toBe(true);
+    expect(key({ metaKey: true })).toBe(true);
+    expect(key({ metaKey: true, ctrlKey: true })).toBe(true);
+    expect(key({})).toBe(false); // a plain R
+    expect(key({ ctrlKey: true, shiftKey: true })).toBe(false); // hard reload stays the browser's
+    expect(key({ metaKey: true, shiftKey: true })).toBe(false);
+    expect(key({ ctrlKey: true, altKey: true })).toBe(false);
+    expect(key({ ctrlKey: true, code: "KeyF" })).toBe(false);
+    expect(key({ ctrlKey: true, code: "F5" })).toBe(false);
+    expect(isReloadShortcut({ code: "KeyR", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false })).toBe(false);
   });
 
   it("assigns no reserved combination on either platform (spec 06 Requirement 1.9)", () => {
@@ -1248,6 +1286,33 @@ describe("Go > Find (spec 06 Requirements 1.1, 1.3, 4.1)", () => {
     const second = t.messageBox.getSnapshot();
     expect(second).toMatchObject({ open: true, line: 'find ""', focus: { select: { start: 6, end: 6 } } });
     expect(second.focus!.id).not.toBe(first.focus!.id);
+    expect(t.log).toEqual([]);
+    expect(t.history.canUndo()).toBe(false);
+  });
+});
+
+describe("Go > Recent (spec 06 Requirements 1.1, 1.3, 5.4)", () => {
+  it("is a real item labelled Recent..., enabled with every tool and edit layer, with Cmd+R / Ctrl+R", () => {
+    expect(isReservedCommand("go.recent")).toBe(false);
+    expect(RESERVED_COMMANDS.has("go.recent")).toBe(false);
+    for (const { id } of MENU_TOOLS) {
+      for (const editLayer of ["card", "background"] as const) {
+        const context = contextOf(threeCards(), { tool: id, editLayer });
+        expect(isEnabled("go.recent", context), `${id} ${editLayer}`).toBe(true);
+        expect(findItem(context, "go.recent")).toMatchObject({ label: "Recent...", disabled: false, shortcut: "Ctrl+R" });
+      }
+    }
+    expect(items(buildMenus(contextOf(oneCard()), "mac")).find((entry) => entry.command === "go.recent")).toMatchObject({
+      shortcut: "Cmd+R", disabled: false,
+    });
+    // Only the two stack-level items stay reserved.
+    expect([...RESERVED_COMMANDS].sort()).toEqual(["ai.conjureStack", "ai.oracleSettings"]);
+  });
+
+  it("opens the Recent window and sends no message", async () => {
+    const t = setup(threeCards());
+    expect(await t.choose("go.recent")).toBe(true);
+    expect(t.calls).toEqual(["recent"]);
     expect(t.log).toEqual([]);
     expect(t.history.canUndo()).toBe(false);
   });

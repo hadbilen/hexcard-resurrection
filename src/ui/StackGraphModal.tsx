@@ -130,7 +130,8 @@ export function createCardThumbnail(stack: HexStack, cardId: HexID, rasterizePar
   return reduceFrame(composeFrame(stack, cardId, {}, rasterizePart));
 }
 
-function ThumbnailCanvas({ pixels, palette }: { pixels: Uint8Array; palette: HexStack["themePalette"] }) {
+/** A card miniature (1 = light, 2 = dark) at UI scale k; also used by the Recent window (spec 06). */
+export function ThumbnailCanvas({ pixels, palette }: { pixels: Uint8Array; palette: HexStack["themePalette"] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const k = useUiScale();
   useEffect(() => {

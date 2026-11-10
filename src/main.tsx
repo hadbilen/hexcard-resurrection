@@ -23,6 +23,7 @@ import { createHistory } from "./core/history.ts";
 import { createMessageBoxRunner } from "./core/messageBox.ts";
 import { createMessageBus, type MessageBus } from "./core/messageBus.ts";
 import { parseHexTalk } from "./core/parser.ts";
+import { createRecentCards, goToRecentCard } from "./core/recentCards.ts";
 import { validateStack } from "./core/stackValidator.ts";
 import { createHexStore } from "./core/store.ts";
 import { getHexAudioSynth, playSound } from "./engine/audio/synth.ts";
@@ -188,6 +189,13 @@ async function main(): Promise<void> {
       alert: (message, details) => void modals.alert(message, { details }),
     },
   });
+  // Spec 06 Requirement 5: the Recent list follows the store; a chosen miniature closes the window
+  // and goes to that card in one "Go Recent" command dispatch.
+  const recent = createRecentCards(store);
+  const chooseRecent = (cardId: string): void => {
+    windows.close();
+    goToRecentCard(store, readyBus, cardId);
+  };
   // Spec 05 design §3.5: every menu item's handler, built from the narrowed store view (no
   // applyAuthoring / replaceStack); File > New Stack loads through the file commands' loader.
   const menuHandlers = createMenuHandlers({
@@ -228,6 +236,8 @@ async function main(): Promise<void> {
             onDropImage={(file) => void images.dropFile(file)}
             messageBox={messageBox}
             onMessageBoxReturn={runMessageBoxLine}
+            recent={recent.list}
+            onChooseRecent={chooseRecent}
           />
         </StrictMode>,
       );

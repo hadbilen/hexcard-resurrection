@@ -75,7 +75,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
   - Headless Chrome: Pencil, Paint > FatBits; click three cells; Arrow Right and Arrow Down; Eraser on one cell; Escape; strokes present in the auto-saved card bitmap; Undo removes them one stroke at a time; Browse turns FatBits off; colour-check every screenshot
   - _Requirements: 1.2, 1.3, 1.10, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 12.2, 13.1, 15.1, 15.4_
 
-- [ ] 6. Implement Recent
+- [x] 6. Implement Recent
   - `src/core/recentCards.ts`: `createRecentCards` and `goToRecentCard` (design §recentCards.ts)
   - `StackGraphModal.tsx`: export `ThumbnailCanvas`; `src/ui/RecentCards.tsx`: `RecentWindow` (four miniatures per row, current card marked, button per miniature); `system7.css`: `.s7-recent*`
   - `ObjectInspector.tsx`: `{ kind: "recent" }` and `openRecent()`; `App.tsx` and `main.tsx`: wiring

@@ -40,6 +40,7 @@ import {
 import {
   buildMenus,
   handleShortcutKey,
+  isReloadShortcut,
   runMenuCommand,
   type MenuCommand,
   type MenuContext,
@@ -767,6 +768,28 @@ export function shellShortcutKey(
   return handleShortcutKey(event, options.context(), options.handlers, options.platform);
 }
 
+/**
+ * Spec 06 Requirement 1.8: the reload guard. Cmd/Ctrl+R (without Shift or Alt) is prevented in every
+ * focus state and while a dialog or studio window is open, so the Recent shortcut never reloads the
+ * studio. It does not run Go > Recent: the bubbling shortcut listener does that only where spec 05
+ * Requirements 2.4 and 16 allow it. Returns whether it prevented the event.
+ */
+export function guardReloadKey(event: Pick<KeyboardEvent, "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "preventDefault">): boolean {
+  if (!isReloadShortcut(event)) return false;
+  event.preventDefault();
+  return true;
+}
+
+/**
+ * Registers the reload guard on `target` in the capture phase, which runs before `System7Window`
+ * stops a key event from bubbling and before text inputs see it. Returns the function that removes it.
+ */
+export function installReloadGuard(target: Pick<Window, "addEventListener" | "removeEventListener">): () => void {
+  const guard = (event: KeyboardEvent): void => void guardReloadKey(event);
+  target.addEventListener("keydown", guard, { capture: true });
+  return () => target.removeEventListener("keydown", guard, { capture: true });
+}
+
 /** The fields of a `DragEvent` the file-drop handling reads (spec 06 Requirements 6.2, 6.3). */
 export interface FileDragLike {
   readonly defaultPrevented?: boolean;
@@ -849,6 +872,9 @@ export function System7Shell({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [modals, isWindowOpen, platform]);
+
+  // Spec 06 Requirement 1.8: Cmd/Ctrl+R never reloads the studio, in any focus state.
+  useEffect(() => installReloadGuard(window), []);
 
   // Spec 06 Requirement 6.3: files dropped anywhere but the card are refused, never opened by the browser.
   useEffect(() => {

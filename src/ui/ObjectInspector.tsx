@@ -58,7 +58,8 @@ export type StudioWindow =
   | InspectorRequest
   | { id: number; kind: "stackGraph" }
   | { id: number; kind: "showcaseChooser" }
-  | { id: number; kind: "iconEditor" };
+  | { id: number; kind: "iconEditor" }
+  | { id: number; kind: "recent" };
 
 export interface StudioWindows {
   subscribe(listener: () => void): () => void;
@@ -72,6 +73,8 @@ export interface StudioWindows {
   openShowcaseChooser(): void;
   /** Edit > Icon Editor (spec 06 Requirement 10.1). */
   openIconEditor(): void;
+  /** Go > Recent (spec 06 Requirement 5.4). */
+  openRecent(): void;
   close(): void;
 }
 
@@ -105,6 +108,9 @@ export function createStudioWindows(): StudioWindows {
     },
     openIconEditor() {
       set({ id: nextId++, kind: "iconEditor" });
+    },
+    openRecent() {
+      set({ id: nextId++, kind: "recent" });
     },
     close() {
       if (current !== null) set(null);

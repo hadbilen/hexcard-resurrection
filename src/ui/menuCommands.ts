@@ -42,7 +42,6 @@ import type { ModalManager } from "./System7Shell.tsx";
 
 /** Items whose feature belongs to a later spec: always disabled, no shortcut label, no handler (Requirement 1.5). */
 export type ReservedCommand =
-  | "go.recent"
   | "ai.conjureStack"
   | "ai.oracleSettings";
 
@@ -69,6 +68,7 @@ export type MenuCommand =
   | "go.previous"
   | "go.next"
   | "go.last"
+  | "go.recent"
   | "go.find"
   | "go.messageBox"
   | "go.stackGraph"
@@ -88,7 +88,6 @@ export type MenuCommand =
   | "ai.conjure";
 
 export const RESERVED_COMMANDS: ReadonlySet<MenuCommand> = new Set<ReservedCommand>([
-  "go.recent",
   "ai.conjureStack",
   "ai.oracleSettings",
 ]);
@@ -248,7 +247,7 @@ export function detectPlatform(
 }
 
 export interface Shortcut {
-  key: "B" | "Z" | "M" | "F";
+  key: "B" | "Z" | "M" | "F" | "R";
   shift: boolean;
 }
 
@@ -267,7 +266,7 @@ export interface ShortcutEntry {
 /**
  * Spec 05 Requirement 2.2 and spec 06 Requirements 1.4, 1.5: the only menu shortcuts. Platform
  * modifier = Cmd or Ctrl. Go > Message Box has none on macOS, where Cmd+M minimizes the window:
- * there it gets no label, no mapping and no preventDefault. Go > Find has modifier + F everywhere.
+ * there it gets no label, no mapping and no preventDefault. Go > Find has modifier + F and Go > Recent modifier + R everywhere.
  */
 export const SHORTCUTS: readonly ShortcutEntry[] = [
   { command: "edit.background", shortcut: { key: "B", shift: false } },
@@ -275,6 +274,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   { command: "edit.redo", shortcut: { key: "Z", shift: true } },
   { command: "go.messageBox", shortcut: { key: "M", shift: false }, platforms: ["other"] },
   { command: "go.find", shortcut: { key: "F", shift: false } },
+  { command: "go.recent", shortcut: { key: "R", shift: false } },
 ];
 
 /** The shortcut entries that exist on `platform`. */
@@ -283,7 +283,7 @@ export function platformShortcuts(platform: Platform): readonly ShortcutEntry[] 
 }
 
 /** Physical key codes of the shortcut letters (`event.code`, so every keyboard layout maps alike). */
-const SHORTCUT_KEY_CODES: Readonly<Record<string, Shortcut["key"]>> = { KeyB: "B", KeyZ: "Z", KeyM: "M", KeyF: "F" };
+const SHORTCUT_KEY_CODES: Readonly<Record<string, Shortcut["key"]>> = { KeyB: "B", KeyZ: "Z", KeyM: "M", KeyF: "F", KeyR: "R" };
 
 /**
  * Requirement 2.1: combinations browsers reserve and pages cannot prevent. `modifier: "platform"`
@@ -301,6 +301,15 @@ export const RESERVED_BROWSER_SHORTCUTS: readonly { modifier: "platform" | "ctrl
   { modifier: "ctrl", key: "PageUp", shift: false },
   { modifier: "ctrl", key: "PageDown", shift: false },
 ];
+
+/**
+ * Spec 06 Requirement 1.8: Cmd/Ctrl+R without Shift or Alt. The shell prevents it in every focus
+ * state and while a dialog or studio window is open, so the Recent shortcut never reloads the
+ * studio. Platform modifier = Cmd or Ctrl, as everywhere else; F5 and Cmd/Ctrl+Shift+R are not covered.
+ */
+export function isReloadShortcut(event: Pick<KeyLike, "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">): boolean {
+  return event.code === "KeyR" && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
+}
 
 /** The fields of a `KeyboardEvent` the mapping reads. */
 export interface KeyLike {
@@ -524,7 +533,7 @@ export interface MenuHandlerDeps {
   history: Pick<HexHistory, "execute" | "undo" | "redo" | "canUndo" | "canRedo" | "undoLabel" | "redoLabel">;
   /** `backHistory` is read by the enabling rule of Go > Back when its dispatch starts. */
   bus: Pick<MessageBus, "runCommand" | "changeCard" | "changeCardBy" | "sendNested" | "backHistory">;
-  windows: Pick<StudioWindows, "openInspector" | "openStackGraph" | "openShowcaseChooser" | "openIconEditor">;
+  windows: Pick<StudioWindows, "openInspector" | "openStackGraph" | "openShowcaseChooser" | "openIconEditor" | "openRecent">;
   files: Pick<
     FileCommands,
     "replaceStackFrom" | "openStackFile" | "saveStackFile" | "copyShareLink" | "exportStandaloneHtml" | "pickImageFile"
@@ -663,6 +672,8 @@ export function createMenuHandlers(deps: MenuHandlerDeps): ShellMenuHandlers {
     "go.messageBox": () => messageBox.show({ select: messageBox.isOpen() ? "all" : "end" }),
     // Spec 06 Requirement 4.1: `find ""` with the caret between the quotes.
     "go.find": () => messageBox.show({ line: FIND_TEMPLATE, select: { start: FIND_CARET, end: FIND_CARET } }),
+    // Spec 06 Requirement 5.4: always enabled.
+    "go.recent": () => windows.openRecent(),
     "go.stackGraph": () => windows.openStackGraph(),
     ...toolHandlers,
     // Spec 06 Requirements 7.1, 7.8: on at the centred origin, or off when it is already on.
