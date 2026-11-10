@@ -30,7 +30,9 @@ import {
   dragRect,
   editableField,
   fieldExitMessage,
+  foundOptions,
   handleAt,
+  scrollTargetForFound,
   hitTestLayerPart,
   HANDLE_SIZE,
   MIN_PART_SIZE,
@@ -562,5 +564,44 @@ describe("UI scale k (Requirement 2.10)", () => {
     for (const [, value] of viewportRules.matchAll(/opacity:\s*([\d.]+)/g)) expect(["0", "1"]).toContain(value);
     const bare = viewportRules.match(/\b\d+(\.\d+)?px\b/g) ?? [];
     expect(bare.filter((value) => value !== "0px")).toEqual([]);
+  });
+});
+
+describe("found text in the viewport (spec 06 Requirements 4.8, 4.10)", () => {
+  /** Fixed 6-px advance, no ink: enough for line layout in Node. */
+  const stubText = { measureText: (text: string) => [...text].length * 6, drawText: (_t: string, _c: string, _x: number, _b: number, w: number, h: number) => new Uint8Array(w * h) };
+  function scrollingStack(style: HexFieldPart["style"]): HexStack {
+    const stack = makeStack();
+    const notes: HexFieldPart = {
+      id: "prt_notes", name: "Notes", type: "field", layerScope: "card", rect: { x: 10, y: 100, width: 200, height: 40 },
+      visible: true, enabled: true, scriptSource: "", style, content: "one\ntwo\nthree\nfour\nfive lamp", sharedText: false,
+      lockText: true, dontWrap: false, showLines: false, textAlign: "left", textFont: "System", textSize: 12, textStyle: [],
+    };
+    return { ...stack, cards: stack.cards.map((card, i) => (i === 0 ? { ...card, parts: [...card.parts, notes] } : card)) };
+  }
+
+  it("passes the found range to composeFrame only on its card", () => {
+    const store = createHexStore({ stack: scrollingStack("rectangle"), compile: parseHexTalk });
+    expect(foundOptions(store.getSnapshot())).toBeUndefined();
+    const text = "one\ntwo\nthree\nfour\nfive lamp";
+    store.setFound({ cardId: store.getSnapshot().currentCardId, layer: "card", partId: "prt_notes", start: 24, end: 28, text });
+    expect(foundOptions(store.getSnapshot())).toEqual({ partId: "prt_notes", start: 24, end: 28 });
+    expect(foundOptions({ ...store.getSnapshot(), currentCardId: "elsewhere" })).toBeUndefined();
+  });
+
+  it("scrolls a scrolling field so the match's line is visible, and leaves other fields alone", () => {
+    const text = "one\ntwo\nthree\nfour\nfive lamp";
+    for (const style of ["scrolling", "rectangle"] as const) {
+      const store = createHexStore({ stack: scrollingStack(style), compile: parseHexTalk });
+      store.setFound({ cardId: store.getSnapshot().currentCardId, layer: "card", partId: "prt_notes", start: 24, end: 28, text });
+      const target = scrollTargetForFound(store.getSnapshot(), 0, stubText);
+      if (style === "rectangle") {
+        expect(target).toBeUndefined();
+        continue;
+      }
+      // Text rect height 36 shows two 16-px lines; "five lamp" is line 4 (top 64), maxScroll 80 - 36 = 44.
+      expect(target).toEqual({ partId: "prt_notes", scroll: 44 });
+      expect(scrollTargetForFound(store.getSnapshot(), 44, stubText)).toBeUndefined(); // already visible
+    }
   });
 });

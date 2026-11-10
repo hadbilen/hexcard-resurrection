@@ -631,6 +631,54 @@ function drawEditing(frame: Uint8Array, clip: Clip, layout: FieldTextLayout, tex
   });
 }
 
+/**
+ * Spec 06 Requirement 4.8: the found-text box. The range [start, end) is split into per-line
+ * segments exactly as a selection is (`drawEditing`); for each segment from x0 to x1 on a line with
+ * top `top`, the 1-pixel outline from (x0 - 1, top) to (x1, top + lineHeight - 1) is inverted.
+ * Horizontally it is clipped to the part rect (the left column lies 1 px left of the text), and
+ * vertically to the text rect, so a line scrolled half out of view never inverts the field frame.
+ */
+function drawFound(frame: Uint8Array, clip: Clip, layout: FieldTextLayout, text: string, found: { start: number; end: number }): void {
+  const clamp = (i: number): number => Math.min(text.length, Math.max(0, Number.isFinite(i) ? Math.floor(i) : 0));
+  const lo = clamp(Math.min(found.start, found.end));
+  const hi = clamp(Math.max(found.start, found.end));
+  if (lo === hi) return;
+  const boxes = layout.lineBoxes;
+  const tr = layout.textRect;
+  const textClip = intersect(clip, rectClip(tr));
+  const boxClip = { x0: clip.x0, x1: clip.x1, y0: textClip.y0, y1: textClip.y1 };
+  const lh = layout.lineHeight;
+  boxes.forEach((box, k) => {
+    const spanEnd = k + 1 < boxes.length ? boxes[k + 1].start : text.length;
+    if (!(lo < spanEnd && hi > box.start)) return;
+    const x0 = lo < box.start ? tr.x : xAtIndex(layout, text, box, lo);
+    const x1 = hi > box.end ? tr.x + tr.width : xAtIndex(layout, text, box, hi);
+    const left = x0 - 1;
+    const top = box.y;
+    const bottom = box.y + lh - 1;
+    invertBox(frame, boxClip, left, top, x1 + 1, top + 1); // top row
+    invertBox(frame, boxClip, left, bottom, x1 + 1, bottom + 1); // bottom row
+    invertBox(frame, boxClip, left, top + 1, left + 1, bottom); // left column
+    invertBox(frame, boxClip, x1, top + 1, x1 + 1, bottom); // right column
+  });
+}
+
+/**
+ * Spec 06 Requirement 4.10: the scroll offset that shows the line holding `index` of a `scrolling`
+ * field. The current (clamped) offset when that line is fully visible, else
+ * `min(maxScroll, lineIndex * lineHeight)`. Fields of other styles never scroll (0).
+ */
+export function fieldScrollToIndex(part: HexFieldPart, text: string, index: number, options: FieldLayoutOptions = {}): number {
+  const layout = layoutFieldText(part, text, options);
+  if (part.style !== "scrolling") return 0;
+  const boxes = layout.lineBoxes;
+  if (boxes.length === 0) return layout.scroll;
+  const k = caretLine(boxes, Math.min(text.length, Math.max(0, Math.floor(index))));
+  const top = boxes[k].y - layout.maskRect.y; // the line's top in unscrolled text coordinates
+  const visible = top >= layout.scroll && top + layout.lineHeight <= layout.scroll + layout.textRect.height;
+  return visible ? layout.scroll : Math.min(layout.maxScroll, top);
+}
+
 function nextCodePoint(text: string, i: number): number {
   const c = text.charCodeAt(i);
   if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
@@ -688,6 +736,7 @@ function drawField(
 
   if (part.showLines) drawRules(frame, textClip, tr, scroll, lineHeight, baselineOffset);
   if (layout) blitInk(frame, textClip, layout.mask, layout.maskRect, part.enabled ? undefined : dimmedInk);
+  if (layout && ctx.found) drawFound(frame, clip, layout, ctx.text, ctx.found);
   if (part.style === "scrolling") drawScrollbar(frame, clip, part.rect, scroll, maxScroll);
   if (layout && ctx.editing) drawEditing(frame, clip, layout, ctx.text, ctx.editing);
 }

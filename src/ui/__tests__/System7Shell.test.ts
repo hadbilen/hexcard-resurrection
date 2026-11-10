@@ -244,6 +244,18 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
     }
   });
 
+  it("runs Go > Find for Cmd+F and Ctrl+F on every platform and prevents the browser's find bar (spec 06 Requirements 1.4, 1.7)", () => {
+    for (const platform of ["mac", "other"] as const) {
+      for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+        const { handlers, ran } = recordingHandlers();
+        const event = press({ key: "f", code: "KeyF", ...modifier, target: element(false) });
+        expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers, platform })).toBe("go.find");
+        expect(ran).toEqual(["go.find"]);
+        expect(event.prevented).toBe(1);
+      }
+    }
+  });
+
   it("prevents a disabled shortcut but does not run it (Undo without history)", () => {
     const { handlers, ran } = recordingHandlers();
     const event = press({ key: "z", code: "KeyZ", ctrlKey: true });
@@ -277,6 +289,9 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
       { key: "b", code: "KeyB", ctrlKey: true },
       { key: "z", code: "KeyZ", metaKey: true },
       { key: "Z", code: "KeyZ", ctrlKey: true, shiftKey: true },
+      { key: "m", code: "KeyM", ctrlKey: true },
+      { key: "f", code: "KeyF", ctrlKey: true },
+      { key: "f", code: "KeyF", metaKey: true },
       { key: "Delete", code: "Delete" },
       { key: "Backspace", code: "Backspace" },
     ]) {

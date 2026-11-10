@@ -15,6 +15,8 @@ import {
   buildMenus,
   createMenuHandlers,
   detectPlatform,
+  FIND_CARET,
+  FIND_TEMPLATE,
   handleShortcutKey,
   isEnabled,
   isReservedCommand,
@@ -250,7 +252,7 @@ function findItem(context: MenuContext, command: MenuCommand) {
 /** A plain MenuContext without a store, for the enabling rules. */
 function contextOf(stack: HexStack, overrides: Partial<HexRuntimeState> = {}, extra: Partial<Omit<MenuContext, "state">> = {}): MenuContext {
   return {
-    state: { stack, currentCardId: stack.cards[0].id, editLayer: "card", tool: "browse", selectedPartId: null, ...overrides },
+    state: { stack, currentCardId: stack.cards[0].id, editLayer: "card", tool: "browse", selectedPartId: null, found: null, ...overrides },
     history: { canUndo: () => false, canRedo: () => false, undoLabel: () => undefined, redoLabel: () => undefined },
     backHistory: [],
     paletteVisible: false,
@@ -346,15 +348,19 @@ describe("menu layout", () => {
     expect(MENU_TOOLS).toEqual(TOOLS.map(({ id, label }) => ({ id, label })));
   });
 
-  it("gives only Edit Background, Undo, Redo and (except on macOS) Message Box a shortcut label (Requirements 2.2, 2.3)", () => {
+  it("gives only Edit Background, Undo, Redo, Find and (except on macOS) Message Box a shortcut label (Requirements 2.2, 2.3)", () => {
     const labelled = (platform: "mac" | "other") =>
       items(buildMenus(contextOf(threeCards()), platform))
         .filter((entry) => entry.shortcut !== undefined)
         .map((entry) => [entry.command, entry.shortcut]);
-    expect(labelled("mac")).toEqual([["edit.undo", "Cmd+Z"], ["edit.redo", "Cmd+Shift+Z"], ["edit.background", "Cmd+B"]]);
-    // Spec 06 Requirements 1.4-1.6: Go > Message Box has Ctrl+M everywhere but macOS, which gets no label.
+    // Spec 06 Requirements 1.4-1.6: Go > Find has Cmd+F / Ctrl+F; Go > Message Box has Ctrl+M everywhere
+    // but macOS, which gets no label.
+    expect(labelled("mac")).toEqual([
+      ["edit.undo", "Cmd+Z"], ["edit.redo", "Cmd+Shift+Z"], ["edit.background", "Cmd+B"], ["go.find", "Cmd+F"],
+    ]);
     expect(labelled("other")).toEqual([
-      ["edit.undo", "Ctrl+Z"], ["edit.redo", "Ctrl+Shift+Z"], ["edit.background", "Ctrl+B"], ["go.messageBox", "Ctrl+M"],
+      ["edit.undo", "Ctrl+Z"], ["edit.redo", "Ctrl+Shift+Z"], ["edit.background", "Ctrl+B"], ["go.find", "Ctrl+F"],
+      ["go.messageBox", "Ctrl+M"],
     ]);
     expect(shortcutLabel({ key: "Z", shift: true }, "mac")).toBe("Cmd+Shift+Z");
     expect(shortcutLabel({ key: "B", shift: false }, "other")).toBe("Ctrl+B");
@@ -547,7 +553,7 @@ describe("menu coverage (Requirement 15.3)", () => {
   it("ignores a disabled item: runMenuCommand neither runs nor reports it", async () => {
     const t = setup(oneCard());
     const before = observe(t);
-    for (const command of ["objects.deleteCard", "go.next", "edit.undo", "objects.deletePart", "go.find"] as const) {
+    for (const command of ["objects.deleteCard", "go.next", "edit.undo", "objects.deletePart", "go.recent"] as const) {
       expect(await t.choose(command)).toBe(false);
     }
     expect(observe(t)).toEqual(before);
@@ -602,9 +608,9 @@ function press(init: Partial<KeyLike> & { key: string }, target: unknown = deskt
   return event;
 }
 
-const ctrl = (code: "KeyB" | "KeyZ" | "KeyM", shiftKey = false, extra: Partial<KeyLike> = {}) =>
+const ctrl = (code: "KeyB" | "KeyZ" | "KeyM" | "KeyF", shiftKey = false, extra: Partial<KeyLike> = {}) =>
   ({ key: code.slice(3).toLowerCase(), code, ctrlKey: true, shiftKey, ...extra });
-const cmd = (code: "KeyB" | "KeyZ" | "KeyM", shiftKey = false) => ({ key: code.slice(3).toLowerCase(), code, metaKey: true, shiftKey });
+const cmd = (code: "KeyB" | "KeyZ" | "KeyM" | "KeyF", shiftKey = false) => ({ key: code.slice(3).toLowerCase(), code, metaKey: true, shiftKey });
 
 /** Records every handler call; every command is enabled except what the context rules out. */
 function recordingHandlers(): { handlers: MenuHandlers; ran: MenuCommand[] } {
@@ -622,7 +628,7 @@ const enabledEverything = (): MenuContext =>
 
 describe("shortcuts", () => {
   it("assigns no shortcut that browsers reserve (Requirement 2.1)", () => {
-    expect(SHORTCUTS).toHaveLength(4);
+    expect(SHORTCUTS).toHaveLength(5);
     // Spec 06 Requirement 1.9: no new shortcut collides with a reserved combination either.
     for (const { shortcut } of SHORTCUTS) {
       const clash = RESERVED_BROWSER_SHORTCUTS.find((reserved) => reserved.key === shortcut.key && reserved.shift === shortcut.shift);
@@ -704,7 +710,7 @@ describe("shortcuts", () => {
       "inside a contenteditable element": element("span", [], editable),
     };
     const shortcuts = [ctrl("KeyB"), cmd("KeyB"), ctrl("KeyZ"), cmd("KeyZ"), ctrl("KeyZ", true), cmd("KeyZ", true),
-      ctrl("KeyM"), cmd("KeyM"), { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }];
+      ctrl("KeyM"), cmd("KeyM"), ctrl("KeyF"), cmd("KeyF"), { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }];
     for (const [name, target] of Object.entries(targets)) {
       expect(isTextInputTarget(target as unknown as EventTarget), name).toBe(true);
       for (const init of shortcuts) {
@@ -738,6 +744,24 @@ describe("shortcuts", () => {
     // The other shortcuts are the same on both platforms.
     expect(shortcutCommand(press(cmd("KeyB")), context, "mac")).toEqual({ command: "edit.background", preventDefault: true });
     expect(shortcutCommand(press(ctrl("KeyZ", true)), context, "mac")).toEqual({ command: "edit.redo", preventDefault: true });
+  });
+
+  it("maps Cmd and Ctrl + F to Go > Find on every platform and prevents the default (spec 06 Requirements 1.4, 1.6, 1.7)", () => {
+    const context = enabledEverything();
+    for (const platform of ["mac", "other"] as const) {
+      for (const make of [ctrl, cmd]) {
+        expect(shortcutCommand(press(make("KeyF")), context, platform)).toEqual({ command: "go.find", preventDefault: true });
+        expect(shortcutCommand(press(make("KeyF", true)), context, platform)).toBeUndefined(); // no Shift variant
+        expect(shortcutCommand(press({ ...make("KeyF"), altKey: true }), context, platform)).toBeUndefined();
+        const { handlers, ran } = recordingHandlers();
+        const event = press(make("KeyF"));
+        expect(handleShortcutKey(event, context, handlers, platform)).toBe("go.find");
+        expect(event.prevented).toBe(true);
+        expect(ran).toEqual(["go.find"]);
+      }
+    }
+    // Another keyboard layout: the physical key decides.
+    expect(shortcutCommand(press({ key: "u", code: "KeyF", ctrlKey: true }), context, "other")?.command).toBe("go.find");
   });
 
   it("assigns no reserved combination on either platform (spec 06 Requirement 1.9)", () => {
@@ -1120,6 +1144,37 @@ describe("Go > Message Box (spec 06 Requirements 1.1, 1.3, 2.1, 2.2)", () => {
     expect(await t.choose("go.messageBox")).toBe(true);
     const second = t.messageBox.getSnapshot();
     expect(second).toMatchObject({ open: true, line: "put 1 into x", focus: { select: "all" } });
+    expect(second.focus!.id).not.toBe(first.focus!.id);
+    expect(t.log).toEqual([]);
+    expect(t.history.canUndo()).toBe(false);
+  });
+});
+
+describe("Go > Find (spec 06 Requirements 1.1, 1.3, 4.1)", () => {
+  it("is a real item labelled Find..., enabled with every tool and edit layer, with Cmd+F / Ctrl+F", () => {
+    expect(isReservedCommand("go.find")).toBe(false);
+    expect(RESERVED_COMMANDS.has("go.find")).toBe(false);
+    for (const { id } of MENU_TOOLS) {
+      for (const editLayer of ["card", "background"] as const) {
+        const context = contextOf(threeCards(), { tool: id, editLayer });
+        expect(isEnabled("go.find", context), `${id} ${editLayer}`).toBe(true);
+        expect(findItem(context, "go.find")).toMatchObject({ label: "Find...", disabled: false, shortcut: "Ctrl+F" });
+      }
+    }
+    expect(items(buildMenus(contextOf(threeCards()), "mac")).find((entry) => entry.command === "go.find")?.shortcut).toBe("Cmd+F");
+  });
+
+  it('opens the Message Box with find "" and the caret between the quotes, replacing the line; sends no message', async () => {
+    const t = setup(threeCards());
+    t.messageBox.setLine("put 1 into x");
+    expect(await t.choose("go.find")).toBe(true);
+    const first = t.messageBox.getSnapshot();
+    expect(first).toMatchObject({ open: true, line: 'find ""', focus: { select: { start: 6, end: 6 } } });
+    expect(FIND_TEMPLATE.slice(0, FIND_CARET)).toBe('find "');
+    t.messageBox.setLine('find "lamp"');
+    expect(await t.choose("go.find")).toBe(true); // already open: the line is replaced again
+    const second = t.messageBox.getSnapshot();
+    expect(second).toMatchObject({ open: true, line: 'find ""', focus: { select: { start: 6, end: 6 } } });
     expect(second.focus!.id).not.toBe(first.focus!.id);
     expect(t.log).toEqual([]);
     expect(t.history.canUndo()).toBe(false);

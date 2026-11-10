@@ -715,3 +715,82 @@ describe("part selection (spec 05 Requirements 10.1, 10.2, 14.1)", () => {
     }
   });
 });
+
+describe("found text (spec 06 Requirements 4.8, 4.9, 12.2)", () => {
+  const onCard = { cardId: "crd_1", layer: "card" as const, partId: "prt_card_fld", start: 5, end: 9, text: "Card text" };
+  const onBackground = { cardId: "crd_1", layer: "background" as const, partId: "prt_unshared", start: 0, end: 3, text: "One" };
+
+  it("starts empty and accepts a found text on a visible field of the current card", () => {
+    const { store } = setup();
+    expect(store.getSnapshot().found).toBeNull();
+    store.setFound(onCard);
+    expect(store.getSnapshot().found).toEqual(onCard);
+    expect(Object.isFrozen(store.getSnapshot().found)).toBe(true);
+    store.setFound(onBackground);
+    expect(store.getSnapshot().found).toEqual(onBackground);
+    const before = store.getSnapshot();
+    store.setFound({ ...onBackground }); // equal value: no new snapshot
+    expect(store.getSnapshot()).toBe(before);
+    store.setFound(null);
+    expect(store.getSnapshot().found).toBeNull();
+  });
+
+  it("rejects a found text that is not on the current card, not a visible field, not its text or out of range", () => {
+    const { store } = setup();
+    const before = store.getSnapshot();
+    const invalid = [
+      { ...onCard, cardId: "crd_2" },
+      { ...onCard, partId: "prt_btn" },
+      { ...onCard, partId: "prt_gone" },
+      { ...onCard, layer: "background" as const },
+      { ...onCard, text: "Other text" },
+      { ...onCard, start: 4, end: 4 },
+      { ...onCard, start: -1 },
+      { ...onCard, end: 10 },
+      { ...onCard, start: 1.5 },
+      { ...onBackground, partId: "prt_shared", text: "One" },
+    ];
+    for (const found of invalid) expect(() => store.setFound(found), JSON.stringify(found)).toThrow(HexMutationError);
+    store.applyRuntime({ type: "setPartProperty", partId: "prt_card_fld", property: "visible", value: false });
+    expect(() => store.setFound(onCard)).toThrow(HexMutationError);
+    expect(store.getSnapshot().found).toBeNull();
+    expect(before.found).toBeNull();
+  });
+
+  it("is cleared when the current card changes, the field's text changes, the field is hidden or removed, or a stack is loaded", () => {
+    const { store } = setup();
+    store.setFound(onCard);
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    expect(store.getSnapshot().found).toBeNull();
+    store.applyRuntime({ type: "goToCard", cardId: "crd_1" });
+    expect(store.getSnapshot().found).toBeNull(); // coming back does not restore it
+
+    store.setFound(onCard);
+    store.applyRuntime({ type: "setFieldText", cardId: "crd_1", layer: "card", partId: "prt_card_fld", text: "Card texts" });
+    expect(store.getSnapshot().found).toBeNull();
+
+    store.setFound(onBackground);
+    store.applyRuntime({ type: "setPartProperty", partId: "prt_unshared", property: "visible", value: false });
+    expect(store.getSnapshot().found).toBeNull();
+
+    store.setFound({ ...onCard, text: "Card texts", end: 10 });
+    const stack = store.getSnapshot().stack;
+    store.applyAuthoring({ ...stack, cards: stack.cards.map((card) => (card.id === "crd_1" ? { ...card, parts: [] } : card)) });
+    expect(store.getSnapshot().found).toBeNull();
+
+    const fresh = setup();
+    fresh.store.setFound(onCard);
+    fresh.store.replaceStack(makeStack());
+    expect(fresh.store.getSnapshot().found).toBeNull();
+  });
+
+  it("is kept across tool changes, Edit Background and unrelated stack changes", () => {
+    const { store } = setup();
+    store.setFound(onCard);
+    store.setTool("button");
+    store.setEditLayer("background");
+    store.applyRuntime({ type: "setFieldText", cardId: "crd_1", layer: "background", partId: "prt_unshared", text: "Changed" });
+    store.applyRuntime({ type: "setStackProperty", property: "name", value: "Renamed" });
+    expect(store.getSnapshot().found).toEqual(onCard);
+  });
+});

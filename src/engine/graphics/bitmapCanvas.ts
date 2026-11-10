@@ -20,9 +20,17 @@ export interface EditingState {
   selEnd: number;
 }
 
+/** Spec 06 Requirement 4.8: the found text's character range [start, end) in one field. */
+export interface FoundRange {
+  start: number;
+  end: number;
+}
+
 export interface ComposeOptions {
   editing?: EditingState;
   pressedPartId?: HexID;
+  /** Spec 06: the found text, boxed in the field `partId`. */
+  found?: FoundRange & { partId: HexID };
 }
 
 /** What a part rasterizer gets to know about the part it draws. */
@@ -39,6 +47,8 @@ export interface PartDrawContext {
   pressed: boolean;
   /** `opts.editing` when it refers to this part, otherwise undefined. */
   editing?: EditingState;
+  /** `opts.found` (without its part id) when it refers to this part, otherwise undefined. */
+  found?: FoundRange;
 }
 
 /** Draws one visible part into the frame (states 1/2 only). Implemented by partRenderer.ts. */
@@ -108,6 +118,7 @@ function drawParts(
       text: partText(part, card),
       pressed: opts.pressedPartId === part.id,
       editing: opts.editing?.partId === part.id ? opts.editing : undefined,
+      found: opts.found?.partId === part.id ? { start: opts.found.start, end: opts.found.end } : undefined,
     });
   }
 }

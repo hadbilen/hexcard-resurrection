@@ -42,7 +42,6 @@ import type { ModalManager } from "./System7Shell.tsx";
 /** Items whose feature belongs to a later spec: always disabled, no shortcut label, no handler (Requirement 1.5). */
 export type ReservedCommand =
   | "go.recent"
-  | "go.find"
   | "ai.conjureStack"
   | "ai.oracleSettings";
 
@@ -69,6 +68,7 @@ export type MenuCommand =
   | "go.previous"
   | "go.next"
   | "go.last"
+  | "go.find"
   | "go.messageBox"
   | "go.stackGraph"
   | ToolCommand
@@ -87,7 +87,6 @@ export type MenuCommand =
 
 export const RESERVED_COMMANDS: ReadonlySet<MenuCommand> = new Set<ReservedCommand>([
   "go.recent",
-  "go.find",
   "ai.conjureStack",
   "ai.oracleSettings",
 ]);
@@ -243,7 +242,7 @@ export function detectPlatform(
 }
 
 export interface Shortcut {
-  key: "B" | "Z" | "M";
+  key: "B" | "Z" | "M" | "F";
   shift: boolean;
 }
 
@@ -262,13 +261,14 @@ export interface ShortcutEntry {
 /**
  * Spec 05 Requirement 2.2 and spec 06 Requirements 1.4, 1.5: the only menu shortcuts. Platform
  * modifier = Cmd or Ctrl. Go > Message Box has none on macOS, where Cmd+M minimizes the window:
- * there it gets no label, no mapping and no preventDefault.
+ * there it gets no label, no mapping and no preventDefault. Go > Find has modifier + F everywhere.
  */
 export const SHORTCUTS: readonly ShortcutEntry[] = [
   { command: "edit.background", shortcut: { key: "B", shift: false } },
   { command: "edit.undo", shortcut: { key: "Z", shift: false } },
   { command: "edit.redo", shortcut: { key: "Z", shift: true } },
   { command: "go.messageBox", shortcut: { key: "M", shift: false }, platforms: ["other"] },
+  { command: "go.find", shortcut: { key: "F", shift: false } },
 ];
 
 /** The shortcut entries that exist on `platform`. */
@@ -277,7 +277,7 @@ export function platformShortcuts(platform: Platform): readonly ShortcutEntry[] 
 }
 
 /** Physical key codes of the shortcut letters (`event.code`, so every keyboard layout maps alike). */
-const SHORTCUT_KEY_CODES: Readonly<Record<string, Shortcut["key"]>> = { KeyB: "B", KeyZ: "Z", KeyM: "M" };
+const SHORTCUT_KEY_CODES: Readonly<Record<string, Shortcut["key"]>> = { KeyB: "B", KeyZ: "Z", KeyM: "M", KeyF: "F" };
 
 /**
  * Requirement 2.1: combinations browsers reserve and pages cannot prevent. `modifier: "platform"`
@@ -502,6 +502,10 @@ export interface MenuHandlerDeps {
   random?: RandomSource;
 }
 
+/** Spec 06 Requirement 4.1: the line Go > Find puts in the Message Box, and the caret between its quotes. */
+export const FIND_TEMPLATE = 'find ""';
+export const FIND_CARET = 6;
+
 /** Authoring command that switches the stack theme; Undo restores the palette it replaced. */
 export function createThemeCommand(name: ThemePaletteName): HexCommand {
   let previous: HexStack["themePalette"] | undefined;
@@ -621,6 +625,8 @@ export function createMenuHandlers(deps: MenuHandlerDeps): ShellMenuHandlers {
     "go.last": go("go.last", (state) => resolveRelativeCard(state, "last")),
     // Spec 06 Requirements 2.1, 2.2: open with the caret at the end, or select the whole line when open.
     "go.messageBox": () => messageBox.show({ select: messageBox.isOpen() ? "all" : "end" }),
+    // Spec 06 Requirement 4.1: `find ""` with the caret between the quotes.
+    "go.find": () => messageBox.show({ line: FIND_TEMPLATE, select: { start: FIND_CARET, end: FIND_CARET } }),
     "go.stackGraph": () => windows.openStackGraph(),
     ...toolHandlers,
     "objects.objectInfo": inspectSelected,

@@ -6,8 +6,11 @@ import {
   classifyMessageBoxLine,
   COMMAND_WORDS,
   createMessageBoxRunner,
+  FIND_COMMAND_LABEL,
+  FIND_USAGE,
   HANDLER_ONLY,
   MESSAGE_BOX_COMMAND,
+  NOT_FOUND,
   messageBoxValueText,
   type MessageBoxIO,
 } from "../messageBox.ts";
@@ -77,8 +80,16 @@ describe("classifyMessageBoxLine", () => {
     if (open.kind === "error") expect(open.message).not.toContain("hexmessagebox");
   });
 
-  it("leaves `find` to a later task: it is an ordinary expression error for now", () => {
-    expect(classifyMessageBoxLine('find "lamp"')).toEqual({ kind: "error", message: 'expected the end of the line but found "lamp"', column: 6 });
+  it("classifies a line whose first word is find as a find command (Requirements 3.1, 4.2)", () => {
+    expect(classifyMessageBoxLine('find "lamp"')).toEqual({ kind: "find", text: "lamp" });
+    expect(classifyMessageBoxLine('  FIND   "brass lamp"   ')).toEqual({ kind: "find", text: "brass lamp" });
+    expect(classifyMessageBoxLine('Find\t"x"')).toEqual({ kind: "find", text: "x" });
+    expect(classifyMessageBoxLine('find ""')).toEqual({ kind: "find", text: "" });
+    for (const line of ["find", "find lamp", 'find "lamp" x', 'find"lamp"', 'find "lamp', 'find "a"b"', "find 3 * 4", 'find whole "lamp"']) {
+      expect(classifyMessageBoxLine(line), line).toEqual({ kind: "findUsage" });
+    }
+    // Only the whole first word counts.
+    expect(classifyMessageBoxLine("finder").kind).toBe("expression");
   });
 
   it("never lets a line reach the wrapper's other lines", () => {
@@ -178,11 +189,18 @@ function recordingIO(initial = ""): MessageBoxIO & { alerts: [string, readonly s
 }
 
 /** A bus that queues command tasks; `drain` runs them in order on fresh dispatch contexts. */
-function recordingBus(globals: Map<string, HexValue>) {
+function recordingBus(globals: Map<string, HexValue>, store?: HexStore) {
   const queued: { label: string; task: (ctx: DispatchContext) => Promise<void> }[] = [];
+  const changes: string[] = [];
   return {
     queued,
+    changes,
     runCommand: (label: string, task: (ctx: DispatchContext) => Promise<void>) => void queued.push({ label, task }),
+    changeCard: async (target: unknown) => {
+      if (typeof target !== "string") throw new Error("go back is not used here");
+      changes.push(target);
+      store?.applyRuntime({ type: "goToCard", cardId: target });
+    },
     async drain(): Promise<DispatchContext[]> {
       const contexts: DispatchContext[] = [];
       for (let entry = queued.shift(); entry; entry = queued.shift()) {
@@ -198,10 +216,12 @@ function recordingBus(globals: Map<string, HexValue>) {
 function recordingSetup(initialLine = "") {
   const store = createHexStore({ stack: makeStack(), compile: parseHexTalk });
   const globals = new Map<string, HexValue>();
-  const bus = recordingBus(globals);
+  const bus = recordingBus(globals, store);
   const io = recordingIO(initialLine);
-  const run = createMessageBoxRunner({ store, bus, host: createHost(store), io });
-  return { store, globals, bus, io, run };
+  const sounds: [string, number, string][] = [];
+  const host: HexHost = { ...createHost(store), playSound: (voice, tempo, notesText) => void sounds.push([voice, tempo, notesText]) };
+  const run = createMessageBoxRunner({ store, bus, host, io });
+  return { store, globals, bus, io, run, sounds };
 }
 
 const notes = (store: HexStore, cardId: string, partId: string): string => readFieldText(store.getSnapshot().stack, cardId, "card", partId);
@@ -278,6 +298,98 @@ describe("createMessageBoxRunner", () => {
     run("x + it");
     await bus.drain();
     expect(io.current).toBe("15");
+  });
+});
+
+describe("find commands in the Message Box (Requirements 4.2, 4.3, 4.6-4.11)", () => {
+  const setText = (store: HexStore, cardId: string, partId: string, text: string): void =>
+    store.applyRuntime({ type: "setFieldText", cardId, layer: "card", partId, text });
+
+  it("alerts the usage for a malformed find command and queues nothing", () => {
+    const { bus, io, run } = recordingSetup('find lamp');
+    run("find lamp");
+    expect(io.alerts).toEqual([[FIND_USAGE, undefined]]);
+    expect(bus.queued).toEqual([]);
+    expect(io.current).toBe("find lamp");
+  });
+
+  it("searches nothing for an empty text: card, found text and line unchanged (Requirement 4.3)", () => {
+    const { store, bus, io, run } = recordingSetup('find ""');
+    const before = store.getSnapshot();
+    run('find ""');
+    expect(bus.queued).toEqual([]);
+    expect(io.alerts).toEqual([]);
+    expect(io.current).toBe('find ""');
+    expect(store.getSnapshot()).toBe(before);
+  });
+
+  it("goes to the match on another card in one Find dispatch and sets the found text (Requirements 4.7, 4.8)", async () => {
+    const { store, bus, io, run, sounds } = recordingSetup('find "lamp"');
+    setText(store, "crd_2", "prt_f2", "a brass lamp");
+    const stackBefore = store.getSnapshot().stack;
+    run('find "lamp"');
+    expect(bus.queued.map((entry) => entry.label)).toEqual([FIND_COMMAND_LABEL]);
+    expect(store.getSnapshot().currentCardId).toBe("crd_1"); // nothing before the dispatch starts
+    await bus.drain();
+    expect(bus.changes).toEqual(["crd_2"]);
+    expect(store.getSnapshot()).toMatchObject({
+      currentCardId: "crd_2",
+      found: { cardId: "crd_2", layer: "card", partId: "prt_f2", start: 8, end: 12, text: "a brass lamp" },
+    });
+    expect(store.getSnapshot().stack).toBe(stackBefore); // Requirement 4.12
+    expect(io.current).toBe('find "lamp"');
+    expect(sounds).toEqual([]);
+  });
+
+  it("finds on the current card without a card change, then the next match, wrapping around (Requirement 4.6)", async () => {
+    const { store, bus, run } = recordingSetup();
+    setText(store, "crd_1", "prt_f1", "lamp oil");
+    setText(store, "crd_2", "prt_f2", "Lamp");
+    const found = () => store.getSnapshot().found && [store.getSnapshot().found!.cardId, store.getSnapshot().found!.start];
+    run('find "lamp"');
+    await bus.drain();
+    expect(bus.changes).toEqual([]);
+    expect(found()).toEqual(["crd_1", 0]);
+    run('find "LAMP"');
+    await bus.drain();
+    expect(found()).toEqual(["crd_2", 0]);
+    run('find "lamp"');
+    await bus.drain();
+    expect(found()).toEqual(["crd_1", 0]);
+    expect(bus.changes).toEqual(["crd_2", "crd_1"]);
+  });
+
+  it("plays one click, shows Not found., clears the found text and stays on the card when nothing matches (Requirement 4.11)", async () => {
+    const { store, bus, io, run, sounds } = recordingSetup('find "zzz"');
+    setText(store, "crd_1", "prt_f1", "brass lamp");
+    run('find "lamp"');
+    await bus.drain();
+    expect(store.getSnapshot().found).not.toBeNull();
+    io.current = 'find "zzz"';
+    run('find "zzz"');
+    await bus.drain();
+    expect(sounds).toEqual([["click", 120, ""]]);
+    expect(io.current).toBe(NOT_FOUND);
+    expect(store.getSnapshot()).toMatchObject({ currentCardId: "crd_1", found: null });
+
+    // The line is not replaced when the user changed it meanwhile.
+    io.current = 'find "zzz"';
+    run('find "zzz"');
+    io.current = "something else";
+    await bus.drain();
+    expect(io.current).toBe("something else");
+  });
+
+  it("sets no found text when the field changed while the dispatch went to the card", async () => {
+    const { store, bus, run } = recordingSetup();
+    setText(store, "crd_2", "prt_f2", "lamp");
+    bus.changeCard = async (target: unknown) => {
+      store.applyRuntime({ type: "goToCard", cardId: target as string });
+      setText(store, "crd_2", "prt_f2", "an openCard handler wrote this"); // as an openCard handler could
+    };
+    run('find "lamp"');
+    await bus.drain();
+    expect(store.getSnapshot()).toMatchObject({ currentCardId: "crd_2", found: null });
   });
 });
 

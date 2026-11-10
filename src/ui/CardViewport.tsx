@@ -35,9 +35,10 @@ import { isAbortShortcut, type BrowseClick, type MessageBus } from "../core/mess
 import type { HexID, HexPart, HexRect, HexStack } from "../core/schema.ts";
 import { readFieldText, resolveEditTarget, type HexLayer, type HexRuntimeState } from "../core/store.ts";
 import { composeFrame, frameToImageData } from "../engine/graphics/bitmapCanvas.ts";
-import { createPartRasterizer, fieldCaretIndexAt, hitTest, layoutFieldText } from "../engine/graphics/partRenderer.ts";
+import { createPartRasterizer, fieldCaretIndexAt, fieldScrollToIndex, hitTest, layoutFieldText } from "../engine/graphics/partRenderer.ts";
 import { isPaintTool, type PaintController } from "../engine/graphics/paintTools.ts";
 import { BITMAP_HEIGHT, BITMAP_WIDTH, encodeBitmapRLE } from "../engine/graphics/rleCodec.ts";
+import type { TextRasterBackend } from "../engine/graphics/textRaster.ts";
 import { CARD_FRAME_WIDTH } from "./FloatingTools.tsx";
 import type { ImageFileLike } from "../engine/graphics/imageImport.ts";
 import { gridSnapOffset, hasDraggedFiles, useUiScale, type FileDragLike, type UiStore } from "./System7Shell.tsx";
@@ -303,6 +304,34 @@ export function releaseTextFocus(active: FocusedElementLike | null | undefined, 
   return true;
 }
 
+/** Spec 06 Requirement 4.8: the `found` compose option of the current card, when the found text is on it. */
+export function foundOptions(state: HexRuntimeState): { partId: HexID; start: number; end: number } | undefined {
+  const found = state.found;
+  if (!found || found.cardId !== state.currentCardId) return undefined;
+  return { partId: found.partId, start: found.start, end: found.end };
+}
+
+/**
+ * Spec 06 Requirement 4.10: the new scroll offset of the found text's field when it is a
+ * `scrolling` field whose match line is outside its visible lines; undefined otherwise.
+ */
+export function scrollTargetForFound(
+  state: HexRuntimeState,
+  currentScroll: number,
+  backend?: TextRasterBackend,
+): { partId: HexID; scroll: number } | undefined {
+  const found = state.found;
+  if (!found || found.cardId !== state.currentCardId) return undefined;
+  const card = state.stack.cards.find((candidate) => candidate.id === found.cardId);
+  const owner = found.layer === "background"
+    ? state.stack.backgrounds.find((background) => background.id === card?.backgroundId)
+    : card;
+  const part = owner?.parts.find((candidate) => candidate.id === found.partId);
+  if (part?.type !== "field" || part.style !== "scrolling") return undefined;
+  const scroll = fieldScrollToIndex(part, found.text, found.start, { scroll: currentScroll, ...(backend ? { backend } : {}) });
+  return scroll === currentScroll ? undefined : { partId: part.id, scroll };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------------------------
@@ -415,6 +444,7 @@ export function CardViewport({
           ? { partId: session.partId, caret: session.caret, selEnd: session.selEnd }
           : undefined,
         pressedPartId: snapshot.tool === "browse" ? browse.pressedPartId() : undefined,
+        found: foundOptions(snapshot),
       },
       rasterizePart,
     );
@@ -587,6 +617,15 @@ export function CardViewport({
     window.addEventListener("resize", snap);
     return () => window.removeEventListener("resize", snap);
   }, [scale]);
+
+  // Spec 06 Requirement 4.10: a new found text in a scrolling field scrolls its first line into view.
+  // Declared before the draw effect below, so the same commit draws the new offset.
+  useLayoutEffect(() => {
+    const target = scrollTargetForFound(state, scrollOffsets.current.get(state.found?.partId ?? "") ?? 0);
+    if (!target) return;
+    scrollOffsets.current.set(target.partId, target.scroll);
+    requestDraw();
+  }, [state.found, requestDraw]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Every committed change (stack, card, tool, editing caret, part drag, scale) is drawn at once.
   useLayoutEffect(() => {

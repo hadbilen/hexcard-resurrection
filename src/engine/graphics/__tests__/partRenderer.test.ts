@@ -4,7 +4,7 @@ import type { ButtonStyle, FieldStyle, HexButtonPart, HexCard, HexFieldPart, Hex
 import { BITMAP_HEIGHT, BITMAP_WIDTH, TOTAL_PIXELS } from "../rleCodec.ts";
 import { type PartDrawContext, clearDecodedLayerCache, composeFrame } from "../bitmapCanvas.ts";
 import type { TextRasterBackend } from "../textRaster.ts";
-import { createPartRasterizer, fieldCaretIndexAt, hitTest } from "../partRenderer.ts";
+import { createPartRasterizer, fieldCaretIndexAt, fieldScrollToIndex, hitTest } from "../partRenderer.ts";
 import { ICON_PIXELS, encodeIcon } from "../../../core/icons.ts";
 
 // Fixed-metric stub backend: every code point advances 6 px; a non-space glyph is a 4 x 6 block of
@@ -268,6 +268,81 @@ describe("scrolling fields", () => {
   it("shows a light track without a thumb when nothing overflows", () => {
     const f = draw({ ...part, content: "1" });
     expect([at(f, 91, 35), at(f, 90, 20), at(f, 90, 30)]).toEqual([1, 1, 1]);
+  });
+});
+
+// Spec 06 Requirement 4.8: the found-text box. Field at (0,0) 100x40, text rect from (4,2), 16-px
+// lines; "a" covers columns 4..7 and "b" 10..13 on glyph rows 9..14.
+describe("found-text box", () => {
+  it("inverts a 1-px outline around a match on one line, leaving the inside and the glyphs as they are", () => {
+    const part = field({ content: "ab" });
+    const plain = draw(part);
+    const f = draw(part, { found: { start: 0, end: 2 } });
+    // Outline from (x0 - 1, top) = (3, 2) to (x1, top + 15) = (16, 17).
+    for (const [x, y] of [[3, 2], [16, 2], [3, 17], [16, 17], [10, 2], [10, 17], [3, 10], [16, 10]]) expect(at(f, x, y), `${x},${y}`).toBe(2);
+    for (const [x, y] of [[2, 2], [17, 2], [3, 18], [16, 1], [8, 9], [5, 5]]) expect(at(f, x, y), `${x},${y}`).toBe(1);
+    expect(at(f, 4, 9)).toBe(2); // glyph untouched
+    // Only the outline differs from the frame without a found text.
+    let changed = 0;
+    for (let i = 0; i < TOTAL_PIXELS; i++) if (f[i] !== plain[i]) changed++;
+    expect(changed).toBe(2 * 14 + 2 * 14);
+    // Inverting, not painting: on a dark pixel the outline is light.
+    const dark = draw(field({ content: "ab", style: "transparent" }), { found: { start: 0, end: 2 } }, new Uint8Array(TOTAL_PIXELS).fill(2));
+    expect([at(dark, 3, 2), at(dark, 16, 17), at(dark, 8, 8)]).toEqual([1, 1, 2]);
+  });
+
+  it("draws one box per line when the match continues onto the next line", () => {
+    const part = field({ content: "ab\ncd" });
+    const f = draw(part, { found: { start: 1, end: 4 } });
+    // Line 1: from "b" (x 10) to the text rect's right edge (96); line 2: from its left edge (4) to after "c" (10).
+    for (const [x, y] of [[9, 2], [96, 2], [9, 17], [96, 17], [9, 10], [96, 10]]) expect(at(f, x, y), `${x},${y}`).toBe(2);
+    for (const [x, y] of [[3, 18], [10, 18], [3, 33], [10, 33], [3, 25], [10, 20]]) expect(at(f, x, y), `${x},${y}`).toBe(2);
+    expect(at(f, 10, 25)).toBe(1); // the right column crosses "d" (columns 10..13): inverted to light
+    for (const [x, y] of [[8, 2], [97, 2], [11, 18], [2, 18], [3, 34], [5, 20]]) expect(at(f, x, y), `${x},${y}`).toBe(1);
+    expect(at(f, 4, 25)).toBe(2); // "c" untouched
+  });
+
+  it("follows the scroll offset of a scrolling field and is clipped to the text rect", () => {
+    const part = field({ style: "scrolling", rect: { x: 0, y: 0, width: 100, height: 60 }, content: "1\n2\n3\n4\n5\n6" });
+    const scrolled = createPartRasterizer({ textBackend: stub, scrollOffset: () => 40 });
+    // Line "4" has its top at 2 + 48 - 40 = 10.
+    const four = draw(part, { found: { start: 6, end: 7 } }, lightFrame(), scrolled);
+    for (const [x, y] of [[3, 10], [10, 10], [3, 25], [10, 25], [3, 17]]) expect(at(four, x, y), `${x},${y}`).toBe(2);
+    // Line "3" (top -6) is cut by the text rect: only its bottom row (9) shows, never the field frame.
+    const plain = draw(part, {}, lightFrame(), scrolled);
+    const three = draw(part, { found: { start: 4, end: 5 } }, lightFrame(), scrolled);
+    expect(at(three, 6, 9)).toBe(2);
+    for (const y of [0, 1]) for (let x = 0; x < 100; x++) expect(three[idx(x, y)]).toBe(plain[idx(x, y)]);
+    // Line "1" is scrolled out of view: nothing is drawn.
+    expect(draw(part, { found: { start: 0, end: 1 } }, lightFrame(), scrolled)).toEqual(plain);
+  });
+
+  it("is drawn only for the part composeFrame names", () => {
+    const a = field({ id: "prt_a", content: "lamp" });
+    const b = field({ id: "prt_b", content: "lamp", rect: { x: 0, y: 100, width: 100, height: 40 } });
+    const seen: [string, unknown][] = [];
+    composeFrame(makeStack([a, b]), "crd_1", { found: { partId: "prt_b", start: 0, end: 4 } }, (_frame, part, ctx) => void seen.push([part.id, ctx.found]));
+    expect(seen).toEqual([["prt_a", undefined], ["prt_b", { start: 0, end: 4 }]]);
+  });
+});
+
+describe("fieldScrollToIndex (spec 06 Requirement 4.10)", () => {
+  // Text rect height 56, six 16-px lines, maxScroll 40.
+  const part = field({ style: "scrolling", rect: { x: 0, y: 0, width: 100, height: 60 }, content: "1\n2\n3\n4\n5\n6" });
+  const scrollFor = (index: number, scroll: number): number => fieldScrollToIndex(part, part.content, index, { scroll, backend: stub });
+
+  it("keeps the offset while the line is fully visible and otherwise scrolls the line to the top, clamped", () => {
+    expect(scrollFor(0, 0)).toBe(0);
+    expect(scrollFor(4, 0)).toBe(0); // line 3: rows 32..47 of 56
+    expect(scrollFor(6, 0)).toBe(40); // line 4 (top 48) is cut: min(maxScroll 40, 48)
+    expect(scrollFor(10, 0)).toBe(40);
+    expect(scrollFor(6, 40)).toBe(40);
+    expect(scrollFor(0, 40)).toBe(0);
+    expect(scrollFor(2, 1000)).toBe(16); // the requested offset is clamped to 40 first; line 2 (top 16) is above it
+  });
+
+  it("never scrolls a field of another style", () => {
+    expect(fieldScrollToIndex({ ...part, style: "rectangle" }, part.content, 10, { backend: stub })).toBe(0);
   });
 });
 

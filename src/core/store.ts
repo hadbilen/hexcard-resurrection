@@ -44,6 +44,22 @@ export interface HexRuntimeState {
    * every published state clears it when it is no longer valid.
    */
   selectedPartId: HexID | null;
+  /**
+   * Spec 06 (Requirements 4.8, 4.9, 12.2): the match Find went to last, drawn as a box. UI state:
+   * never saved, never undoable. Only `setFound` sets it, and every published state clears it when
+   * the current card changes, the field is gone or hidden, its text changes, or a stack is loaded.
+   */
+  found: FoundText | null;
+}
+
+/** Spec 06: the found text, with the field's text when the match was made (so a change clears it). */
+export interface FoundText {
+  cardId: HexID;
+  layer: HexLayer;
+  partId: HexID;
+  start: number;
+  end: number;
+  text: string;
 }
 
 export type RuntimeMutation =
@@ -95,6 +111,13 @@ export interface HexStore {
    * HexMutationError and the state is unchanged. UI state only: not saved, not undoable.
    */
   setSelectedPart(partId: HexID | null): void;
+  /**
+   * Spec 06 (Requirement 4.8). `null` clears the found text. Otherwise `cardId` must be the current
+   * card, the field must be a visible field of that layer on it, `text` must equal its text and
+   * `0 <= start < end <= text.length` (integers), else HexMutationError and the state is unchanged.
+   * UI state only: not saved, not undoable.
+   */
+  setFound(found: FoundText | null): void;
 }
 
 export interface HexStoreOptions {
@@ -620,6 +643,37 @@ function keptSelection(previous: HexRuntimeState, next: HexRuntimeState): HexID 
   return isSelectablePart(next, partId) ? partId : null;
 }
 
+/** The field a found text names, when it is a visible field of its layer on the current card. */
+function foundField(state: HexRuntimeState, found: FoundText): HexFieldPart | undefined {
+  if (found.cardId !== state.currentCardId) return undefined;
+  const card = state.stack.cards.find((candidate) => candidate.id === found.cardId);
+  if (!card) return undefined;
+  const owner = found.layer === "background"
+    ? state.stack.backgrounds.find((background) => background.id === card.backgroundId)
+    : card;
+  const part = owner?.parts.find((candidate) => candidate.id === found.partId);
+  return part?.type === "field" && part.visible ? part : undefined;
+}
+
+/** Spec 06 Requirement 4.8: the found text is on the current card's visible field and matches its text. */
+function isValidFound(state: HexRuntimeState, found: FoundText): boolean {
+  if (found.layer !== "card" && found.layer !== "background") return false;
+  if (!foundField(state, found)) return false;
+  if (readFieldText(state.stack, found.cardId, found.layer, found.partId) !== found.text) return false;
+  const { start, end, text } = found;
+  return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start < end && end <= text.length;
+}
+
+/**
+ * Spec 06 Requirement 4.9: the found text survives a state change only while the current card stays
+ * the same, its field stays a visible field and the field's text is unchanged.
+ */
+function keptFound(previous: HexRuntimeState, next: HexRuntimeState): FoundText | null {
+  const found = next.found;
+  if (found === null || next.currentCardId !== previous.currentCardId) return null;
+  return isValidFound(next, found) ? found : null;
+}
+
 /** Deep-frozen private copy, so callers can neither mutate the snapshot nor be affected by it. */
 function adoptStack(stack: HexStack): HexStack {
   if (stack.cards.length === 0) throw new HexMutationError("Cannot load a stack without cards");
@@ -642,12 +696,14 @@ export function createHexStore(options: HexStoreOptions): HexStore {
     editLayer: "card",
     tool: "browse",
     selectedPartId: null,
+    found: null,
   });
 
-  /** Every state change goes through here, so the selection invariant holds for every snapshot. */
+  /** Every state change goes through here, so the selection and found-text invariants hold for every snapshot. */
   function publish(next: HexRuntimeState, replaced = false): void {
     const selectedPartId = replaced ? null : keptSelection(state, next);
-    state = freeze(selectedPartId === next.selectedPartId ? next : { ...next, selectedPartId });
+    const found = replaced ? null : keptFound(state, next);
+    state = freeze(selectedPartId === next.selectedPartId && found === next.found ? next : { ...next, selectedPartId, found });
     if (replaced) for (const listener of [...replaceListeners]) listener();
     for (const listener of [...listeners]) listener();
   }
@@ -702,7 +758,7 @@ export function createHexStore(options: HexStoreOptions): HexStore {
       flushAutoSave();
       cache.rebuild(next);
       publish({
-        stack: next, currentCardId: next.cards[0].id, editLayer: "card", tool: state.tool, selectedPartId: null,
+        stack: next, currentCardId: next.cards[0].id, editLayer: "card", tool: state.tool, selectedPartId: null, found: null,
       }, true);
     },
 
@@ -751,6 +807,23 @@ export function createHexStore(options: HexStoreOptions): HexStore {
         );
       }
       if (partId !== state.selectedPartId) publish({ ...state, selectedPartId: partId });
+    },
+
+    setFound(found) {
+      if (found === null) {
+        if (state.found !== null) publish({ ...state, found: null });
+        return;
+      }
+      if (!isValidFound(state, found)) {
+        throw new HexMutationError(
+          `Found text in ${found.layer} field "${found.partId}" on card "${found.cardId}" is not on a visible field `
+            + "of the current card, does not match its text, or has an invalid range",
+        );
+      }
+      const current = state.found;
+      if (current && current.cardId === found.cardId && current.layer === found.layer && current.partId === found.partId
+        && current.start === found.start && current.end === found.end && current.text === found.text) return;
+      publish({ ...state, found: freeze({ ...found }) });
     },
   };
 }

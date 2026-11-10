@@ -12,6 +12,7 @@
  * Pure TypeScript: no React, no DOM. The store, bus, VM host and the Message Box I/O are injected.
  */
 import type { HexExprNode, HexStatementNode } from "./ast.ts";
+import { findNext, searchableFields } from "./find.ts";
 import type { MessageBus } from "./messageBus.ts";
 import { parseHexTalk } from "./parser.ts";
 import type { HexStore } from "./store.ts";
@@ -19,10 +20,14 @@ import { runMessageBoxLine, toText, type HexHost, type HexValue } from "./vm.ts"
 
 export type MessageBoxLine =
   | { kind: "empty" } // blank, or only a -- comment
+  | { kind: "find"; text: string }
+  | { kind: "findUsage" } // first word "find", wrong form
   | { kind: "statement"; statement: HexStatementNode }
   | { kind: "expression"; expression: HexExprNode }
   | { kind: "error"; message: string; column: number };
 
+export const FIND_USAGE = 'Type find "text", for example find "lamp".';
+export const NOT_FOUND = "Not found.";
 export const HANDLER_ONLY = "pass and exit work only inside a handler.";
 
 /** Requirement 3.5: the command words of design spec §4.1, lowercase. */
@@ -36,6 +41,8 @@ const WRAPPER = "hexmessagebox";
 const EXPRESSION_PREFIX = "get ";
 const FIRST_WORD = /^[A-Za-z][A-Za-z0-9_]*/;
 const LINE_BREAKS = /\r\n|\r|\n/g;
+/** Requirement 4.2: `find`, at least one space, a double-quoted text without `"`, then only spaces. */
+const FIND_COMMAND = /^find\s+"([^"]*)"\s*$/i;
 
 function wrap(body: string): string {
   return `on ${WRAPPER}\n${body}\nend ${WRAPPER}`;
@@ -70,12 +77,17 @@ function lineError(error: { line: number; column: number; message: string }, lin
 /**
  * Requirement 3.1-3.5 and 3.8: what a Message Box line is. Line breaks (which a one-line text box
  * never holds) count as spaces, so a line can never reach the wrapper's other lines.
- * A line whose first word is `find` is not special yet (spec 06 task 4.2): it is an expression error.
+ * A line whose first word is `find` (any case) is a find command (Requirements 3.1, 4.2); `find` is
+ * not part of the HexTalk grammar (Requirement 3.10).
  */
 export function classifyMessageBoxLine(raw: string): MessageBoxLine {
   const line = raw.replace(LINE_BREAKS, " ").trim();
   if (line === "") return { kind: "empty" };
   const firstWord = FIRST_WORD.exec(line)?.[0].toLowerCase() ?? "";
+  if (firstWord === "find") {
+    const find = FIND_COMMAND.exec(line);
+    return find ? { kind: "find", text: find[1] } : { kind: "findUsage" };
+  }
 
   const asStatement = wrappedBody(wrap(line));
   if ("body" in asStatement) {
@@ -118,8 +130,8 @@ export interface MessageBoxIO {
 }
 
 export interface MessageBoxRunnerDeps {
-  store: Pick<HexStore, "getSnapshot">;
-  bus: Pick<MessageBus, "runCommand">;
+  store: Pick<HexStore, "getSnapshot" | "setFound">;
+  bus: Pick<MessageBus, "runCommand" | "changeCard">;
   /** The VM host the bus uses. */
   host: HexHost;
   io: MessageBoxIO;
@@ -127,15 +139,50 @@ export interface MessageBoxRunnerDeps {
 
 /** The command dispatch label of a Message Box line (also the message name its errors report). */
 export const MESSAGE_BOX_COMMAND = "Message Box";
+/** The command dispatch label of a find command. */
+export const FIND_COMMAND_LABEL = "Find";
 
 /** Requirement 3: what Return in the Message Box does with `raw` (the untrimmed text box value). */
 export function createMessageBoxRunner({ store, bus, host, io }: MessageBoxRunnerDeps): (raw: string) => void {
   // Requirement 3.2: the card that is current when the dispatch starts, read inside the task.
   const currentCardId = (): string => store.getSnapshot().currentCardId;
+
+  /** Requirements 4.6-4.11: one command dispatch; the match is resolved when it starts. */
+  const find = (text: string, raw: string): void => {
+    bus.runCommand(FIND_COMMAND_LABEL, async (ctx) => {
+      const state = store.getSnapshot();
+      const match = findNext(state.stack, state.currentCardId, state.found, text);
+      if (!match) {
+        host.playSound("click", 120, ""); // Requirement 4.11: one short click
+        store.setFound(null);
+        if (io.line() === raw) io.setLine(NOT_FOUND);
+        return;
+      }
+      const textOf = (stack: typeof state.stack): string | undefined => {
+        const card = stack.cards.find((candidate) => candidate.id === match.cardId);
+        if (!card) return undefined;
+        return searchableFields(stack, card).find((field) => field.layer === match.layer && field.part.id === match.partId)?.text;
+      };
+      const matchedText = textOf(state.stack)!;
+      // Requirement 4.7: go to the match's card as `go` does (lifecycle messages, back history).
+      if (match.cardId !== state.currentCardId) await bus.changeCard(match.cardId, ctx);
+      const now = store.getSnapshot();
+      // Requirement 4.8: only while that card is still current and the field still shows the match.
+      if (now.currentCardId !== match.cardId || textOf(now.stack) !== matchedText) return;
+      store.setFound({ ...match, text: matchedText });
+    });
+  };
+
   return (raw) => {
     const line = classifyMessageBoxLine(raw);
     switch (line.kind) {
       case "empty":
+        return;
+      case "findUsage":
+        io.alert(FIND_USAGE);
+        return;
+      case "find":
+        if (line.text !== "") find(line.text, raw); // Requirement 4.3: an empty text searches nothing
         return;
       case "error":
         io.alert(line.message, [`Column ${line.column}`]);

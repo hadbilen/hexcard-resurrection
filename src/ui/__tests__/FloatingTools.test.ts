@@ -35,6 +35,7 @@ function fakeStore(tool: AuthoringTool): UiStore {
     setEditLayer: () => {},
     setTool: () => {},
     setSelectedPart: () => {},
+    setFound: () => {},
   };
 }
 

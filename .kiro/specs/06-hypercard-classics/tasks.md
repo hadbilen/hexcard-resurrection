@@ -44,7 +44,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
     - Headless Chrome: New Button; Edit > Icon Editor; select `hex-star`, **Use for Button**; screenshot the window and the card; Undo, Redo; edit a pixel; New, Duplicate, Rename (through the `ask` dialog), Delete; Export Standalone HTML, open it offline and confirm the icon is drawn, no request was made and the screenshot has two colours; colour-check every screenshot
     - _Requirements: 1.1, 1.3, 1.10, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9, 10.10, 10.11, 10.12, 11.3, 12.1, 12.4, 12.5, 13.1, 13.2, 13.3, 15.1, 15.4_
 
-- [ ] 4. Implement the Message Box and Find
+- [x] 4. Implement the Message Box and Find
 
   - [x] 4.1 Message Box window and running lines
     - `vm.ts`: `MESSAGE_BOX_HANDLER`, `MessageBoxProgram`, `runMessageBoxLine` with the `messageBox` frame flag (globals for every variable, errors at line 1) (design §vm.ts addition)
@@ -55,7 +55,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
     - Headless Chrome: New Field; Ctrl+M opens the Message Box; `put "brass lamp" into card field 1` (field text changed); `3 * 4` shows `12`; `foo bar baz` shows the alert; close and reopen keeps the line; shortcut check for Ctrl+M (item ran, default prevented); with macOS emulated, Cmd+M neither handled nor prevented and no `Ctrl+M` label; colour-check every screenshot
     - _Requirements: 1.1, 1.3, 1.4, 1.5, 1.6, 1.7, 1.9, 1.10, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 12.3, 12.4, 13.1, 13.2, 13.3, 15.1, 15.3, 15.4_
 
-  - [ ] 4.2 Find
+  - [x] 4.2 Find
     - `src/core/find.ts`: `isWordStart`, `matchStarts`, `searchableFields`, `findNext` (design §find.ts)
     - `store.ts`: `found` UI state, `setFound` and its clearing invariant; `found: null` in every `HexRuntimeState` literal (including `StackGraphModal.staticGoTarget` and tests)
     - `messageBox.ts`: the `find` and `findUsage` kinds and the Find dispatch (`click` sound and `Not found.` when nothing matches)

@@ -52,7 +52,7 @@ export function collectGoTargets(ast: HexScriptAST): HexCardTarget[] {
 /** The card `target` names when the script runs on card `fromCardId`, or undefined when not static. */
 export function staticGoTarget(stack: HexStack, fromCardId: HexID, target: HexCardTarget): HexID | undefined {
   const state: HexRuntimeState = {
-    stack, currentCardId: fromCardId, editLayer: "card", tool: "browse", selectedPartId: null,
+    stack, currentCardId: fromCardId, editLayer: "card", tool: "browse", selectedPartId: null, found: null,
   };
   if (target.type === "relative") return target.dir === "back" ? undefined : resolveRelativeCard(state, target.dir);
   if (target.value.kind !== "Literal") return undefined;

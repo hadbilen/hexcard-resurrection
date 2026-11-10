@@ -34,6 +34,7 @@ export function createUiStoreView(store: HexStore): UiStore {
     setEditLayer: store.setEditLayer,
     setTool: store.setTool,
     setSelectedPart: store.setSelectedPart,
+    setFound: store.setFound,
   };
 }
 
