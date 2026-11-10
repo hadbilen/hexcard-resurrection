@@ -313,9 +313,9 @@ Every second 1x pixel of the item, in a checkerboard, is painted light, so text 
 - `CardViewport.test.ts`: selection goes through `store.setSelectedPart` and follows the store.
 
 ### 9.1 Headless Chrome check (Requirement 15.4)
-Same tooling as earlier UI tasks (no Playwright): `npm run build`, `npx vite preview --port <p> --strictPort` in the background, `/usr/bin/google-chrome --headless=new --remote-debugging-port=<port> --user-data-dir=<fresh temp dir>`, driven by a throw-away Node 24 script outside the repository (CDP over `WebSocket`). Menus are chosen with real `Input.dispatchMouseEvent` clicks on the menu title and item.
+Same tooling as earlier UI tasks (no Playwright): `npm run build`, `npx vite preview --port <p> --strictPort` in the background, `/usr/bin/google-chrome --headless=new --remote-debugging-port=<port> --user-data-dir=<fresh temp dir> --disable-lcd-text`, driven by a throw-away Node 24 script outside the repository (CDP over `WebSocket`). Menus are chosen with real `Input.dispatchMouseEvent` clicks on the menu title and item. `--disable-lcd-text` keeps the host's LCD sub-pixel text rendering out of the screenshots, so the colour check measures the app's own colours.
 1. Open the studio (fresh profile: the Haunted Stack opens unchanged, so New Stack asks nothing), choose File > New Stack.
-2. Objects > New Card; Objects > New Button; Objects > New Field; Go > Prev; Go > Next; Objects > Delete Part; Edit > Undo.
+2. Objects > New Card; Objects > New Button; Objects > New Field; Objects > Delete Part (the new field is still the selected part); Edit > Undo; Go > Prev; Go > Next.
 3. After every step: wait 600 ms (auto-save debounce), take a screenshot, read the auto-saved stack from IndexedDB with `Runtime.evaluate` and compare it with the expected cards, parts and current card (the canvas `aria-label` names the current card).
 4. Also screenshot the open Objects and Go menus, so dimmed items are visible.
 5. Check every PNG with Python PIL: `getcolors()` must contain only `(0, 0, 0)` and `(255, 255, 255)`. Run once at device scale factor 1 with a viewport that gives k = 1 and once with k = 2.

@@ -60,6 +60,13 @@
         "chatSessionId": "sess_a7c05421-92b1-4354-b205-e41da74e4fce",
         "timestamp": 1794146475775
       }
+    ],
+    "6. Check the authoring loop in headless Chrome": [
+      {
+        "executionId": "8448e16b-d12c-4090-b82b-799233dfda48",
+        "chatSessionId": "sess_57c0ba84-bd95-4a44-8ce0-019a2f2d3467",
+        "timestamp": 1794146880936
+      }
     ]
   }
 }
