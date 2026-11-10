@@ -35,6 +35,14 @@ import { isAbortShortcut, type BrowseClick, type MessageBus } from "../core/mess
 import type { HexID, HexPart, HexRect, HexStack } from "../core/schema.ts";
 import { readFieldText, resolveEditTarget, type HexLayer, type HexRuntimeState } from "../core/store.ts";
 import { composeFrame, frameToImageData } from "../engine/graphics/bitmapCanvas.ts";
+import {
+  FATBITS_PAN_STEP,
+  clampFatBitsView,
+  fatBitsCardPoint,
+  inInset,
+  renderFatBits,
+  type FatBitsView,
+} from "../engine/graphics/fatBits.ts";
 import { createPartRasterizer, fieldCaretIndexAt, fieldScrollToIndex, hitTest, layoutFieldText } from "../engine/graphics/partRenderer.ts";
 import { isPaintTool, type PaintController } from "../engine/graphics/paintTools.ts";
 import { BITMAP_HEIGHT, BITMAP_WIDTH, encodeBitmapRLE } from "../engine/graphics/rleCodec.ts";
@@ -281,8 +289,10 @@ export function cardDrop(
 
 /** Focus targets whose own keyboard handling must not be forwarded as `keyDown`. */
 function isTextEntryTarget(target: EventTarget | null): boolean {
-  if (typeof Element === "undefined" || !(target instanceof Element)) return false;
-  return target.closest("input, textarea, select, [contenteditable]") !== null;
+  // Duck-typed (every Element has `closest`; window and document do not), so Node tests can pass objects.
+  const element = target as { closest?: (selector: string) => unknown } | null;
+  if (element === null || typeof element !== "object" || typeof element.closest !== "function") return false;
+  return element.closest("input, textarea, select, [contenteditable]") !== null;
 }
 
 /** What `releaseTextFocus` reads of the focused element (duck-typed, so Node tests can pass objects). */
@@ -330,6 +340,53 @@ export function scrollTargetForFound(
   if (part?.type !== "field" || part.style !== "scrolling") return undefined;
   const scroll = fieldScrollToIndex(part, found.text, found.start, { scroll: currentScroll, ...(backend ? { backend } : {}) });
   return scroll === currentScroll ? undefined : { partId: part.id, scroll };
+}
+
+/**
+ * Spec 06 Requirement 7.5: the card point a Pencil or Eraser event at frame point `point` acts on.
+ * With the FatBits view off it is `point` itself. With it on it is the card pixel of the cell under
+ * the pointer, and a press (`press` true) inside the inset maps to null: it starts no stroke.
+ */
+export function fatBitsPaintPoint(state: Pick<HexRuntimeState, "fatBits">, point: CardPoint, press: boolean): CardPoint | null {
+  const view = state.fatBits;
+  if (view === null) return point;
+  if (press && inInset(view, point.x, point.y)) return null;
+  return fatBitsCardPoint(view, point.x, point.y);
+}
+
+/** What `fatBitsKeyAction` reads of a `KeyboardEvent`. */
+export interface FatBitsKeyEvent {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  target: EventTarget | null;
+}
+
+const PAN_DELTAS: Readonly<Record<string, readonly [number, number]>> = {
+  ArrowLeft: [-FATBITS_PAN_STEP, 0],
+  ArrowRight: [FATBITS_PAN_STEP, 0],
+  ArrowUp: [0, -FATBITS_PAN_STEP],
+  ArrowDown: [0, FATBITS_PAN_STEP],
+};
+
+/**
+ * Spec 06 Requirements 7.7, 7.8: the FatBits view an arrow key (8 card pixels, clamped) or Escape
+ * (null: off) leads to. Undefined, so the key keeps its meaning, while the view is off, a modifier is
+ * held, a dialog or studio window is open (`blocked`) or the focus is in a text input.
+ */
+export function fatBitsKeyAction(
+  fatBits: FatBitsView | null,
+  event: FatBitsKeyEvent,
+  blocked: boolean,
+): { view: FatBitsView | null } | undefined {
+  if (fatBits === null || blocked) return undefined;
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || isTextEntryTarget(event.target)) return undefined;
+  if (event.key === "Escape") return { view: null };
+  const delta = Object.hasOwn(PAN_DELTAS, event.key) ? PAN_DELTAS[event.key] : undefined;
+  if (!delta) return undefined;
+  return { view: clampFatBitsView({ x: fatBits.x + delta[0], y: fatBits.y + delta[1] }) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -448,7 +505,9 @@ export function CardViewport({
       },
       rasterizePart,
     );
-    frameToImageData(frame, stack.themePalette, surface.out);
+    // Spec 06 Requirements 7.2-7.4, 7.9: the FatBits view replaces the composed frame (previews included).
+    const shown = snapshot.fatBits ? renderFatBits(frame, snapshot.fatBits) : frame;
+    frameToImageData(shown, stack.themePalette, surface.out);
     surface.ctx.putImageData(surface.image, 0, 0);
     surface.drawn = true;
   }, [effects, getSurface, store, painter, browse, rasterizePart]);
@@ -641,6 +700,13 @@ export function CardViewport({
         bus.abort();
         return;
       }
+      // Spec 06 Requirements 7.7, 7.8: arrow keys pan and Escape leaves FatBits.
+      const fat = fatBitsKeyAction(store.getSnapshot().fatBits, event, isModalOpen());
+      if (fat) {
+        event.preventDefault();
+        store.setFatBits(fat.view);
+        return;
+      }
       if (store.getSnapshot().tool !== "browse" || isModalOpen()) return;
       if (event.metaKey || event.ctrlKey || event.altKey || isTextEntryTarget(event.target)) return;
       // Enter and Space activate a focused menu button; leave those to it.
@@ -708,7 +774,9 @@ export function CardViewport({
     }
 
     if (isPaintTool(snapshot.tool)) {
-      if (!painter.begin(point.x, point.y)) return;
+      // Spec 06 Requirement 7.5: in FatBits a press maps to its cell's card pixel; the inset starts nothing.
+      const target = fatBitsPaintPoint(snapshot, point, true);
+      if (!target || !painter.begin(target.x, target.y)) return;
       // A select press outside the current selection starts a new marquee.
       marqueeStart.current = snapshot.tool === "select" && painter.getSelection() === null ? point : null;
       setMarquee(marqueeStart.current ? rectBetween(point, point) : null);
@@ -749,7 +817,8 @@ export function CardViewport({
     }
 
     if (painter.isActive()) {
-      painter.move(point.x, point.y);
+      const target = fatBitsPaintPoint(snapshot, point, false) ?? point;
+      painter.move(target.x, target.y);
       if (marqueeStart.current) setMarquee(rectBetween(marqueeStart.current, point));
       requestDraw();
       return;
@@ -772,7 +841,8 @@ export function CardViewport({
       return;
     }
     if (painter.isActive()) {
-      painter.end(point.x, point.y);
+      const target = fatBitsPaintPoint(snapshot, point, false) ?? point;
+      painter.end(target.x, target.y);
       marqueeStart.current = null;
       setMarquee(null);
       setOverlayVersion((version) => version + 1); // show the new pixel selection

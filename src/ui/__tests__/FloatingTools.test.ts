@@ -36,6 +36,7 @@ function fakeStore(tool: AuthoringTool): UiStore {
     setTool: () => {},
     setSelectedPart: () => {},
     setFound: () => {},
+    setFatBits: () => {},
   };
 }
 

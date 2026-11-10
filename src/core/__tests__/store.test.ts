@@ -3,6 +3,7 @@ import fc from "fast-check";
 import type { HexScriptAST } from "../ast.ts";
 import type { HexButtonPart, HexFieldPart, HexStack } from "../schema.ts";
 import { validateStack } from "../stackValidator.ts";
+import { FATBITS_MAX, FATBITS_START } from "../../engine/graphics/fatBits.ts";
 import {
   createHexStore,
   createScriptCache,
@@ -792,5 +793,109 @@ describe("found text (spec 06 Requirements 4.8, 4.9, 12.2)", () => {
     store.applyRuntime({ type: "setFieldText", cardId: "crd_1", layer: "background", partId: "prt_unshared", text: "Changed" });
     store.applyRuntime({ type: "setStackProperty", property: "name", value: "Renamed" });
     expect(store.getSnapshot().found).toEqual(onCard);
+  });
+});
+
+describe("FatBits view (spec 06 Requirements 7.1, 7.8, 7.10, 12.2)", () => {
+  const start = { x: 224, y: 149 };
+  it("starts off and turns on only with the Pencil or the Eraser", () => {
+    const { store } = setup();
+    expect(store.getSnapshot().fatBits).toBeNull();
+    expect(() => store.setFatBits(start)).toThrow(HexMutationError); // Browse tool
+    for (const tool of ["button", "field", "brush", "select", "lasso", "line", "spray", "rect", "paintBucket"] as const) {
+      store.setTool(tool);
+      expect(() => store.setFatBits(start), tool).toThrow(HexMutationError);
+    }
+    expect(store.getSnapshot().fatBits).toBeNull();
+    store.setTool("pencil");
+    store.setFatBits(start);
+    expect(store.getSnapshot().fatBits).toEqual(start);
+    expect(Object.isFrozen(store.getSnapshot().fatBits)).toBe(true);
+    store.setFatBits(null);
+    store.setTool("eraser");
+    store.setFatBits({ x: 0, y: 0 });
+    expect(store.getSnapshot().fatBits).toEqual({ x: 0, y: 0 });
+  });
+  it("accepts exactly the origins 0..448 x 0..299 as integers", () => {
+    expect(FATBITS_MAX).toEqual({ x: 448, y: 299 }); // the store's own copy of the limits
+    const { store } = setup();
+    store.setTool("pencil");
+    expect(FATBITS_START).toEqual(start);
+    store.setFatBits({ x: 448, y: 299 });
+    expect(store.getSnapshot().fatBits).toEqual({ x: 448, y: 299 });
+    store.setFatBits(null);
+    const before = store.getSnapshot();
+    for (const bad of [
+      { x: 449, y: 0 }, { x: 0, y: 300 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 1.5, y: 0 }, { x: 0, y: 2.25 },
+      { x: Number.NaN, y: 0 }, { x: 0, y: Number.POSITIVE_INFINITY },
+    ]) expect(() => store.setFatBits(bad), JSON.stringify(bad)).toThrow(HexMutationError);
+    expect(store.getSnapshot()).toBe(before);
+  });
+  it("keeps the snapshot when the same view is set again or FatBits is already off", () => {
+    const { store } = setup();
+    store.setTool("pencil");
+    store.setFatBits(null);
+    const off = store.getSnapshot();
+    store.setFatBits(null);
+    expect(store.getSnapshot()).toBe(off);
+    store.setFatBits(start);
+    const on = store.getSnapshot();
+    store.setFatBits({ ...start });
+    expect(store.getSnapshot()).toBe(on);
+    store.setFatBits({ x: start.x + 8, y: start.y });
+    expect(store.getSnapshot().fatBits).toEqual({ x: 232, y: 149 });
+  });
+  it("is cleared when a tool other than the Pencil or the Eraser becomes active, and kept between those two", () => {
+    const { store } = setup();
+    store.setTool("pencil");
+    store.setFatBits(start);
+    store.setTool("eraser");
+    expect(store.getSnapshot().fatBits).toEqual(start);
+    store.setTool("pencil");
+    expect(store.getSnapshot().fatBits).toEqual(start);
+    store.setTool("brush");
+    expect(store.getSnapshot().fatBits).toBeNull();
+    store.setTool("pencil");
+    expect(store.getSnapshot().fatBits).toBeNull(); // coming back does not restore it
+    for (const tool of ["browse", "button", "field", "select", "lasso", "line", "spray", "rect", "paintBucket"] as const) {
+      store.setTool("eraser");
+      store.setFatBits(start);
+      store.setTool(tool);
+      expect(store.getSnapshot().fatBits, tool).toBeNull();
+    }
+  });
+  it("is cleared when a stack is loaded", () => {
+    const { store } = setup();
+    store.setTool("pencil");
+    store.setFatBits(start);
+    store.replaceStack(makeStack());
+    expect(store.getSnapshot()).toMatchObject({ fatBits: null, tool: "pencil" });
+  });
+  it("is kept across card changes, Edit Background and stack edits", () => {
+    const { store } = setup();
+    store.setTool("pencil");
+    store.setFatBits({ x: 10, y: 20 });
+    store.applyRuntime({ type: "goToCard", cardId: "crd_2" });
+    expect(store.getSnapshot().fatBits).toEqual({ x: 10, y: 20 });
+    store.setEditLayer("background");
+    expect(store.getSnapshot().fatBits).toEqual({ x: 10, y: 20 });
+    store.setEditLayer("card");
+    store.applyRuntime({ type: "setStackProperty", property: "name", value: "Renamed" });
+    store.applyAuthoring({ ...store.getSnapshot().stack, author: "Someone" });
+    expect(store.getSnapshot().fatBits).toEqual({ x: 10, y: 20 });
+  });
+  it("is never saved", () => {
+    vi.useFakeTimers();
+    try {
+      const { store, autoSave } = setup();
+      store.setTool("pencil");
+      store.setFatBits(start);
+      store.applyRuntime({ type: "setStackProperty", property: "name", value: "Saved" });
+      vi.advanceTimersByTime(500);
+      expect(autoSave).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(autoSave.mock.calls[0][0])).not.toContain("fatBits");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

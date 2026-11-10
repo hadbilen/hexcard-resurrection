@@ -131,7 +131,12 @@ async function main(): Promise<void> {
   });
 
   let patternIndex = DEFAULT_PATTERN_INDEX;
-  const painter = createPaintController({ store, history, getSettings: () => ({ pattern: PATTERNS[patternIndex] }) });
+  // Spec 06 Requirement 7.6: while FatBits is on, the Eraser erases exactly one card pixel per pointer position.
+  const painter = createPaintController({
+    store,
+    history,
+    getSettings: () => ({ pattern: PATTERNS[patternIndex], ...(store.getSnapshot().fatBits ? { eraserSize: 1 } : {}) }),
+  });
 
   // Requirements 5.2 and 5.3: File > Save Stack File, Open Stack File, Copy Share Link.
   const fileCommands = createFileCommands({

@@ -253,7 +253,7 @@ function findItem(context: MenuContext, command: MenuCommand) {
 /** A plain MenuContext without a store, for the enabling rules. */
 function contextOf(stack: HexStack, overrides: Partial<HexRuntimeState> = {}, extra: Partial<Omit<MenuContext, "state">> = {}): MenuContext {
   return {
-    state: { stack, currentCardId: stack.cards[0].id, editLayer: "card", tool: "browse", selectedPartId: null, found: null, ...overrides },
+    state: { stack, currentCardId: stack.cards[0].id, editLayer: "card", tool: "browse", selectedPartId: null, found: null, fatBits: null, ...overrides },
     history: { canUndo: () => false, canRedo: () => false, undoLabel: () => undefined, redoLabel: () => undefined },
     backHistory: [],
     paletteVisible: false,
@@ -282,7 +282,7 @@ const EXPECTED_LAYOUT: Record<string, string[]> = {
     "Object Info...", "Card Info...", "Background Info...", "Stack Info...", SEP, "New Button", "New Field", "Delete Part", SEP,
     "New Card", "Delete Card", "New Background",
   ],
-  Paint: ["Show Tools Palette"],
+  Paint: ["Show Tools Palette", SEP, "FatBits"],
   "AI Conjure": ["Conjure Script...", SEP, "Conjure Stack...", "Oracle Settings..."],
 };
 
@@ -1352,5 +1352,48 @@ describe("File > New Stack", () => {
     await t.choose("file.newStack");
     expect(asked).toEqual(["Save changes to a file first?"]);
     expect(t.store.getSnapshot()).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Paint > FatBits (spec 06 Requirements 1.2, 1.3, 7.1, 7.8)
+// ---------------------------------------------------------------------------------------------
+describe("Paint > FatBits (spec 06 Requirements 1.2, 1.3, 7.1, 7.8)", () => {
+  it("is a real item labelled FatBits, without '...' or a shortcut, after Show Tools Palette and a separator", () => {
+    expect(isReservedCommand("paint.fatBits")).toBe(false);
+    const paint = buildMenus(contextOf(threeCards(), { tool: "pencil" }), "other").find((menu) => menu.id === "paint");
+    expect(paint?.entries.map((entry) => (entry.kind === "separator" ? "---" : entry.command))).toEqual([
+      "paint.togglePalette", "---", "paint.fatBits",
+    ]);
+    const item = findItem(contextOf(threeCards(), { tool: "pencil" }), "paint.fatBits");
+    expect(item.label).toBe("FatBits");
+    expect(item.shortcut).toBeUndefined();
+  });
+  it("is enabled only with the Pencil or the Eraser, on either edit layer", () => {
+    for (const { id } of MENU_TOOLS) {
+      for (const editLayer of ["card", "background"] as const) {
+        const context = contextOf(threeCards(), { tool: id, editLayer });
+        const expected = id === "pencil" || id === "eraser";
+        expect(isEnabled("paint.fatBits", context), `${id} ${editLayer}`).toBe(expected);
+        expect(findItem(context, "paint.fatBits").disabled).toBe(!expected);
+      }
+    }
+  });
+  it("is checked exactly while the FatBits view is on", () => {
+    expect(findItem(contextOf(threeCards(), { tool: "pencil" }), "paint.fatBits").checked).toBe(false);
+    expect(findItem(contextOf(threeCards(), { tool: "pencil", fatBits: { x: 224, y: 149 } }), "paint.fatBits").checked).toBe(true);
+    expect(findItem(contextOf(threeCards()), "paint.fatBits").checked).toBe(false);
+  });
+  it("turns the view on at (224, 149) and off again through store.setFatBits", async () => {
+    const t = setup(threeCards());
+    expect(await t.choose("paint.fatBits")).toBe(false); // Browse tool: disabled
+    expect(t.store.getSnapshot().fatBits).toBeNull();
+    t.store.setTool("eraser");
+    expect(await t.choose("paint.fatBits")).toBe(true);
+    expect(t.store.getSnapshot().fatBits).toEqual({ x: 224, y: 149 });
+    expect(findItem(t.context(), "paint.fatBits").checked).toBe(true);
+    expect(await t.choose("paint.fatBits")).toBe(true);
+    expect(t.store.getSnapshot().fatBits).toBeNull();
+    expect(t.log).toEqual([]); // no message is sent
   });
 });

@@ -66,7 +66,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
     - Headless Chrome: build the stack of task 4.1's check (New Field, `put "brass lamp" into card field 1` from the Message Box), New Card; Ctrl+F, type `lamp`, Return: card 1 is current and the box is drawn; edit the field: the box disappears; `find "zzz"`: `Not found.`, current card unchanged; shortcut check for Ctrl+F; with macOS emulated, Cmd+F handled and prevented; colour-check every screenshot
     - _Requirements: 1.1, 1.3, 1.4, 1.6, 1.7, 1.10, 3.1, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12, 12.2, 12.4, 13.1, 15.1, 15.2, 15.3, 15.4_
 
-- [ ] 5. Implement FatBits
+- [x] 5. Implement FatBits
   - `src/engine/graphics/fatBits.ts`: constants, `clampFatBitsView`, `insetRect`, `inInset`, `fatBitsCardPoint` and `renderFatBits`, next to the `drawFatCell` of task 3.2, which `renderFatBits` uses (design §fatBits.ts)
   - `store.ts`: `fatBits` UI state, `setFatBits` and its clearing invariant; `fatBits: null` in every `HexRuntimeState` literal; `createUiStoreView` exposes `setFatBits`
   - `CardViewport.tsx`: FatBits drawing after composition (paint previews included), pointer mapping, presses in the inset ignored, arrow keys and Escape (design §Rendering); `main.tsx`: `eraserSize: 1` while FatBits is on

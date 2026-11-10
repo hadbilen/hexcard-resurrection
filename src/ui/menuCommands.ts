@@ -29,6 +29,7 @@ import { resolveRelativeCard, type CardChangeTarget, type MessageBus } from "../
 import { THEME_PALETTES, type AuthoringTool, type HexID, type HexStack, type PartType, type ThemePaletteName } from "../core/schema.ts";
 import type { HexRuntimeState, HexStore } from "../core/store.ts";
 import type { ImageFileLike } from "../engine/graphics/imageImport.ts";
+import { FATBITS_START } from "../engine/graphics/fatBits.ts";
 import { isPaintTool } from "../engine/graphics/paintTools.ts";
 import type { FileCommands } from "./fileCommands.ts";
 import type { MessageBoxController } from "./MessageBox.tsx";
@@ -83,6 +84,7 @@ export type MenuCommand =
   | "objects.deleteCard"
   | "objects.newBackground"
   | "paint.togglePalette"
+  | "paint.fatBits"
   | "ai.conjure";
 
 export const RESERVED_COMMANDS: ReadonlySet<MenuCommand> = new Set<ReservedCommand>([
@@ -145,6 +147,7 @@ const FIXED_LABELS = {
   "objects.newCard": "New Card",
   "objects.deleteCard": "Delete Card",
   "objects.newBackground": "New Background",
+  "paint.fatBits": "FatBits",
   "ai.conjure": "Conjure Script...",
   "ai.conjureStack": "Conjure Stack...",
   "ai.oracleSettings": "Oracle Settings...",
@@ -211,6 +214,8 @@ export function isEnabled(command: MenuCommand, context: MenuContext): boolean {
       return canDeleteCard(state.stack, state.currentCardId);
     case "file.importImage":
       return isPaintTool(state.tool); // spec 06 Requirement 1.3
+    case "paint.fatBits":
+      return state.tool === "pencil" || state.tool === "eraser"; // spec 06 Requirement 1.3
     default:
       return true;
   }
@@ -221,6 +226,7 @@ function checkedState(command: MenuCommand, context: MenuContext): boolean | und
   if (command.startsWith("theme:")) return context.state.stack.themePalette.name === command.slice("theme:".length);
   if (command.startsWith("tool:")) return context.state.tool === command.slice("tool:".length);
   if (command === "edit.background") return context.state.editLayer === "background";
+  if (command === "paint.fatBits") return context.state.fatBits !== null; // spec 06 Requirement 1.2
   return undefined;
 }
 
@@ -491,7 +497,11 @@ export function buildMenus(context: MenuContext, platform: Platform): MenuModel[
     {
       id: "paint",
       label: "Paint",
-      entries: [entry("paint.togglePalette", context.paletteVisible ? "Hide Tools Palette" : "Show Tools Palette")],
+      entries: [
+        entry("paint.togglePalette", context.paletteVisible ? "Hide Tools Palette" : "Show Tools Palette"),
+        SEPARATOR,
+        fixed("paint.fatBits"),
+      ],
     },
     {
       id: "ai",
@@ -510,7 +520,7 @@ export type MenuHandlers = Record<Exclude<MenuCommand, ReservedCommand>, () => v
 export type ShellMenuHandlers = Omit<MenuHandlers, "paint.togglePalette">;
 
 export interface MenuHandlerDeps {
-  store: Pick<HexStore, "getSnapshot" | "setTool" | "setEditLayer" | "setSelectedPart">;
+  store: Pick<HexStore, "getSnapshot" | "setTool" | "setEditLayer" | "setSelectedPart" | "setFatBits">;
   history: Pick<HexHistory, "execute" | "undo" | "redo" | "canUndo" | "canRedo" | "undoLabel" | "redoLabel">;
   /** `backHistory` is read by the enabling rule of Go > Back when its dispatch starts. */
   bus: Pick<MessageBus, "runCommand" | "changeCard" | "changeCardBy" | "sendNested" | "backHistory">;
@@ -655,6 +665,8 @@ export function createMenuHandlers(deps: MenuHandlerDeps): ShellMenuHandlers {
     "go.find": () => messageBox.show({ line: FIND_TEMPLATE, select: { start: FIND_CARET, end: FIND_CARET } }),
     "go.stackGraph": () => windows.openStackGraph(),
     ...toolHandlers,
+    // Spec 06 Requirements 7.1, 7.8: on at the centred origin, or off when it is already on.
+    "paint.fatBits": () => store.setFatBits(store.getSnapshot().fatBits ? null : { ...FATBITS_START }),
     "objects.objectInfo": inspectSelected,
     "objects.cardInfo": () => windows.openInspector(store.getSnapshot().currentCardId),
     "objects.backgroundInfo": () => {

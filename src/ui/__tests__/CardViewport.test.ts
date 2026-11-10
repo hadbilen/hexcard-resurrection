@@ -15,6 +15,8 @@ import { validateStack } from "../../core/stackValidator.ts";
 import { createHexStore, type HexStore } from "../../core/store.ts";
 import type { HexValue } from "../../core/vm.ts";
 import { createPaintController, DEFAULT_PAINT_SETTINGS } from "../../engine/graphics/paintTools.ts";
+import { FATBITS_START, insetRect } from "../../engine/graphics/fatBits.ts";
+import { decodeBitmapRLE } from "../../engine/graphics/rleCodec.ts";
 import { createUiStoreView } from "../App.tsx";
 import { importDroppedImage } from "../../engine/graphics/imageImport.ts";
 import {
@@ -30,6 +32,8 @@ import {
   dragRect,
   editableField,
   fieldExitMessage,
+  fatBitsKeyAction,
+  fatBitsPaintPoint,
   foundOptions,
   handleAt,
   scrollTargetForFound,
@@ -603,5 +607,133 @@ describe("found text in the viewport (spec 06 Requirements 4.8, 4.10)", () => {
       expect(target).toEqual({ partId: "prt_notes", scroll: 44 });
       expect(scrollTargetForFound(store.getSnapshot(), 44, stubText)).toBeUndefined(); // already visible
     }
+  });
+});
+
+describe("FatBits in the viewport (spec 06 Requirements 7.5-7.9)", () => {
+  const VIEWPORT_SOURCE = readFileSync(new URL("../CardViewport.tsx", import.meta.url), "utf8");
+  const view = { x: 224, y: 149 };
+  const press = (key: string, extra: Partial<Parameters<typeof fatBitsKeyAction>[1]> = {}, blocked = false, fatBits: typeof view | null = view) =>
+    fatBitsKeyAction(fatBits, { key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, target: null, ...extra }, blocked);
+  const textInput = { closest: (selector: string) => (selector.includes("input") ? {} : null) } as unknown as EventTarget;
+
+  it("maps a press, move or release to the card pixel of the cell under it, and leaves points alone when FatBits is off", () => {
+    expect(fatBitsPaintPoint({ fatBits: null }, { x: 300, y: 200 }, true)).toEqual({ x: 300, y: 200 });
+    expect(fatBitsPaintPoint({ fatBits: view }, { x: 200, y: 100 }, true)).toEqual({ x: 224 + 25, y: 149 + 12 });
+    expect(fatBitsPaintPoint({ fatBits: view }, { x: 511, y: 341 }, true)).toEqual({ x: 224 + 63, y: 149 + 42 });
+    expect(fatBitsPaintPoint({ fatBits: view }, { x: 200, y: 100 }, false)).toEqual({ x: 249, y: 161 });
+  });
+  it("starts no stroke from a press inside the inset, at either corner, but maps a later move over it", () => {
+    expect(fatBitsPaintPoint({ fatBits: view }, { x: 0, y: 0 }, true)).toBeNull();
+    expect(fatBitsPaintPoint({ fatBits: view }, { x: 67, y: 46 }, true)).toBeNull();
+    expect(fatBitsPaintPoint({ fatBits: view }, { x: 68, y: 46 }, true)).not.toBeNull();
+    expect(fatBitsPaintPoint({ fatBits: view }, { x: 10, y: 10 }, false)).toEqual({ x: 225, y: 150 });
+    const corner = { x: 0, y: 0 };
+    expect(insetRect(corner).x).toBe(444);
+    expect(fatBitsPaintPoint({ fatBits: corner }, { x: 450, y: 10 }, true)).toBeNull();
+    expect(fatBitsPaintPoint({ fatBits: corner }, { x: 10, y: 10 }, true)).toEqual({ x: 1, y: 1 });
+  });
+  it("pans by 8 card pixels with the arrow keys, clamped to x 0..448 and y 0..299", () => {
+    expect(press("ArrowRight")).toEqual({ view: { x: 232, y: 149 } });
+    expect(press("ArrowLeft")).toEqual({ view: { x: 216, y: 149 } });
+    expect(press("ArrowDown")).toEqual({ view: { x: 224, y: 157 } });
+    expect(press("ArrowUp")).toEqual({ view: { x: 224, y: 141 } });
+    expect(press("ArrowLeft", {}, false, { x: 3, y: 0 })).toEqual({ view: { x: 0, y: 0 } });
+    expect(press("ArrowUp", {}, false, { x: 3, y: 5 })).toEqual({ view: { x: 3, y: 0 } });
+    expect(press("ArrowRight", {}, false, { x: 445, y: 0 })).toEqual({ view: { x: 448, y: 0 } });
+    expect(press("ArrowDown", {}, false, { x: 0, y: 296 })).toEqual({ view: { x: 0, y: 299 } });
+    expect(press("ArrowRight", {}, false, { x: 448, y: 299 })).toEqual({ view: { x: 448, y: 299 } });
+  });
+  it("turns FatBits off with Escape", () => {
+    expect(press("Escape")).toEqual({ view: null });
+  });
+  it("ignores keys while FatBits is off, with a modifier, in a dialog or studio window, or in a text input", () => {
+    expect(press("ArrowRight", {}, false, null)).toBeUndefined();
+    expect(press("Escape", {}, false, null)).toBeUndefined();
+    for (const modifier of ["metaKey", "ctrlKey", "altKey", "shiftKey"] as const) {
+      expect(press("ArrowRight", { [modifier]: true }), modifier).toBeUndefined();
+      expect(press("Escape", { [modifier]: true }), modifier).toBeUndefined();
+    }
+    expect(press("ArrowRight", {}, true)).toBeUndefined();
+    expect(press("Escape", {}, true)).toBeUndefined();
+    expect(press("ArrowRight", { target: textInput })).toBeUndefined();
+    expect(press("Escape", { target: textInput })).toBeUndefined();
+    expect(press("a")).toBeUndefined();
+    expect(press("Enter")).toBeUndefined();
+  });
+  it("handles the keys in the window listener before the Browse-only checks and draws renderFatBits after composing", () => {
+    expect(VIEWPORT_SOURCE).toMatch(/fatBitsKeyAction\(store\.getSnapshot\(\)\.fatBits, event, isModalOpen\(\)\)/);
+    expect(VIEWPORT_SOURCE.indexOf("fatBitsKeyAction(store.getSnapshot()")).toBeLessThan(VIEWPORT_SOURCE.indexOf('store.getSnapshot().tool !== "browse" || isModalOpen()'));
+    expect(VIEWPORT_SOURCE).toContain("store.setFatBits(fat.view)");
+    expect(VIEWPORT_SOURCE.indexOf("composeFrame(")).toBeLessThan(VIEWPORT_SOURCE.indexOf("renderFatBits(frame, snapshot.fatBits)"));
+    expect(VIEWPORT_SOURCE.indexOf("renderFatBits(frame, snapshot.fatBits)")).toBeLessThan(VIEWPORT_SOURCE.indexOf("frameToImageData(shown"));
+  });
+
+  function paintSetup(tool: "pencil" | "eraser", cardRle = "") {
+    const stack = makeStack();
+    const store = createHexStore({
+      stack: { ...stack, cards: stack.cards.map((card, i) => (i === 0 ? { ...card, bitmap: { ...card.bitmap, rleData: cardRle } } : card)) },
+      compile: parseHexTalk,
+    });
+    const history = createHistory(store);
+    const painter = createPaintController({
+      store,
+      history,
+      getSettings: () => ({ ...DEFAULT_PAINT_SETTINGS, ...(store.getSnapshot().fatBits ? { eraserSize: 1 } : {}) }),
+    });
+    store.setTool(tool);
+    store.setFatBits({ ...FATBITS_START });
+    const cardPixels = () => decodeBitmapRLE(store.getSnapshot().stack.cards[0].bitmap.rleData, 0);
+    /** One stroke through the same mapping the pointer handlers use. */
+    const stroke = (points: Array<[number, number]>) => {
+      const snapshot = store.getSnapshot();
+      const [first, ...rest] = points;
+      const start = fatBitsPaintPoint(snapshot, { x: first[0], y: first[1] }, true)!;
+      expect(painter.begin(start.x, start.y)).toBe(true);
+      for (const [x, y] of rest) {
+        const target = fatBitsPaintPoint(snapshot, { x, y }, false)!;
+        painter.move(target.x, target.y);
+      }
+      const last = rest.at(-1) ?? first;
+      const end = fatBitsPaintPoint(snapshot, { x: last[0], y: last[1] }, false)!;
+      painter.end(end.x, end.y);
+    };
+    return { store, history, stroke, cardPixels };
+  }
+  const idx = (x: number, y: number): number => y * 512 + x;
+
+  it("draws one card pixel per Pencil press, each press one Undo step (Requirement 7.6)", () => {
+    const t = paintSetup("pencil");
+    t.stroke([[100, 100]]); // cell (12, 12) -> card pixel (236, 161)
+    t.stroke([[200, 100]]); // cell (25, 12) -> (249, 161)
+    t.stroke([[100, 200]]); // cell (12, 25) -> (236, 174)
+    const pixels = t.cardPixels();
+    for (const [x, y] of [[236, 161], [249, 161], [236, 174]]) expect(pixels[idx(x, y)], `${x},${y}`).toBe(2);
+    expect(pixels.filter((value) => value === 2)).toHaveLength(3);
+    void t.history.undo();
+    expect(t.cardPixels().filter((value) => value === 2)).toHaveLength(2);
+    void t.history.undo();
+    void t.history.undo();
+    expect(t.cardPixels().filter((value) => value === 2)).toHaveLength(0);
+  });
+  it("erases exactly one card pixel per pointer position with the Eraser (Requirement 7.6)", () => {
+    const seed = paintSetup("pencil");
+    for (const [x, y] of [[100, 100], [108, 100], [116, 100], [100, 108]]) seed.stroke([[x, y]]);
+    const rle = seed.store.getSnapshot().stack.cards[0].bitmap.rleData;
+    expect(seed.cardPixels().filter((value) => value === 2)).toHaveLength(4);
+    const t = paintSetup("eraser", rle);
+    t.stroke([[108, 100]]); // the cell of card pixel (237, 161)
+    const pixels = t.cardPixels();
+    expect(pixels[idx(237, 161)]).toBe(0);
+    expect(pixels.filter((value) => value === 2)).toHaveLength(3);
+    expect(pixels[idx(236, 161)]).toBe(2);
+    expect(pixels[idx(238, 161)]).toBe(2);
+  });
+  it("keeps a drag as one stroke whose points follow the cells", () => {
+    const t = paintSetup("pencil");
+    t.stroke([[100, 100], [108, 100], [116, 100]]); // three adjacent cells
+    expect(t.cardPixels().filter((value) => value === 2)).toHaveLength(3);
+    void t.history.undo();
+    expect(t.cardPixels().filter((value) => value === 2)).toHaveLength(0);
   });
 });

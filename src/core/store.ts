@@ -50,7 +50,26 @@ export interface HexRuntimeState {
    * the current card changes, the field is gone or hidden, its text changes, or a stack is loaded.
    */
   found: FoundText | null;
+  /**
+   * Spec 06 (Requirements 7.1, 7.8, 7.10, 12.2): the FatBits view, as the card pixel shown in its
+   * top-left cell, or null while the view is off. UI state: never saved, never undoable. Only
+   * `setFatBits` sets it, and every published state clears it when the tool is neither the Pencil
+   * nor the Eraser or a stack is loaded. Card and edit-layer changes keep it.
+   */
+  fatBits: FatBitsOrigin | null;
 }
+
+/**
+ * Spec 06: the origin of the FatBits view. `src/engine/graphics/fatBits.ts` has the same plain
+ * `{ x, y }` shape as `FatBitsView`; it is declared here so `src/core/` does not import `src/engine/`.
+ */
+export interface FatBitsOrigin {
+  x: number;
+  y: number;
+}
+
+/** Spec 06 Requirement 7.7: the largest origin (512 - 64, 342 - 43); `fatBits.test.ts` checks it equals `FATBITS_MAX`. */
+const FATBITS_ORIGIN_MAX = { x: 448, y: 299 } as const;
 
 /** Spec 06: the found text, with the field's text when the match was made (so a change clears it). */
 export interface FoundText {
@@ -118,6 +137,12 @@ export interface HexStore {
    * UI state only: not saved, not undoable.
    */
   setFound(found: FoundText | null): void;
+  /**
+   * Spec 06 (Requirements 7.1, 7.8). `null` turns FatBits off. Otherwise the tool must be the
+   * Pencil or the Eraser and `x`, `y` integers in 0..448 and 0..299, else HexMutationError and the
+   * state is unchanged. UI state only: not saved, not undoable.
+   */
+  setFatBits(view: FatBitsOrigin | null): void;
 }
 
 export interface HexStoreOptions {
@@ -674,6 +699,24 @@ function keptFound(previous: HexRuntimeState, next: HexRuntimeState): FoundText 
   return isValidFound(next, found) ? found : null;
 }
 
+/** Spec 06 Requirement 7.8: FatBits works with the Pencil and the Eraser only. */
+function isFatBitsTool(tool: AuthoringTool): boolean {
+  return tool === "pencil" || tool === "eraser";
+}
+
+function isValidFatBits(view: FatBitsOrigin): boolean {
+  return Number.isInteger(view.x) && Number.isInteger(view.y)
+    && view.x >= 0 && view.x <= FATBITS_ORIGIN_MAX.x && view.y >= 0 && view.y <= FATBITS_ORIGIN_MAX.y;
+}
+
+/**
+ * Spec 06 Requirement 7.8: the view survives a state change while the tool stays the Pencil or the
+ * Eraser. Card changes, Edit Background and stack edits keep it; a loaded stack clears it in `publish`.
+ */
+function keptFatBits(next: HexRuntimeState): FatBitsOrigin | null {
+  return next.fatBits !== null && isFatBitsTool(next.tool) ? next.fatBits : null;
+}
+
 /** Deep-frozen private copy, so callers can neither mutate the snapshot nor be affected by it. */
 function adoptStack(stack: HexStack): HexStack {
   if (stack.cards.length === 0) throw new HexMutationError("Cannot load a stack without cards");
@@ -697,13 +740,19 @@ export function createHexStore(options: HexStoreOptions): HexStore {
     tool: "browse",
     selectedPartId: null,
     found: null,
+    fatBits: null,
   });
 
-  /** Every state change goes through here, so the selection and found-text invariants hold for every snapshot. */
+  /** Every state change goes through here, so the selection, found-text and FatBits invariants hold for every snapshot. */
   function publish(next: HexRuntimeState, replaced = false): void {
     const selectedPartId = replaced ? null : keptSelection(state, next);
     const found = replaced ? null : keptFound(state, next);
-    state = freeze(selectedPartId === next.selectedPartId && found === next.found ? next : { ...next, selectedPartId, found });
+    const fatBits = replaced ? null : keptFatBits(next);
+    state = freeze(
+      selectedPartId === next.selectedPartId && found === next.found && fatBits === next.fatBits
+        ? next
+        : { ...next, selectedPartId, found, fatBits },
+    );
     if (replaced) for (const listener of [...replaceListeners]) listener();
     for (const listener of [...listeners]) listener();
   }
@@ -759,6 +808,7 @@ export function createHexStore(options: HexStoreOptions): HexStore {
       cache.rebuild(next);
       publish({
         stack: next, currentCardId: next.cards[0].id, editLayer: "card", tool: state.tool, selectedPartId: null, found: null,
+        fatBits: null,
       }, true);
     },
 
@@ -824,6 +874,22 @@ export function createHexStore(options: HexStoreOptions): HexStore {
       if (current && current.cardId === found.cardId && current.layer === found.layer && current.partId === found.partId
         && current.start === found.start && current.end === found.end && current.text === found.text) return;
       publish({ ...state, found: freeze({ ...found }) });
+    },
+
+    setFatBits(view) {
+      if (view === null) {
+        if (state.fatBits !== null) publish({ ...state, fatBits: null });
+        return;
+      }
+      if (!isFatBitsTool(state.tool) || !isValidFatBits(view)) {
+        throw new HexMutationError(
+          `FatBits origin (${String(view.x)}, ${String(view.y)}) needs the pencil or eraser tool (tool "${state.tool}") `
+            + `and integers x 0..${FATBITS_ORIGIN_MAX.x}, y 0..${FATBITS_ORIGIN_MAX.y}`,
+        );
+      }
+      const current = state.fatBits;
+      if (current && current.x === view.x && current.y === view.y) return;
+      publish({ ...state, fatBits: freeze({ x: view.x, y: view.y }) });
     },
   };
 }

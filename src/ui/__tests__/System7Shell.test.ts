@@ -84,7 +84,9 @@ function setup() {
 }
 
 /** A menu context on the test stack, with the given tool, edit layer and theme. */
-function contextWith(options: { tool?: AuthoringTool; editLayer?: HexLayer; themeName?: ThemePaletteName } = {}): MenuContext {
+function contextWith(
+  options: { tool?: AuthoringTool; editLayer?: HexLayer; themeName?: ThemePaletteName; fatBits?: { x: number; y: number } | null } = {},
+): MenuContext {
   const { store, history } = setup();
   const state = store.getSnapshot();
   const themeName = options.themeName ?? "ClassicPaper";
@@ -93,6 +95,7 @@ function contextWith(options: { tool?: AuthoringTool; editLayer?: HexLayer; them
       ...state,
       tool: options.tool ?? state.tool,
       editLayer: options.editLayer ?? state.editLayer,
+      fatBits: options.fatBits ?? null,
       stack: { ...state.stack, themePalette: { name: themeName, ...THEME_PALETTES[themeName] } },
     },
     history,
@@ -168,6 +171,38 @@ describe("menus", () => {
   });
 });
 
+describe("Paint menu (spec 06 Requirements 1.2, 1.3)", () => {
+  const paintMenu = (context: MenuContext) => buildMenus(context, "other").find((menu) => menu.id === "paint")!;
+  it("lists Show Tools Palette, a separator and FatBits", () => {
+    expect(paintMenu(contextWith()).entries).toMatchObject([
+      { command: "paint.togglePalette", label: "Show Tools Palette" },
+      { kind: "separator" },
+      { command: "paint.fatBits", label: "FatBits" },
+    ]);
+    const html = renderMenu(paintMenu(contextWith({ tool: "pencil" })));
+    expect(html).toContain("FatBits");
+    expect(html).toContain('role="separator"');
+  });
+  it("disables FatBits except with the Pencil or the Eraser, and dims it as every disabled item", () => {
+    for (const tool of ["browse", "button", "brush", "select"] as const) {
+      expect(paintMenu(contextWith({ tool })).entries[2], tool).toMatchObject({ disabled: true });
+    }
+    for (const tool of ["pencil", "eraser"] as const) {
+      expect(paintMenu(contextWith({ tool })).entries[2], tool).toMatchObject({ disabled: false, checked: false });
+    }
+    const dimmed = renderMenu(paintMenu(contextWith({ tool: "browse" })));
+    expect(dimmed.match(/class="s7-dim"/g)).toHaveLength(1);
+    expect(renderMenu(paintMenu(contextWith({ tool: "pencil" }))).match(/class="s7-dim"/g)).toBeNull();
+  });
+  it("draws the check mark of FatBits while the view is on, and only then", () => {
+    const off = renderMenu(paintMenu(contextWith({ tool: "pencil" })), 2);
+    const on = renderMenu(paintMenu(contextWith({ tool: "pencil", fatBits: { x: 224, y: 149 } })), 2);
+    expect(off).toContain('aria-checked="false"');
+    expect(off).not.toContain('aria-checked="true"');
+    expect(on).toMatch(/aria-checked="true"[^>]*><span class="s7-check" aria-hidden="true"><svg/);
+    expect(on.match(/aria-checked="true"/g)).toHaveLength(1);
+  });
+});
 describe("dimmed menu items (spec 05 Requirement 1.3, design §7)", () => {
   it("draw a k-scaled checkerboard of light 1x pixels over every disabled item, and nothing over enabled ones", () => {
     const context = contextWith();
