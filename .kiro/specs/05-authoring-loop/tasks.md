@@ -34,7 +34,7 @@
   - The shell's `keydown` listener ignores text-input targets and does nothing while a dialog or studio window is open; the abort shortcut and the arrow keys keep working as today
   - _Requirements: 1.3, 1.8, 2.4, 2.5, 2.6, 3.4, 9.3, 10.1, 10.2, 14.1, 14.2, 16.1, 16.3, 16.4_
 
-- [ ] 6. Check the authoring loop in headless Chrome
+- [x] 6. Check the authoring loop in headless Chrome
   - Build a two-card stack from File > New Stack using only menus, as in design §9.1, at UI scale 1 and 2
   - Screenshot every step, compare the auto-saved stack with each step, and confirm every screenshot contains only `#000000` and `#FFFFFF`
   - _Requirements: 15.4_
