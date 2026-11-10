@@ -20,6 +20,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createHistory } from "./core/history.ts";
+import { createMessageBoxRunner } from "./core/messageBox.ts";
 import { createMessageBus, type MessageBus } from "./core/messageBus.ts";
 import { parseHexTalk } from "./core/parser.ts";
 import { validateStack } from "./core/stackValidator.ts";
@@ -39,6 +40,7 @@ import { createStarterStack } from "./ui/starterStack.ts";
 import { openInitialStack, startStudio } from "./ui/startup.ts";
 import { createMenuHandlers, detectPlatform } from "./ui/menuCommands.ts";
 import { createScriptErrorReporter, createStudioWindows } from "./ui/ObjectInspector.tsx";
+import { createMessageBox } from "./ui/MessageBox.tsx";
 import { createModalManager } from "./ui/System7Shell.tsx";
 import { createEffectStage, createMouseTracker, createVmHost } from "./ui/vmHost.ts";
 
@@ -167,6 +169,20 @@ async function main(): Promise<void> {
 
   const uiStore = createUiStoreView(store);
   const readyBus: MessageBus = bus; // `bus` is a `let`, so its narrowing does not reach the closure below
+
+  // Spec 06 Requirements 2 and 3: the floating Message Box; Return runs its line in one command
+  // dispatch through the gas-limited VM, with the same host as script handlers.
+  const messageBox = createMessageBox();
+  const runMessageBoxLine = createMessageBoxRunner({
+    store,
+    bus: readyBus,
+    host,
+    io: {
+      line: () => messageBox.getSnapshot().line,
+      setLine: messageBox.setLine,
+      alert: (message, details) => void modals.alert(message, { details }),
+    },
+  });
   // Spec 05 design §3.5: every menu item's handler, built from the narrowed store view (no
   // applyAuthoring / replaceStack); File > New Stack loads through the file commands' loader.
   const menuHandlers = createMenuHandlers({
@@ -176,6 +192,7 @@ async function main(): Promise<void> {
     windows,
     files: fileCommands,
     images,
+    messageBox,
     modals,
   });
   const platform = detectPlatform(navigator);
@@ -204,6 +221,8 @@ async function main(): Promise<void> {
             showcases={showcases}
             onOpenShowcase={openShowcase}
             onDropImage={(file) => void images.dropFile(file)}
+            messageBox={messageBox}
+            onMessageBoxReturn={runMessageBoxLine}
           />
         </StrictMode>,
       );

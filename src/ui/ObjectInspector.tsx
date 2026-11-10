@@ -35,7 +35,7 @@ import type {
   HexPart,
   HexStack,
 } from "../core/schema.ts";
-import { HexRuntimeError, HexVmGasLimitError } from "../core/vm.ts";
+import { HexRuntimeError, HexVmGasLimitError, MESSAGE_BOX_HANDLER } from "../core/vm.ts";
 import { GRIMOIRE, type GrimoireEntry } from "../ai/grimoire.ts";
 import { conjureScript, handlerHint, mergeSpell, type SpellMerge, type SpellObjectKind, type SpellResult } from "../ai/spellcaster.ts";
 import { PixelIcon } from "./FloatingTools.tsx";
@@ -299,7 +299,8 @@ export function createScriptErrorReporter({ getStack, modals, openScript, log }:
     }
     if (error instanceof HexRuntimeError) {
       const objectId = error.objectId;
-      const canOpen = objectId !== undefined && findObject(stack, objectId) !== undefined;
+      // Spec 06 Requirement 3.9: an error in a Message Box line itself has no script to open.
+      const canOpen = objectId !== undefined && error.handler !== MESSAGE_BOX_HANDLER && findObject(stack, objectId) !== undefined;
       const choice = await modals.alert(error.message, {
         details: scriptErrorDetails(stack, error),
         buttons: canOpen ? [SCRIPT_BUTTON, "OK"] : ["OK"],

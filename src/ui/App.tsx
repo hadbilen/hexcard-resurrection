@@ -12,6 +12,7 @@ import type { ImageFileLike } from "../engine/graphics/imageImport.ts";
 import type { PaintController } from "../engine/graphics/paintTools.ts";
 import { CardViewport } from "./CardViewport.tsx";
 import { IconEditor } from "./IconEditor.tsx";
+import { MessageBoxWindow, type MessageBoxController } from "./MessageBox.tsx";
 import { ObjectInspector, type StudioWindows } from "./ObjectInspector.tsx";
 import { ShowcaseChooser, type ShowcaseChoice } from "./ShowcaseChooser.tsx";
 import { StackGraphModal } from "./StackGraphModal.tsx";
@@ -66,11 +67,15 @@ export interface AppProps {
   onOpenShowcase?: (id: string) => void;
   /** Spec 06 Requirement 6.2: imports a file dropped on the card (paint-tool check included). */
   onDropImage?: (file: ImageFileLike) => void;
+  /** Spec 06 Requirement 2: the floating Message Box, shared with the Go > Message Box handler. */
+  messageBox?: MessageBoxController;
+  /** Spec 06 Requirement 3: runs a Message Box line (Return); `createMessageBoxRunner` in main.tsx. */
+  onMessageBoxReturn?: (line: string) => void;
 }
 
 export function App({
   store, history, modals, windows, bus, painter, effects, mouse, initialPatternIndex, onPatternChange, onReady, handlers,
-  platform, showcases = [], onOpenShowcase, onDropImage,
+  platform, showcases = [], onOpenShowcase, onDropImage, messageBox, onMessageBoxReturn,
 }: AppProps) {
   const [patternIndex, setPatternIndex] = useState(initialPatternIndex);
   const open = useSyncExternalStore(windows.subscribe, windows.getSnapshot, windows.getSnapshot);
@@ -109,6 +114,7 @@ export function App({
         onInspectPart={(partId) => windows.openInspector(partId)}
         onDropImage={onDropImage}
       />
+      {messageBox ? <MessageBoxWindow controller={messageBox} onReturn={(line) => onMessageBoxReturn?.(line)} /> : null}
       {open?.kind === "inspector" ? (
         <ObjectInspector key={open.id} store={store} history={history} request={open} onClose={windows.close} />
       ) : null}

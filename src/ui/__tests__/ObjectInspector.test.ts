@@ -14,7 +14,7 @@ import { parseHexTalk } from "../../core/parser.ts";
 import { THEME_PALETTES, type HexButtonPart, type HexFieldPart, type HexStack } from "../../core/schema.ts";
 import { validateStack } from "../../core/stackValidator.ts";
 import { createHexStore } from "../../core/store.ts";
-import { HexScriptError, HexVmGasLimitError } from "../../core/vm.ts";
+import { HexScriptError, HexVmGasLimitError, MESSAGE_BOX_HANDLER } from "../../core/vm.ts";
 import { createUiStoreView } from "../App.tsx";
 import { inspectablePartAt } from "../CardViewport.tsx";
 import { computeUiScale, menuBarHeight } from "../FloatingTools.tsx";
@@ -292,6 +292,24 @@ describe("script error dialogs", () => {
     modals.settle(dialog.id, "OK");
     await second;
     expect(opened).toEqual([]);
+  });
+
+  it("offers no Script button for an error in a Message Box line, but keeps it for a handler the line triggered (spec 06 Requirement 3.9)", async () => {
+    const modals = createModalManager();
+    const opened: string[] = [];
+    const report = createScriptErrorReporter({ getStack: makeStack, modals, openScript: (id) => opened.push(id) });
+    const boxMessage = { name: "Message Box", params: [], targetId: "crd_1" };
+    const inLine = report(new HexScriptError("boom", { objectId: "crd_1", handler: MESSAGE_BOX_HANDLER, line: 1 }), boxMessage);
+    expect(modals.getSnapshot()[0]).toMatchObject({
+      kind: "alert", buttons: ["OK"], details: ['Object: card "Hall"', "Handler: Message Box", "Line: 1"],
+    });
+    modals.settle(modals.getSnapshot()[0].id, "OK");
+    await inLine;
+    const nested = report(new HexScriptError("boom", { objectId: "crd_1", handler: "openCard", line: 4 }), boxMessage);
+    expect(modals.getSnapshot()[0]).toMatchObject({ buttons: [SCRIPT_BUTTON, "OK"] });
+    modals.settle(modals.getSnapshot()[0].id, SCRIPT_BUTTON);
+    await nested;
+    expect(opened).toEqual(["crd_1"]);
   });
 
   it("reports errors without a location and non-script errors in a plain alert", async () => {

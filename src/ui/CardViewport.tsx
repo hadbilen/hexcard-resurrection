@@ -284,6 +284,25 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
   return target.closest("input, textarea, select, [contenteditable]") !== null;
 }
 
+/** What `releaseTextFocus` reads of the focused element (duck-typed, so Node tests can pass objects). */
+export interface FocusedElementLike {
+  closest?(selector: string): unknown;
+  blur?(): void;
+}
+
+/**
+ * Spec 06 Requirement 2.8: on a card press, a text input other than the viewport's own hidden
+ * textarea (the Message Box text box) gives up the focus, so Browse-mode keys reach the card again.
+ * The canvas prevents the default of `mousedown`, so the browser would not move the focus itself.
+ * Returns whether it blurred something.
+ */
+export function releaseTextFocus(active: FocusedElementLike | null | undefined, keep: unknown): boolean {
+  if (!active || active === keep || typeof active.closest !== "function" || typeof active.blur !== "function") return false;
+  if (active.closest("input, textarea, select, [contenteditable]") === null) return false;
+  active.blur();
+  return true;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------------------------
@@ -623,6 +642,7 @@ export function CardViewport({
 
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
     if (event.button !== 0 || isModalOpen()) return;
+    releaseTextFocus(document.activeElement as FocusedElementLike | null, textareaRef.current);
     const point = toPoint(event);
     mouse.set(point.x, point.y);
     event.currentTarget.setPointerCapture?.(event.pointerId);

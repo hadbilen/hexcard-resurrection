@@ -222,16 +222,32 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
     for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
       const { handlers, ran } = recordingHandlers();
       const event = press({ key: "b", code: "KeyB", ...modifier, target: element(false) });
-      expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers })).toBe("edit.background");
+      expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers, platform: "other" })).toBe("edit.background");
       expect(ran).toEqual(["edit.background"]);
       expect(event.prevented).toBe(1);
+    }
+  });
+
+  it("runs Go > Message Box for Ctrl+M except on macOS, where Cmd+M and Ctrl+M stay the browser's (spec 06 Requirements 1.4, 1.5)", () => {
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+      const other = recordingHandlers();
+      const event = press({ key: "m", code: "KeyM", ...modifier, target: element(false) });
+      expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers: other.handlers, platform: "other" })).toBe("go.messageBox");
+      expect(other.ran).toEqual(["go.messageBox"]);
+      expect(event.prevented).toBe(1);
+
+      const mac = recordingHandlers();
+      const onMac = press({ key: "m", code: "KeyM", ...modifier, target: element(false) });
+      expect(shellShortcutKey(onMac, { blocked: false, context: () => contextWith(), handlers: mac.handlers, platform: "mac" })).toBeUndefined();
+      expect(mac.ran).toEqual([]);
+      expect(onMac.prevented).toBe(0);
     }
   });
 
   it("prevents a disabled shortcut but does not run it (Undo without history)", () => {
     const { handlers, ran } = recordingHandlers();
     const event = press({ key: "z", code: "KeyZ", ctrlKey: true });
-    expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers })).toBeUndefined();
+    expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers, platform: "other" })).toBeUndefined();
     expect(ran).toEqual([]);
     expect(event.prevented).toBe(1);
   });
@@ -245,7 +261,7 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
         contextRead = true;
         return contextWith();
       };
-      expect(shellShortcutKey(event, { blocked: true, context, handlers })).toBeUndefined();
+      expect(shellShortcutKey(event, { blocked: true, context, handlers, platform: "other" })).toBeUndefined();
       expect(ran).toEqual([]);
       expect(event.prevented).toBe(0);
       expect(contextRead).toBe(false);
@@ -265,7 +281,7 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
       { key: "Backspace", code: "Backspace" },
     ]) {
       const event = press({ ...init, target: element(true) });
-      expect(shellShortcutKey(event, { blocked: false, context: () => selected, handlers })).toBeUndefined();
+      expect(shellShortcutKey(event, { blocked: false, context: () => selected, handlers, platform: "other" })).toBeUndefined();
       expect(event.prevented).toBe(0);
     }
     expect(ran).toEqual([]);
@@ -280,11 +296,11 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
     for (const key of ["Delete", "Backspace"]) {
       const idle = recordingHandlers();
       const free = press({ key, code: key });
-      expect(shellShortcutKey(free, { blocked: false, context: () => none, handlers: idle.handlers })).toBeUndefined();
+      expect(shellShortcutKey(free, { blocked: false, context: () => none, handlers: idle.handlers, platform: "other" })).toBeUndefined();
       expect(free.prevented).toBe(0); // left to the Browse-mode keyDown forwarding
       const active = recordingHandlers();
       const event = press({ key, code: key });
-      expect(shellShortcutKey(event, { blocked: false, context: () => selected, handlers: active.handlers })).toBe("objects.deletePart");
+      expect(shellShortcutKey(event, { blocked: false, context: () => selected, handlers: active.handlers, platform: "other" })).toBe("objects.deletePart");
       expect(active.ran).toEqual(["objects.deletePart"]);
       expect(event.prevented).toBe(1);
     }
@@ -299,7 +315,7 @@ describe("shell shortcut listener (spec 05 Requirements 2.4, 2.5, 16)", () => {
       { key: ".", code: "Period", ctrlKey: true },
     ]) {
       const event = press(init);
-      expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers })).toBeUndefined();
+      expect(shellShortcutKey(event, { blocked: false, context: () => contextWith(), handlers, platform: "other" })).toBeUndefined();
       expect(event.prevented).toBe(0);
     }
     expect(ran).toEqual([]);

@@ -31,6 +31,7 @@ import type { HexRuntimeState, HexStore } from "../core/store.ts";
 import type { ImageFileLike } from "../engine/graphics/imageImport.ts";
 import { isPaintTool } from "../engine/graphics/paintTools.ts";
 import type { FileCommands } from "./fileCommands.ts";
+import type { MessageBoxController } from "./MessageBox.tsx";
 import type { StudioWindows } from "./ObjectInspector.tsx";
 import type { ModalManager } from "./System7Shell.tsx";
 
@@ -42,7 +43,6 @@ import type { ModalManager } from "./System7Shell.tsx";
 export type ReservedCommand =
   | "go.recent"
   | "go.find"
-  | "go.messageBox"
   | "ai.conjureStack"
   | "ai.oracleSettings";
 
@@ -69,6 +69,7 @@ export type MenuCommand =
   | "go.previous"
   | "go.next"
   | "go.last"
+  | "go.messageBox"
   | "go.stackGraph"
   | ToolCommand
   | "objects.objectInfo"
@@ -87,7 +88,6 @@ export type MenuCommand =
 export const RESERVED_COMMANDS: ReadonlySet<MenuCommand> = new Set<ReservedCommand>([
   "go.recent",
   "go.find",
-  "go.messageBox",
   "ai.conjureStack",
   "ai.oracleSettings",
 ]);
@@ -243,7 +243,7 @@ export function detectPlatform(
 }
 
 export interface Shortcut {
-  key: "B" | "Z";
+  key: "B" | "Z" | "M";
   shift: boolean;
 }
 
@@ -252,12 +252,32 @@ export function shortcutLabel(shortcut: Shortcut, platform: Platform): string {
   return `${platform === "mac" ? "Cmd" : "Ctrl"}+${shortcut.shift ? "Shift+" : ""}${shortcut.key}`;
 }
 
-/** Requirement 2.2: the only menu shortcuts. Platform modifier = Cmd or Ctrl on every platform. */
-export const SHORTCUTS: readonly { command: MenuCommand; shortcut: Shortcut }[] = [
+/** One menu shortcut; `platforms` limits it to those platforms (every platform when omitted). */
+export interface ShortcutEntry {
+  command: MenuCommand;
+  shortcut: Shortcut;
+  platforms?: readonly Platform[];
+}
+
+/**
+ * Spec 05 Requirement 2.2 and spec 06 Requirements 1.4, 1.5: the only menu shortcuts. Platform
+ * modifier = Cmd or Ctrl. Go > Message Box has none on macOS, where Cmd+M minimizes the window:
+ * there it gets no label, no mapping and no preventDefault.
+ */
+export const SHORTCUTS: readonly ShortcutEntry[] = [
   { command: "edit.background", shortcut: { key: "B", shift: false } },
   { command: "edit.undo", shortcut: { key: "Z", shift: false } },
   { command: "edit.redo", shortcut: { key: "Z", shift: true } },
+  { command: "go.messageBox", shortcut: { key: "M", shift: false }, platforms: ["other"] },
 ];
+
+/** The shortcut entries that exist on `platform`. */
+export function platformShortcuts(platform: Platform): readonly ShortcutEntry[] {
+  return SHORTCUTS.filter((entry) => entry.platforms === undefined || entry.platforms.includes(platform));
+}
+
+/** Physical key codes of the shortcut letters (`event.code`, so every keyboard layout maps alike). */
+const SHORTCUT_KEY_CODES: Readonly<Record<string, Shortcut["key"]>> = { KeyB: "B", KeyZ: "Z", KeyM: "M" };
 
 /**
  * Requirement 2.1: combinations browsers reserve and pages cannot prevent. `modifier: "platform"`
@@ -303,11 +323,15 @@ export function isTextInputTarget(target: EventTarget | null): boolean {
  * whether or not their item is enabled (Requirement 2.4); Delete / Backspace map to Delete Part
  * only while it is enabled, so Browse-mode `keyDown` forwarding keeps them otherwise (Requirement 2.5).
  */
-export function shortcutCommand(event: KeyLike, context: MenuContext): { command: MenuCommand; preventDefault: boolean } | undefined {
+export function shortcutCommand(
+  event: KeyLike,
+  context: MenuContext,
+  platform: Platform,
+): { command: MenuCommand; preventDefault: boolean } | undefined {
   if (isTextInputTarget(event.target)) return undefined;
   if ((event.metaKey || event.ctrlKey) && !event.altKey) {
-    const key = event.code === "KeyB" ? "B" : event.code === "KeyZ" ? "Z" : undefined;
-    const match = SHORTCUTS.find(({ shortcut }) => shortcut.key === key && shortcut.shift === event.shiftKey);
+    const key = Object.hasOwn(SHORTCUT_KEY_CODES, event.code) ? SHORTCUT_KEY_CODES[event.code] : undefined;
+    const match = platformShortcuts(platform).find(({ shortcut }) => shortcut.key === key && shortcut.shift === event.shiftKey);
     return match ? { command: match.command, preventDefault: true } : undefined;
   }
   const plain = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
@@ -325,8 +349,9 @@ export function handleShortcutKey(
   event: KeyLike & { preventDefault(): void },
   context: MenuContext,
   handlers: MenuHandlers,
+  platform: Platform,
 ): MenuCommand | undefined {
-  const mapped = shortcutCommand(event, context);
+  const mapped = shortcutCommand(event, context, platform);
   if (!mapped) return undefined;
   if (mapped.preventDefault) event.preventDefault();
   return runMenuCommand(mapped.command, context, handlers) ? mapped.command : undefined;
@@ -354,7 +379,7 @@ export function buildMenus(context: MenuContext, platform: Platform): MenuModel[
     const result: Extract<MenuEntry, { kind: "item" }> = { kind: "item", command, label, disabled: !isEnabled(command, context) };
     const checked = checkedState(command, context);
     if (checked !== undefined) result.checked = checked;
-    const shortcut = SHORTCUTS.find((candidate) => candidate.command === command);
+    const shortcut = platformShortcuts(platform).find((candidate) => candidate.command === command);
     if (shortcut) result.shortcut = shortcutLabel(shortcut.shortcut, platform);
     return result;
   };
@@ -470,6 +495,8 @@ export interface MenuHandlerDeps {
   >;
   /** Spec 06 Requirement 6: imports a chosen image file into the edit target (main.tsx wiring). */
   images: { importFile(file: ImageFileLike): Promise<unknown> };
+  /** Spec 06 Requirement 2: the floating Message Box. */
+  messageBox: Pick<MessageBoxController, "show" | "isOpen">;
   modals: Pick<ModalManager, "alert">;
   /** Id source of new objects; Math.random by default. */
   random?: RandomSource;
@@ -494,7 +521,7 @@ export function createThemeCommand(name: ThemePaletteName): HexCommand {
 }
 
 export function createMenuHandlers(deps: MenuHandlerDeps): ShellMenuHandlers {
-  const { store, history, bus, windows, files, images, modals, random } = deps;
+  const { store, history, bus, windows, files, images, messageBox, modals, random } = deps;
 
   /** Requirement 1.6: the enabling rule on the live snapshot, when a command dispatch starts. */
   const stillEnabled = (command: MenuCommand): boolean =>
@@ -592,6 +619,8 @@ export function createMenuHandlers(deps: MenuHandlerDeps): ShellMenuHandlers {
     "go.previous": go("go.previous", (state) => resolveRelativeCard(state, "prev")),
     "go.next": go("go.next", (state) => resolveRelativeCard(state, "next")),
     "go.last": go("go.last", (state) => resolveRelativeCard(state, "last")),
+    // Spec 06 Requirements 2.1, 2.2: open with the caret at the end, or select the whole line when open.
+    "go.messageBox": () => messageBox.show({ select: messageBox.isOpen() ? "all" : "end" }),
     "go.stackGraph": () => windows.openStackGraph(),
     ...toolHandlers,
     "objects.objectInfo": inspectSelected,

@@ -565,6 +565,11 @@ interface Frame {
   readonly globalNames: Set<string>;
   /** Line of the node evaluated most recently; used to locate errors. */
   line: number;
+  /**
+   * Spec 06: true for the synthetic frame of a Message Box line. Every variable is then a global
+   * and `line` stays 1, so errors raised by the line itself are located at Message Box line 1.
+   */
+  readonly messageBox: boolean;
 }
 
 type ResolvedContainer =
@@ -573,12 +578,13 @@ type ResolvedContainer =
 
 /** Every node evaluation starts here: record the line, then charge one step. */
 function enter(frame: Frame, loc: HexSourceLoc | undefined): void {
-  if (loc) frame.line = loc.line;
+  if (loc && !frame.messageBox) frame.line = loc.line;
   frame.ctx.tick();
 }
 
 function scopeOf(frame: Frame, name: string): Map<string, HexValue> {
-  return frame.globalNames.has(name) ? frame.ctx.globals : frame.locals;
+  // Spec 06 Requirement 3.7: in the Message Box every variable, `it` included, is a global.
+  return frame.messageBox || frame.globalNames.has(name) ? frame.ctx.globals : frame.locals;
 }
 
 /** An unset variable evaluates to empty. */
@@ -990,6 +996,7 @@ export async function runHandler(
     locals: new Map<string, HexValue>([["it", ""]]),
     globalNames: new Set<string>(),
     line: handler.loc?.line ?? 0,
+    messageBox: false,
   };
   handler.params.forEach((name, index) => frame.locals.set(name, index < params.length ? params[index] : ""));
 
@@ -1000,6 +1007,56 @@ export async function runHandler(
       throw new HexScriptError(`${flow === EXIT_REPEAT ? "exit repeat" : "next repeat"} used outside a repeat loop`);
     }
     return "handled";
+  } catch (error) {
+    throw locateError(frame, error);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Message Box (spec 06 Requirements 3.2-3.9)
+// ---------------------------------------------------------------------------------------------
+
+/** Requirement 3.9: the handler of errors raised by a Message Box line itself. Has a space, so no parsed handler can have it. */
+export const MESSAGE_BOX_HANDLER = "Message Box";
+
+export type MessageBoxProgram =
+  | { kind: "statement"; statement: HexStatementNode }
+  | { kind: "expression"; expression: HexExprNode };
+
+/** The synthetic handler of a Message Box frame; never parsed, never run as a handler body. */
+const MESSAGE_BOX_FRAME_HANDLER: HexHandlerNode = Object.freeze({ eventName: MESSAGE_BOX_HANDLER, params: [], body: [] });
+
+/**
+ * Spec 06 Requirements 3.2-3.7. Runs one Message Box statement, or evaluates one expression, as `me`
+ * inside `ctx` (the command dispatch): every variable, `it` included, is the global of that name in
+ * `ctx.globals`. Resolves to the expression's value, or undefined for a statement. Errors raised in the
+ * line itself are located as { objectId: me, handler: MESSAGE_BOX_HANDLER, line: 1 }; errors located by
+ * a nested handler keep their location. `exit repeat` / `next repeat` outside a loop throw as in runHandler.
+ * Gas is charged to `ctx`, so the line shares the 10,000-step budget with its nested dispatches.
+ */
+export async function runMessageBoxLine(
+  program: MessageBoxProgram,
+  me: HexID,
+  ctx: DispatchContext,
+  host: HexHost,
+): Promise<HexValue | undefined> {
+  const frame: Frame = {
+    handler: MESSAGE_BOX_FRAME_HANDLER,
+    me,
+    ctx,
+    host,
+    locals: new Map<string, HexValue>(), // unused: scopeOf sends every variable to ctx.globals
+    globalNames: new Set<string>(),
+    line: 1,
+    messageBox: true,
+  };
+  try {
+    if (program.kind === "expression") return evalExpr(frame, program.expression);
+    const flow = await evalStatement(frame, program.statement);
+    if (flow === EXIT_REPEAT || flow === NEXT_REPEAT) {
+      throw new HexScriptError(`${flow === EXIT_REPEAT ? "exit repeat" : "next repeat"} used outside a repeat loop`);
+    }
+    return undefined;
   } catch (error) {
     throw locateError(frame, error);
   }

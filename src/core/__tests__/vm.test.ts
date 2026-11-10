@@ -16,9 +16,12 @@ import {
   HexAbortError,
   HexScriptError,
   HexVmGasLimitError,
+  MESSAGE_BOX_HANDLER,
   resolveObjectTarget,
   runHandler,
+  runMessageBoxLine,
   type DispatchContext,
+  type MessageBoxProgram,
   type EvaluatedCardTarget,
   type FetchResult,
   type HexHost,
@@ -625,5 +628,96 @@ describe("play", () => {
     expect(sounds).toEqual([["harpsichord", 90, "C4 E4 G4"]]);
     expect(globals.get("after")).toBe("ran");
     expect(ctx.stepCount).toBe(4); // global, play, put, literal
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Message Box lines (spec 06 Requirements 3.2-3.7, 3.9)
+// ---------------------------------------------------------------------------------------------
+
+describe("runMessageBoxLine", () => {
+  const statement = (node: HexStatementNode): MessageBoxProgram => ({ kind: "statement", statement: node });
+  const expression = (node: HexExprNode): MessageBoxProgram => ({ kind: "expression", expression: node });
+  const goNext = (line: number): HexStatementNode => at(line, { kind: "GoToCard", target: { type: "relative", dir: "next" } });
+
+  it("evaluates an expression as `me`, and a statement resolves to undefined", async () => {
+    const { host, newCtx } = setup();
+    await expect(runMessageBoxLine(expression(bin("*", lit(3), lit(4))), "crd_1", newCtx(), host)).resolves.toBe(12);
+    await expect(runMessageBoxLine(expression(prop("name", { objectType: "me" })), "crd_1", newCtx(), host)).resolves.toBe("First");
+    await expect(runMessageBoxLine(statement(put(lit("abc"), toVar("x"))), "crd_1", newCtx(), host)).resolves.toBeUndefined();
+  });
+
+  it("binds every variable, `it` included, to the runtime global of that name (Requirement 3.7)", async () => {
+    const { host, globals, newCtx } = setup();
+    await runMessageBoxLine(statement(put(lit(5), toVar("x"))), "crd_1", newCtx(), host);
+    expect(globals.get("x")).toBe(5);
+    await runMessageBoxLine(statement({ kind: "GetValue", value: bin("+", ref("x"), lit(1)) }), "crd_1", newCtx(), host);
+    expect(globals.get("it")).toBe(6);
+    await expect(runMessageBoxLine(expression(ref("it")), "crd_1", newCtx(), host)).resolves.toBe(6);
+    // A handler that declares `global x` reads the value the Message Box put there.
+    await runHandler(handler("test", [global("x", "seen"), put(ref("x"), toVar("seen"))]), [], "crd_1", newCtx(), host);
+    expect(globals.get("seen")).toBe(5);
+    // An unset variable is empty, as in handlers.
+    await expect(runMessageBoxLine(expression(ref("nothing")), "crd_1", newCtx(), host)).resolves.toBe("");
+  });
+
+  it("writes fields through the runtime path of the current card", async () => {
+    const { store, host, newCtx } = setup();
+    await runMessageBoxLine(statement(at(2, put(lit("brass lamp"), toField("card", "Notes")))), "crd_1", newCtx(), host);
+    expect(readFieldText(store.getSnapshot().stack, "crd_1", "card", "prt_notes")).toBe("brass lamp");
+  });
+
+  it("locates an error raised by the line itself at Message Box line 1, whatever the node locations say (Requirement 3.9)", async () => {
+    const { host, newCtx } = setup();
+    const failing = at(7, put(bin("+", lit("x"), lit(1)), toVar("y")));
+    await expect(runMessageBoxLine(statement(failing), "crd_2", newCtx(), host)).rejects.toMatchObject({
+      name: "HexScriptError", objectId: "crd_2", handler: MESSAGE_BOX_HANDLER, line: 1,
+    });
+    await expect(runMessageBoxLine(expression(readField("card", "Missing")), "crd_1", newCtx(), host)).rejects.toMatchObject({
+      handler: MESSAGE_BOX_HANDLER, line: 1, message: 'No such card field "Missing"',
+    });
+    await expect(runMessageBoxLine(statement({ kind: "ExitRepeat" }), "crd_1", newCtx(), host)).rejects.toMatchObject({
+      message: "exit repeat used outside a repeat loop", handler: MESSAGE_BOX_HANDLER, line: 1,
+    });
+    expect(MESSAGE_BOX_HANDLER).toBe("Message Box");
+  });
+
+  it("keeps the location of an error raised in a handler that the line triggered", async () => {
+    const opened = handler("openCard", [at(2, put(lit(1), toVar("a"))), at(3, put(bin("/", lit(1), lit(0)), toVar("b")))]);
+    const { host, newCtx } = setup({ goToCard: (_target, _effect, ctx) => runHandler(opened, [], "crd_2", ctx, host).then(() => undefined) });
+    await expect(runMessageBoxLine(statement(goNext(4)), "crd_1", newCtx(), host)).rejects.toMatchObject({
+      name: "HexScriptError", message: "Division by zero", objectId: "crd_2", handler: "openCard", line: 3,
+    });
+  });
+
+  it("shares the 10,000-step budget with its nested dispatches (Requirement 3.6)", async () => {
+    const busy = handler("openCard", [repeat({ type: "count", times: lit(10) })]); // repeat + literal + 11 checks
+    const { host, newCtx } = setup({ goToCard: (_target, _effect, ctx) => runHandler(busy, [], "crd_2", ctx, host).then(() => undefined) });
+    const ctx = newCtx();
+    await runMessageBoxLine(statement(goNext(2)), "crd_1", ctx, host);
+    expect(ctx.stepCount).toBe(1 + 13);
+
+    // The nested handler runs out of the budget the line started: located in the nested handler.
+    const forever = handler("openCard", [at(2, repeat({ type: "forever" }))]);
+    const looping = setup({ goToCard: (_target, _effect, c) => runHandler(forever, [], "crd_2", c, looping.host).then(() => undefined) });
+    const shared = looping.newCtx();
+    await expect(runMessageBoxLine(statement(goNext(2)), "crd_1", shared, looping.host)).rejects.toMatchObject({
+      name: "HexVmGasLimitError", handler: "openCard", objectId: "crd_2",
+    });
+    expect(shared.stepCount).toBe(GAS_LIMIT + 1);
+
+    // A line that itself runs out of steps is located at Message Box line 1.
+    const nearlySpent = newCtx();
+    nearlySpent.stepCount = GAS_LIMIT - 2;
+    const error = await runMessageBoxLine(expression(bin("+", lit(1), lit(2))), "crd_1", nearlySpent, host).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HexVmGasLimitError);
+    expect(error).toMatchObject({ handler: MESSAGE_BOX_HANDLER, line: 1, objectId: "crd_1" });
+  });
+
+  it("stops with HexAbortError once the dispatch is aborted", async () => {
+    const { host, controller, newCtx } = setup();
+    const ctx = newCtx();
+    controller.abort();
+    await expect(runMessageBoxLine(expression(lit(1)), "crd_1", ctx, host)).rejects.toBeInstanceOf(HexAbortError);
   });
 });

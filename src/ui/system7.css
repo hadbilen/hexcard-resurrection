@@ -255,6 +255,26 @@ body {
   background: var(--dark-bit);
 }
 
+/* Go > Message Box (spec 06 Requirement 2): a floating window with the palette chrome, 448 x 47
+   at 1x with its frame (1 + 12 title + 1 line + 4 + 24 text box + 4 + 1). The text box is as high
+   as .s7-dialog-input, so the 2 px focus ring (rows 2 to 3 and 20 to 21 of the box) leaves the
+   16 px text line (rows 4 to 19) clear. Selection and caret colours come from the .s7-shell
+   ::selection and .s7-input rules. */
+.s7-message-box {
+  width: calc(448 * var(--px));
+}
+
+.s7-message-box-body {
+  padding: calc(4 * var(--px));
+}
+
+.s7-shell .s7-message-box-input {
+  display: block;
+  width: 100%;
+  height: calc(24 * var(--px));
+  line-height: calc(16 * var(--px));
+}
+
 .s7-tool-grid {
   display: grid;
   grid-template-columns: repeat(2, calc(24 * var(--px)));

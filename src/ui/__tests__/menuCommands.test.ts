@@ -34,6 +34,7 @@ import {
   type MenuHandlers,
   type MenuModel,
 } from "../menuCommands.ts";
+import { createMessageBox, type MessageBoxController } from "../MessageBox.tsx";
 import { createStarterStack } from "../starterStack.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -125,6 +126,8 @@ interface Harness {
   calls: string[];
   alerts: string[];
   palette: { visible: boolean };
+  /** Spec 06: the real Message Box controller the Go > Message Box handler opens. */
+  messageBox: MessageBoxController;
   handlers: MenuHandlers;
   context(): MenuContext;
   /** Runs `command` like a menu choice (only when enabled) and waits for its dispatch. */
@@ -145,6 +148,7 @@ function setup(
   const calls: string[] = [];
   const alerts: string[] = [];
   const palette = { visible: false };
+  const messageBox = createMessageBox();
   let bus: MessageBus | undefined;
 
   const runner: HandlerRunner = async (handler, _params, me, ctx) => {
@@ -208,6 +212,7 @@ function setup(
         return true;
       },
     },
+    messageBox,
     modals: {
       alert: async (message) => {
         alerts.push(message);
@@ -223,7 +228,7 @@ function setup(
   });
 
   return {
-    store, history, bus: readyBus, log, errors, calls, alerts, palette, handlers, context,
+    store, history, bus: readyBus, log, errors, calls, alerts, palette, messageBox, handlers, context,
     async choose(command) {
       const ran = runMenuCommand(command, context(), handlers);
       await settle();
@@ -341,13 +346,16 @@ describe("menu layout", () => {
     expect(MENU_TOOLS).toEqual(TOOLS.map(({ id, label }) => ({ id, label })));
   });
 
-  it("gives only Edit Background, Undo and Redo a shortcut label, per platform (Requirements 2.2, 2.3)", () => {
+  it("gives only Edit Background, Undo, Redo and (except on macOS) Message Box a shortcut label (Requirements 2.2, 2.3)", () => {
     const labelled = (platform: "mac" | "other") =>
       items(buildMenus(contextOf(threeCards()), platform))
         .filter((entry) => entry.shortcut !== undefined)
         .map((entry) => [entry.command, entry.shortcut]);
     expect(labelled("mac")).toEqual([["edit.undo", "Cmd+Z"], ["edit.redo", "Cmd+Shift+Z"], ["edit.background", "Cmd+B"]]);
-    expect(labelled("other")).toEqual([["edit.undo", "Ctrl+Z"], ["edit.redo", "Ctrl+Shift+Z"], ["edit.background", "Ctrl+B"]]);
+    // Spec 06 Requirements 1.4-1.6: Go > Message Box has Ctrl+M everywhere but macOS, which gets no label.
+    expect(labelled("other")).toEqual([
+      ["edit.undo", "Ctrl+Z"], ["edit.redo", "Ctrl+Shift+Z"], ["edit.background", "Ctrl+B"], ["go.messageBox", "Ctrl+M"],
+    ]);
     expect(shortcutLabel({ key: "Z", shift: true }, "mac")).toBe("Cmd+Shift+Z");
     expect(shortcutLabel({ key: "B", shift: false }, "other")).toBe("Ctrl+B");
   });
@@ -505,6 +513,8 @@ function observe(t: Harness) {
     calls: t.calls.length,
     alerts: t.alerts.length,
     palette: t.palette.visible,
+    // Spec 06 Requirement 1.10: opening, closing, focusing the Message Box or changing its line.
+    messageBox: t.messageBox.getSnapshot(),
   };
 }
 
@@ -592,9 +602,9 @@ function press(init: Partial<KeyLike> & { key: string }, target: unknown = deskt
   return event;
 }
 
-const ctrl = (code: "KeyB" | "KeyZ", shiftKey = false, extra: Partial<KeyLike> = {}) =>
+const ctrl = (code: "KeyB" | "KeyZ" | "KeyM", shiftKey = false, extra: Partial<KeyLike> = {}) =>
   ({ key: code.slice(3).toLowerCase(), code, ctrlKey: true, shiftKey, ...extra });
-const cmd = (code: "KeyB" | "KeyZ", shiftKey = false) => ({ key: code.slice(3).toLowerCase(), code, metaKey: true, shiftKey });
+const cmd = (code: "KeyB" | "KeyZ" | "KeyM", shiftKey = false) => ({ key: code.slice(3).toLowerCase(), code, metaKey: true, shiftKey });
 
 /** Records every handler call; every command is enabled except what the context rules out. */
 function recordingHandlers(): { handlers: MenuHandlers; ran: MenuCommand[] } {
@@ -612,7 +622,8 @@ const enabledEverything = (): MenuContext =>
 
 describe("shortcuts", () => {
   it("assigns no shortcut that browsers reserve (Requirement 2.1)", () => {
-    expect(SHORTCUTS).toHaveLength(3);
+    expect(SHORTCUTS).toHaveLength(4);
+    // Spec 06 Requirement 1.9: no new shortcut collides with a reserved combination either.
     for (const { shortcut } of SHORTCUTS) {
       const clash = RESERVED_BROWSER_SHORTCUTS.find((reserved) => reserved.key === shortcut.key && reserved.shift === shortcut.shift);
       expect(clash).toBeUndefined();
@@ -625,12 +636,12 @@ describe("shortcuts", () => {
   it("maps Cmd and Ctrl + B / Z / Shift+Z by physical key on every platform, and prevents the default", () => {
     const context = enabledEverything();
     for (const make of [ctrl, cmd]) {
-      expect(shortcutCommand(press(make("KeyB")), context)).toEqual({ command: "edit.background", preventDefault: true });
-      expect(shortcutCommand(press(make("KeyZ")), context)).toEqual({ command: "edit.undo", preventDefault: true });
-      expect(shortcutCommand(press(make("KeyZ", true)), context)).toEqual({ command: "edit.redo", preventDefault: true });
+      expect(shortcutCommand(press(make("KeyB")), context, "other")).toEqual({ command: "edit.background", preventDefault: true });
+      expect(shortcutCommand(press(make("KeyZ")), context, "other")).toEqual({ command: "edit.undo", preventDefault: true });
+      expect(shortcutCommand(press(make("KeyZ", true)), context, "other")).toEqual({ command: "edit.redo", preventDefault: true });
     }
     // Another keyboard layout: the key value differs, the physical key is the same.
-    expect(shortcutCommand(press({ key: "y", code: "KeyZ", ctrlKey: true }), context)?.command).toBe("edit.undo");
+    expect(shortcutCommand(press({ key: "y", code: "KeyZ", ctrlKey: true }), context, "other")?.command).toBe("edit.undo");
   });
 
   it("maps nothing else: no Alt combinations, no Shift+B, no digits, no arrows, no abort shortcut", () => {
@@ -641,13 +652,13 @@ describe("shortcuts", () => {
       { key: "b", code: "KeyB" }, { key: "ArrowLeft", code: "ArrowLeft" }, { key: "ArrowRight", code: "ArrowRight" },
       { key: ".", code: "Period", metaKey: true }, { key: ".", code: "Period", ctrlKey: true },
     ];
-    for (const init of unmapped) expect(shortcutCommand(press(init), context), JSON.stringify(init)).toBeUndefined();
+    for (const init of unmapped) expect(shortcutCommand(press(init), context, "other"), JSON.stringify(init)).toBeUndefined();
   });
 
   it("runs the menu handler of an enabled shortcut and prevents the default (Requirement 2.4)", () => {
     const { handlers, ran } = recordingHandlers();
     const event = press(ctrl("KeyZ", true));
-    expect(handleShortcutKey(event, enabledEverything(), handlers)).toBe("edit.redo");
+    expect(handleShortcutKey(event, enabledEverything(), handlers, "other")).toBe("edit.redo");
     expect(ran).toEqual(["edit.redo"]);
     expect(event.prevented).toBe(true);
   });
@@ -655,7 +666,7 @@ describe("shortcuts", () => {
   it("prevents a disabled shortcut but does not run it", () => {
     const { handlers, ran } = recordingHandlers();
     const event = press(cmd("KeyZ"));
-    expect(handleShortcutKey(event, contextOf(threeCards()), handlers)).toBeUndefined();
+    expect(handleShortcutKey(event, contextOf(threeCards()), handlers, "other")).toBeUndefined();
     expect(ran).toEqual([]);
     expect(event.prevented).toBe(true);
   });
@@ -664,15 +675,15 @@ describe("shortcuts", () => {
     for (const key of ["Delete", "Backspace"]) {
       const { handlers, ran } = recordingHandlers();
       const selected = press({ key, code: key });
-      expect(handleShortcutKey(selected, enabledEverything(), handlers)).toBe("objects.deletePart");
+      expect(handleShortcutKey(selected, enabledEverything(), handlers, "other")).toBe("objects.deletePart");
       expect(selected.prevented).toBe(true);
       expect(ran).toEqual(["objects.deletePart"]);
 
       const unselected = press({ key, code: key });
-      expect(handleShortcutKey(unselected, contextOf(threeCards(), { tool: "button" }), handlers)).toBeUndefined();
+      expect(handleShortcutKey(unselected, contextOf(threeCards(), { tool: "button" }), handlers, "other")).toBeUndefined();
       expect(unselected.prevented).toBe(false);
       for (const modifier of ["shiftKey", "ctrlKey", "metaKey", "altKey"] as const) {
-        expect(shortcutCommand(press({ key, code: key, [modifier]: true }), enabledEverything())).toBeUndefined();
+        expect(shortcutCommand(press({ key, code: key, [modifier]: true }), enabledEverything(), "other")).toBeUndefined();
       }
     }
   });
@@ -686,21 +697,58 @@ describe("shortcuts", () => {
       "script editor": element("textarea", [], inspector),
       "Spellcaster prompt": element("textarea", [], inspector),
       "ask dialog text box": element("input", [], element("div", [], body)),
+      // Spec 06 Requirement 15.3: the Message Box text box is a text input too.
+      "Message Box text box": element("input", [], element("div", [], body)),
       "select box": element("select", [], inspector),
       "contenteditable element": editable,
       "inside a contenteditable element": element("span", [], editable),
     };
     const shortcuts = [ctrl("KeyB"), cmd("KeyB"), ctrl("KeyZ"), cmd("KeyZ"), ctrl("KeyZ", true), cmd("KeyZ", true),
-      { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }];
+      ctrl("KeyM"), cmd("KeyM"), { key: "Delete", code: "Delete" }, { key: "Backspace", code: "Backspace" }];
     for (const [name, target] of Object.entries(targets)) {
       expect(isTextInputTarget(target as unknown as EventTarget), name).toBe(true);
       for (const init of shortcuts) {
         const { handlers, ran } = recordingHandlers();
         const event = press(init, target);
-        expect(shortcutCommand(event, enabledEverything()), `${name} ${init.key}`).toBeUndefined();
-        expect(handleShortcutKey(event, enabledEverything(), handlers)).toBeUndefined();
+        expect(shortcutCommand(event, enabledEverything(), "other"), `${name} ${init.key}`).toBeUndefined();
+        expect(handleShortcutKey(event, enabledEverything(), handlers, "other")).toBeUndefined();
         expect(ran).toEqual([]);
         expect(event.prevented, `${name} ${init.key}`).toBe(false);
+      }
+    }
+  });
+
+  it("maps Cmd and Ctrl + M to Go > Message Box except on macOS, where it maps and prevents nothing (spec 06 Requirements 1.4-1.7)", () => {
+    const context = enabledEverything();
+    for (const make of [ctrl, cmd]) {
+      expect(shortcutCommand(press(make("KeyM")), context, "other")).toEqual({ command: "go.messageBox", preventDefault: true });
+      expect(shortcutCommand(press(make("KeyM")), context, "mac")).toBeUndefined();
+      expect(shortcutCommand(press(make("KeyM", true)), context, "other")).toBeUndefined(); // no Shift variant
+      expect(shortcutCommand(press({ ...make("KeyM"), altKey: true }), context, "other")).toBeUndefined();
+
+      const { handlers, ran } = recordingHandlers();
+      const onMac = press(make("KeyM"));
+      expect(handleShortcutKey(onMac, context, handlers, "mac")).toBeUndefined();
+      expect(onMac.prevented).toBe(false);
+      const elsewhere = press(make("KeyM"));
+      expect(handleShortcutKey(elsewhere, context, handlers, "other")).toBe("go.messageBox");
+      expect(elsewhere.prevented).toBe(true);
+      expect(ran).toEqual(["go.messageBox"]);
+    }
+    // The other shortcuts are the same on both platforms.
+    expect(shortcutCommand(press(cmd("KeyB")), context, "mac")).toEqual({ command: "edit.background", preventDefault: true });
+    expect(shortcutCommand(press(ctrl("KeyZ", true)), context, "mac")).toEqual({ command: "edit.redo", preventDefault: true });
+  });
+
+  it("assigns no reserved combination on either platform (spec 06 Requirement 1.9)", () => {
+    for (const platform of ["mac", "other"] as const) {
+      for (const reserved of RESERVED_BROWSER_SHORTCUTS) {
+        if (reserved.key.length !== 1) continue;
+        const code = `Key${reserved.key}`;
+        for (const modifier of reserved.modifier === "ctrl" ? ["ctrlKey"] as const : ["ctrlKey", "metaKey"] as const) {
+          const event = press({ key: reserved.key.toLowerCase(), code, [modifier]: true, shiftKey: reserved.shift });
+          expect(shortcutCommand(event, enabledEverything(), platform), `${platform} ${code}`).toBeUndefined();
+        }
       }
     }
   });
@@ -1048,6 +1096,35 @@ describe("File > Import Image", () => {
 // ---------------------------------------------------------------------------------------------
 // Edit > Icon Editor (spec 06 Requirements 1.1, 1.3, 10.1)
 // ---------------------------------------------------------------------------------------------
+
+describe("Go > Message Box (spec 06 Requirements 1.1, 1.3, 2.1, 2.2)", () => {
+  it("is a real item labelled Message Box..., enabled with every tool and edit layer", () => {
+    expect(isReservedCommand("go.messageBox")).toBe(false);
+    for (const { id } of MENU_TOOLS) {
+      for (const editLayer of ["card", "background"] as const) {
+        const context = contextOf(threeCards(), { tool: id, editLayer });
+        expect(isEnabled("go.messageBox", context), `${id} ${editLayer}`).toBe(true);
+        expect(findItem(context, "go.messageBox")).toMatchObject({ label: "Message Box...", disabled: false, shortcut: "Ctrl+M" });
+      }
+    }
+    const onMac = items(buildMenus(contextOf(threeCards()), "mac")).find((entry) => entry.command === "go.messageBox");
+    expect(onMac?.shortcut).toBeUndefined();
+  });
+
+  it("opens with the caret at the end, then selects the whole line while open; sends no message", async () => {
+    const t = setup(threeCards());
+    t.messageBox.setLine("put 1 into x");
+    expect(await t.choose("go.messageBox")).toBe(true);
+    const first = t.messageBox.getSnapshot();
+    expect(first).toMatchObject({ open: true, line: "put 1 into x", focus: { select: "end" } });
+    expect(await t.choose("go.messageBox")).toBe(true);
+    const second = t.messageBox.getSnapshot();
+    expect(second).toMatchObject({ open: true, line: "put 1 into x", focus: { select: "all" } });
+    expect(second.focus!.id).not.toBe(first.focus!.id);
+    expect(t.log).toEqual([]);
+    expect(t.history.canUndo()).toBe(false);
+  });
+});
 
 describe("Edit > Icon Editor", () => {
   it("is a real item with its label, no shortcut, enabled with every tool and edit layer", () => {

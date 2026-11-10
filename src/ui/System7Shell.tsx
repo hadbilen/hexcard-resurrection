@@ -759,10 +759,10 @@ export function MenuDropdown({ menu, onRun }: { menu: MenuModel; onRun: (command
  */
 export function shellShortcutKey(
   event: Parameters<typeof handleShortcutKey>[0],
-  options: { blocked: boolean; context: () => MenuContext; handlers: MenuHandlers },
+  options: { blocked: boolean; context: () => MenuContext; handlers: MenuHandlers; platform: Platform },
 ): MenuCommand | undefined {
   if (options.blocked) return undefined;
-  return handleShortcutKey(event, options.context(), options.handlers);
+  return handleShortcutKey(event, options.context(), options.handlers, options.platform);
 }
 
 /** The fields of a `DragEvent` the file-drop handling reads (spec 06 Requirements 6.2, 6.3). */
@@ -841,11 +841,12 @@ export function System7Shell({
         blocked: modals.isOpen() || (isWindowOpen?.() ?? false),
         context,
         handlers: current,
+        platform,
       });
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modals, isWindowOpen]);
+  }, [modals, isWindowOpen, platform]);
 
   // Spec 06 Requirement 6.3: files dropped anywhere but the card are refused, never opened by the browser.
   useEffect(() => {

@@ -46,7 +46,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
 
 - [ ] 4. Implement the Message Box and Find
 
-  - [ ] 4.1 Message Box window and running lines
+  - [x] 4.1 Message Box window and running lines
     - `vm.ts`: `MESSAGE_BOX_HANDLER`, `MessageBoxProgram`, `runMessageBoxLine` with the `messageBox` frame flag (globals for every variable, errors at line 1) (design §vm.ts addition)
     - `src/core/messageBox.ts`: `classifyMessageBoxLine` (empty, statement, expression, error, column mapping, `pass` / `exit <handler>` rejected), `messageBoxValueText` and the runner for statements and expressions; a line whose first word is `find` is left to task 4.2 and is an ordinary expression error until then
     - `src/ui/MessageBox.tsx`: `createMessageBox` and `MessageBoxWindow` (floating, draggable, Return, Escape, focus requests); `CardViewport.tsx`: focus out of the Message Box on a card press; `ObjectInspector.tsx`: no **Script** button for `Message Box` errors; `App.tsx`, `main.tsx`: wiring; `system7.css`: `.s7-message-box*`

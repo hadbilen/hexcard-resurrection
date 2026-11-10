@@ -164,6 +164,7 @@ export function createMessageBoxRunner(deps: MessageBoxRunnerDeps): (line: strin
 3. Statement attempt: `parseHexTalk("on hexmessagebox\n" + line + "\nend hexmessagebox")`.
    - No errors and an empty body → `empty` (a comment-only line).
    - No errors and exactly one statement → `statement`, unless it is `PassEvent` or `ExitHandler`, which become `error` with `HANDLER_ONLY` at column 1 (they would otherwise name the internal wrapper).
+   - `pass` or `exit` naming any handler (`pass mouseUp`, `exit hexmessagebox`) gets the same `HANDLER_ONLY` alert at column 1, and the error of an open block (`repeat 3`) names "the end of the line" instead of the wrapper's `end hexmessagebox`.
 4. Expression attempt: `parseHexTalk("on hexmessagebox\nget " + line + "\nend hexmessagebox")`. No errors and exactly one `GetValue` statement → `expression` (its `value`).
 5. Otherwise `error`. It uses the statement attempt's first error when the first word is in `COMMAND_WORDS`, else the expression attempt's first error. Columns are mapped into the line:
    - an error on wrapper line 2 keeps its column, minus 4 for the `get ` prefix;
@@ -345,12 +346,12 @@ export interface MessageBoxController {
 }
 export function createMessageBox(): MessageBoxController;
 export const MESSAGE_BOX_WIDTH = 448;                       // 1x, frame included
-export const MESSAGE_BOX_HEIGHT = 41;                       // 12 title + 1 line + 28 body
+export const MESSAGE_BOX_HEIGHT = 47;                       // 1 frame + 12 title + 1 line + 32 body (4 + 24 text box + 4) + 1 frame
 export interface MessageBoxWindowProps { controller: MessageBoxController; onReturn: (line: string) => void; scale: number }
 export function MessageBoxWindow(props: MessageBoxWindowProps): ReactElement | null;
 ~~~
 - **Window.** A floating window drawn with the Tools palette's chrome: `.s7-palette`, a 12 px dark title bar with a close box (`.s7-close-box`), no title text, and `aria-label="Message Box"` on the window.
-- **Size and position.** `MESSAGE_BOX_WIDTH x MESSAGE_BOX_HEIGHT` times k. The first position is `{ x: 16k, y: innerHeight - (41 + 16)k }`, clamped by `clampPaletteOrigin`. The title bar drags it with `beginPointerDrag`, as `FloatingTools` does (Requirement 2.6). It sits at z-index 30 next to the palette and below the studio window backdrop (90), so a studio window covers it.
+- **Size and position.** `MESSAGE_BOX_WIDTH x MESSAGE_BOX_HEIGHT` times k. The first position is `{ x: 16k, y: innerHeight - (47 + 16)k }`, clamped by `clampPaletteOrigin`. The title bar drags it with `beginPointerDrag`, as `FloatingTools` does (Requirement 2.6). It sits at z-index 30 next to the palette and below the studio window backdrop (90), so a studio window covers it.
 - **Text box.** One `<input type="text" class="s7-input s7-message-box-input" aria-label="Message Box" spellcheck="false">`. An HTML one-line text box already strips pasted line breaks (Requirement 2.7). The value is `snapshot.line`, and `onChange` calls `setLine`.
 - **Keys.** `onKeyDown`: Enter → `preventDefault`, `onReturn(event.currentTarget.value)`; Escape → `preventDefault`, `close()` (Requirement 2.3). Every other key keeps its default meaning. The input is a text input under spec 05 Requirement 16, because `isTextInputTarget` matches `input`.
 - **Focus.** An effect on `focus.id` focuses the input and sets its selection: `end` puts the caret at `line.length`, `all` selects `0..line.length`, and an explicit range is used as given. `find ""` gives the range 6..6 (Requirement 4.1).
