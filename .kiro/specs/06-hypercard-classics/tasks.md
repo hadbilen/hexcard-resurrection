@@ -84,8 +84,10 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
   - Headless Chrome: visit three cards; Ctrl+R opens Recent; screenshot; click the oldest miniature: that card is current; Ctrl+R with the focus in the Message Box: no reload (a marker on `window` survives) and no Recent window; Ctrl+R with a dialog open: no reload; shortcut check for Ctrl+R; with macOS emulated, Cmd+R handled and prevented; colour-check every screenshot
   - _Requirements: 1.1, 1.3, 1.4, 1.6, 1.7, 1.8, 1.9, 1.10, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 12.3, 12.4, 13.1, 13.2, 15.1, 15.3, 15.4_
 
-- [ ] 7. Run the whole headless Chrome check
+- [x] 7. Run the whole headless Chrome check
   - `npm run build`, a fresh browser profile, every step of Requirement 15.4 in one run at k = 1 and at k = 2, as listed in design §Testing Strategy (Message Box, Find, Recent, Import Image, FatBits, Icon Editor, standalone HTML offline, shortcuts on Linux and with macOS emulated)
-  - Screenshot every step and every new window; confirm every screenshot contains only `#000000` and `#FFFFFF` and that the auto-saved stack passes `validateStack` and matches each step
+  - Screenshot every step and every new window; confirm the colour check below and that the auto-saved stack passes `validateStack` and matches each step
+  - Colour check: screenshots taken after File > New Stack contain only `#000000` and `#FFFFFF`; screenshots taken before it show the first-launch Haunted Stack and contain only its two MidnightHex colours (`#0A0A23` and `#C8C8FF`); report the two groups separately
+  - At k = 1, open the Recent window and the Icon Editor with their list scrolled in a browser that shows scroll bars (no `--hide-scrollbars`) and colour-check those screenshots too
   - The report lists the steps, the screenshot files and the colour counts
   - _Requirements: 13.1, 15.4_
