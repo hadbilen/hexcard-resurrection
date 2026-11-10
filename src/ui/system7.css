@@ -14,10 +14,12 @@
 
 /* Page reset. The shell is a fixed box over the whole window, so the document itself never
    scrolls; when the card does not fit, only .s7-desktop scrolls. The :root defaults let the body
-   use the 1-bit colours outside the shell (ClassicPaper; the shell overrides them per theme). */
+   use the 1-bit colours outside the shell (ClassicPaper; the shell overrides them per theme).
+   --px defaults to 1px so the page's own scroll bar (see the end of this file) has a size. */
 :root {
   --dark-bit: #000000;
   --light-bit: #ffffff;
+  --px: 1px;
 }
 
 html,
@@ -944,35 +946,6 @@ body {
   border: calc(1 * var(--px)) solid var(--dark-bit);
 }
 
-/* A hard-edged scroll bar: Chrome draws the native arrows with grey anti-aliasing, so the arrow
-   buttons are removed and the track and thumb are solid theme colours. `scrollbar-color` is
-   inherited from .s7-window-body and would switch these rules off, hence `auto`. Browsers
-   without ::-webkit-scrollbar (Firefox) skip the whole block and keep the inherited
-   `scrollbar-color: var(--dark-bit) var(--light-bit)`. */
-@supports selector(::-webkit-scrollbar) {
-  .s7-icon-list {
-    scrollbar-color: auto;
-  }
-
-  .s7-icon-list::-webkit-scrollbar {
-    width: calc(16 * var(--px));
-  }
-
-  .s7-icon-list::-webkit-scrollbar-track {
-    background: var(--light-bit);
-    border-left: calc(1 * var(--px)) solid var(--dark-bit);
-  }
-
-  .s7-icon-list::-webkit-scrollbar-thumb {
-    background: var(--dark-bit);
-    border: calc(4 * var(--px)) solid var(--light-bit);
-  }
-
-  .s7-icon-list::-webkit-scrollbar-button {
-    display: none;
-  }
-}
-
 .s7-shell .s7-icon-row {
   display: flex;
   align-items: center;
@@ -1124,3 +1097,52 @@ body {
 .hc-handle-ne { right: 0; top: 0; }
 .hc-handle-sw { left: 0; bottom: 0; }
 .hc-handle-se { right: 0; bottom: 0; }
+
+/* Hard-edged scroll bars for every scrolling element (window bodies, the Object Inspector tab
+   panels, script editor and error list, lists, textareas) and the page. Chrome draws the native
+   scroll bar arrows with grey anti-aliasing, which breaks the 1-bit rules, so the arrow buttons
+   are removed and the track, thumb and corner are solid theme colours at multiples of --px.
+   The bare ::-webkit-scrollbar selectors match every element; the vertical and horizontal bars
+   share the same 16 x 16 metrics.
+   A non-auto `scrollbar-color` makes Chrome ignore ::-webkit-scrollbar, so it is reset to `auto`
+   on every element. `:root *` has the specificity of the single-class rules above that set
+   `scrollbar-color` (for the Firefox fallback) and comes later, so it wins; a rule that sets
+   `scrollbar-color` with a higher specificity would need its own reset here. Browsers without
+   ::-webkit-scrollbar (Firefox) skip the whole block and keep
+   `scrollbar-color: var(--dark-bit) var(--light-bit)`. */
+@supports selector(::-webkit-scrollbar) {
+  :root,
+  :root * {
+    scrollbar-color: auto;
+  }
+
+  ::-webkit-scrollbar {
+    width: calc(16 * var(--px));
+    height: calc(16 * var(--px));
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--light-bit);
+  }
+
+  ::-webkit-scrollbar-track:vertical {
+    border-left: calc(1 * var(--px)) solid var(--dark-bit);
+  }
+
+  ::-webkit-scrollbar-track:horizontal {
+    border-top: calc(1 * var(--px)) solid var(--dark-bit);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--dark-bit);
+    border: calc(4 * var(--px)) solid var(--light-bit);
+  }
+
+  ::-webkit-scrollbar-button {
+    display: none;
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: var(--light-bit);
+  }
+}
