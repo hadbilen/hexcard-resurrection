@@ -199,6 +199,7 @@ function setup(
       openInspector: (objectId, tab = "properties") => void calls.push(`inspector:${objectId}:${tab}`),
       openStackGraph: () => void calls.push("stackGraph"),
       openShowcaseChooser: () => void calls.push("showcaseChooser"),
+      openIconEditor: () => void calls.push("iconEditor"),
     },
     files: recordingFiles,
     images: {
@@ -1041,6 +1042,32 @@ describe("File > Import Image", () => {
     t.store.setTool("button");
     expect(await t.choose("file.importImage")).toBe(false);
     expect(t.calls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Edit > Icon Editor (spec 06 Requirements 1.1, 1.3, 10.1)
+// ---------------------------------------------------------------------------------------------
+
+describe("Edit > Icon Editor", () => {
+  it("is a real item with its label, no shortcut, enabled with every tool and edit layer", () => {
+    expect(isReservedCommand("edit.iconEditor")).toBe(false);
+    expect(RESERVED_COMMANDS.has("edit.iconEditor")).toBe(false);
+    for (const { id } of MENU_TOOLS) {
+      for (const editLayer of ["card", "background"] as const) {
+        const context = contextOf(threeCards(), { tool: id, editLayer });
+        expect(isEnabled("edit.iconEditor", context), `${id} ${editLayer}`).toBe(true);
+        expect(findItem(context, "edit.iconEditor")).toMatchObject({ label: "Icon Editor...", disabled: false });
+      }
+    }
+    expect(findItem(contextOf(threeCards()), "edit.iconEditor").shortcut).toBeUndefined();
+  });
+
+  it("opens the Icon Editor window and sends no message", async () => {
+    const t = setup(threeCards());
+    expect(await t.choose("edit.iconEditor")).toBe(true);
+    expect(t.calls).toEqual(["iconEditor"]);
+    expect(t.log).toEqual([]);
   });
 });
 

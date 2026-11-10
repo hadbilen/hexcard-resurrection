@@ -909,6 +909,141 @@ body {
   font-family: "HexCard PixelOperator", monospace;
 }
 
+/* Edit > Icon Editor (spec 06 task 3.2): a list box of icon previews with the buttons below it on
+   the left, the 32 x 32 editing grid on the right. The selected row is inverted, as in the
+   showcase chooser. Only 1 px solid frames and the theme variables are used. */
+.s7-icon-editor .s7-window-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.s7-icon-editor-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: calc(8 * var(--px));
+}
+
+.s7-icon-left {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--px));
+  min-height: 0;
+  width: calc(176 * var(--px));
+}
+
+.s7-icon-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: auto;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+}
+
+/* A hard-edged scroll bar: Chrome draws the native arrows with grey anti-aliasing, so the arrow
+   buttons are removed and the track and thumb are solid theme colours. `scrollbar-color` is
+   inherited from .s7-window-body and would switch these rules off, hence `auto`. Browsers
+   without ::-webkit-scrollbar (Firefox) skip the whole block and keep the inherited
+   `scrollbar-color: var(--dark-bit) var(--light-bit)`. */
+@supports selector(::-webkit-scrollbar) {
+  .s7-icon-list {
+    scrollbar-color: auto;
+  }
+
+  .s7-icon-list::-webkit-scrollbar {
+    width: calc(16 * var(--px));
+  }
+
+  .s7-icon-list::-webkit-scrollbar-track {
+    background: var(--light-bit);
+    border-left: calc(1 * var(--px)) solid var(--dark-bit);
+  }
+
+  .s7-icon-list::-webkit-scrollbar-thumb {
+    background: var(--dark-bit);
+    border: calc(4 * var(--px)) solid var(--light-bit);
+  }
+
+  .s7-icon-list::-webkit-scrollbar-button {
+    display: none;
+  }
+}
+
+.s7-shell .s7-icon-row {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--px));
+  width: 100%;
+  box-sizing: border-box;
+  padding: calc(2 * var(--px)) calc(4 * var(--px));
+  text-align: left;
+}
+
+.s7-shell .s7-icon-row-selected {
+  background: var(--dark-bit);
+  color: var(--light-bit);
+}
+
+.s7-shell .s7-icon-row-selected:focus-visible {
+  outline-color: var(--light-bit);
+}
+
+.s7-icon-preview {
+  display: block;
+  flex: none;
+  image-rendering: pixelated;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  background: var(--light-bit);
+}
+
+.s7-icon-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: "HexCard PixelOperator", monospace;
+}
+
+.s7-icon-heading {
+  box-sizing: border-box;
+  height: calc(16 * var(--px));
+  padding: 0 calc(4 * var(--px));
+  border-top: calc(1 * var(--px)) solid var(--dark-bit);
+  border-bottom: calc(1 * var(--px)) solid var(--dark-bit);
+  white-space: nowrap;
+}
+
+/* The labels are 64 to 133 px wide, so no two equal columns fit the 176 px column: the buttons
+   keep their natural widths (labels centred on whole pixels by snapModalLayout) and wrap. */
+.s7-icon-buttons {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: calc(4 * var(--px)) calc(8 * var(--px));
+}
+
+.s7-icon-right {
+  flex: none;
+}
+
+.s7-icon-grid {
+  display: block;
+  image-rendering: pixelated;
+  border: calc(1 * var(--px)) solid var(--dark-bit);
+  touch-action: none;
+}
+
+.s7-icon-current {
+  margin: calc(4 * var(--px)) 0 0;
+  white-space: nowrap;
+  font-family: "HexCard PixelOperator", monospace;
+}
+
 /* Canvases are always drawn pixel-exact. */
 .s7-shell canvas {
   image-rendering: pixelated;

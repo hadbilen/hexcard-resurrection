@@ -92,11 +92,11 @@ function numbered(base: string, n: number): string {
   return base.slice(0, Math.max(0, ICON_NAME_MAX - suffix.length)) + suffix;
 }
 
-/** `base` if free, else `${base} N` with the lowest free N >= first, base shortened to fit 32 chars; case-insensitive. */
-export function freeIconName(base: string, taken: Iterable<string>, first = 2): string {
+/** `base` if free, else `${base} N` with the lowest free N >= 2, base shortened to fit 32 chars; case-insensitive. */
+export function freeIconName(base: string, taken: Iterable<string>): string {
   const used = lowerSet(taken);
   if (!used.has(base.toLowerCase())) return base;
-  for (let n = first; ; n++) {
+  for (let n = 2; ; n++) {
     const candidate = numbered(base, n);
     if (!used.has(candidate.toLowerCase())) return candidate;
   }
@@ -243,16 +243,20 @@ export function createNewIconCommand(stack: HexStack): IconCommand {
   });
 }
 
-/** Requirements 10.5, 10.8: a copy of `data` under `freeIconName(base, keys, first)`. */
+/**
+ * Requirements 10.5, 10.8: a copy of `data` under `freeIconName`. "Duplicate Icon" always numbers
+ * the copy (the base counts as taken, so `<name> 2` is the first candidate); "Add Icon" keeps
+ * `base` when it is free.
+ */
 export function createCopyIconCommand(
   stack: HexStack,
   base: string,
   data: string,
   label: "Duplicate Icon" | "Add Icon",
-  first: 1 | 2,
 ): IconCommand {
   requireIconData(data);
-  const name = freeIconName(base, Object.keys(stack.customIcons), first);
+  const keys = Object.keys(stack.customIcons);
+  const name = freeIconName(base, label === "Duplicate Icon" ? [...keys, base] : keys);
   if (!isIconName(name)) throw new HexMutationError(`"${name}" is not an icon name`);
   return iconCommand(label, name, (target) => {
     requireFreeName(target.customIcons, name);

@@ -40,7 +40,6 @@ import type { ModalManager } from "./System7Shell.tsx";
 
 /** Items whose feature belongs to a later spec: always disabled, no shortcut label, no handler (Requirement 1.5). */
 export type ReservedCommand =
-  | "edit.iconEditor"
   | "go.recent"
   | "go.find"
   | "go.messageBox"
@@ -64,6 +63,7 @@ export type MenuCommand =
   | "edit.undo"
   | "edit.redo"
   | "edit.background"
+  | "edit.iconEditor"
   | "go.back"
   | "go.first"
   | "go.previous"
@@ -85,7 +85,6 @@ export type MenuCommand =
   | "ai.conjure";
 
 export const RESERVED_COMMANDS: ReadonlySet<MenuCommand> = new Set<ReservedCommand>([
-  "edit.iconEditor",
   "go.recent",
   "go.find",
   "go.messageBox",
@@ -464,7 +463,7 @@ export interface MenuHandlerDeps {
   history: Pick<HexHistory, "execute" | "undo" | "redo" | "canUndo" | "canRedo" | "undoLabel" | "redoLabel">;
   /** `backHistory` is read by the enabling rule of Go > Back when its dispatch starts. */
   bus: Pick<MessageBus, "runCommand" | "changeCard" | "changeCardBy" | "sendNested" | "backHistory">;
-  windows: Pick<StudioWindows, "openInspector" | "openStackGraph" | "openShowcaseChooser">;
+  windows: Pick<StudioWindows, "openInspector" | "openStackGraph" | "openShowcaseChooser" | "openIconEditor">;
   files: Pick<
     FileCommands,
     "replaceStackFrom" | "openStackFile" | "saveStackFile" | "copyShareLink" | "exportStandaloneHtml" | "pickImageFile"
@@ -586,6 +585,8 @@ export function createMenuHandlers(deps: MenuHandlerDeps): ShellMenuHandlers {
     "edit.undo": () => void history.undo(),
     "edit.redo": () => void history.redo(),
     "edit.background": () => store.setEditLayer(store.getSnapshot().editLayer === "background" ? "card" : "background"),
+    // Spec 06 Requirement 10.1: always enabled.
+    "edit.iconEditor": () => windows.openIconEditor(),
     "go.back": go("go.back", () => ({ type: "relative", dir: "back" })),
     "go.first": go("go.first", (state) => resolveRelativeCard(state, "first")),
     "go.previous": go("go.previous", (state) => resolveRelativeCard(state, "prev")),

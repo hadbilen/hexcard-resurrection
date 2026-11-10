@@ -155,7 +155,6 @@ describe("icon names (Requirements 8.2, 10.4-10.6)", () => {
     expect(freeIconName("Star", ["moon"])).toBe("Star");
     expect(freeIconName("Star", ["star"])).toBe("Star 2");
     expect(freeIconName("Star", ["Star", "STAR 2", "star 3"])).toBe("Star 4");
-    expect(freeIconName("Star", ["Star"], 1)).toBe("Star 1");
     const long = "x".repeat(32);
     expect(freeIconName(long, [long])).toBe("x".repeat(30) + " 2");
     expect(freeIconName(long, [long, "x".repeat(30) + " 2"])).toBe("x".repeat(30) + " 3");
@@ -181,14 +180,21 @@ describe("icon commands (Requirements 8.4, 10.3-10.10)", () => {
     expect(after.customIcons["Icon 2"]).toBe(BLANK_ICON);
   });
 
-  it("Duplicate Icon copies the data under '<name> 2'; Add Icon keeps a free name", () => {
-    const duplicate = createCopyIconCommand(makeStack(), "b", TOP_LEFT, "Duplicate Icon", 2);
+  it("Duplicate Icon always numbers the copy; Add Icon keeps a free name and numbers a taken one from 2", () => {
+    const duplicate = createCopyIconCommand(makeStack(), "b", TOP_LEFT, "Duplicate Icon");
     expect(duplicate.name).toBe("b 2");
     expect(roundTrip(duplicate).after.customIcons["b 2"]).toBe(TOP_LEFT);
 
-    const add = createCopyIconCommand(makeStack(), "hex-star", LAST, "Add Icon", 1);
+    // The base is not in the stack (a built-in icon), yet the copy is still numbered.
+    const builtIn = createCopyIconCommand(makeStack(), "hex-star", LAST, "Duplicate Icon");
+    expect(builtIn.name).toBe("hex-star 2");
+
+    const add = createCopyIconCommand(makeStack(), "hex-star", LAST, "Add Icon");
     expect(add.name).toBe("hex-star");
     expect(Object.keys(roundTrip(add).after.customIcons)).toEqual(["a", "b", "c", "hex-star"]);
+
+    const taken = createCopyIconCommand(makeStack(), "B", LAST, "Add Icon");
+    expect(taken.name).toBe("B 2");
   });
 
   it("Rename Icon renames in place and rewrites iconId on card and background buttons", () => {

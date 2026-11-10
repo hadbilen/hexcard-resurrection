@@ -54,7 +54,11 @@ export const INSPECTOR_TABS: readonly { id: InspectorTab; label: string }[] = [
 ];
 
 export type InspectorRequest = { id: number; kind: "inspector"; objectId: HexID; tab: InspectorTab; line?: number };
-export type StudioWindow = InspectorRequest | { id: number; kind: "stackGraph" } | { id: number; kind: "showcaseChooser" };
+export type StudioWindow =
+  | InspectorRequest
+  | { id: number; kind: "stackGraph" }
+  | { id: number; kind: "showcaseChooser" }
+  | { id: number; kind: "iconEditor" };
 
 export interface StudioWindows {
   subscribe(listener: () => void): () => void;
@@ -66,6 +70,8 @@ export interface StudioWindows {
   openStackGraph(): void;
   /** File > Open Showcase Stack (spec 04 task 8, Requirement 7.5). */
   openShowcaseChooser(): void;
+  /** Edit > Icon Editor (spec 06 Requirement 10.1). */
+  openIconEditor(): void;
   close(): void;
 }
 
@@ -96,6 +102,9 @@ export function createStudioWindows(): StudioWindows {
     },
     openShowcaseChooser() {
       set({ id: nextId++, kind: "showcaseChooser" });
+    },
+    openIconEditor() {
+      set({ id: nextId++, kind: "iconEditor" });
     },
     close() {
       if (current !== null) set(null);

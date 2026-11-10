@@ -392,7 +392,7 @@ Layout at 1x, in a `System7Window` titled `Icon Editor` of 472 x 320 (fits the s
   - a `HexCard icons` heading;
   - the built-in icons.
   Each row is a 32 x 32 1-bit preview canvas and the name, and the selected row is inverted.
-- below the list: buttons in two columns: **New**, **Duplicate**, **Rename...**, **Delete**, **Add to Stack**, **Use for Button**, **No Icon**, **Undo**.
+- below the list: the buttons at their natural widths, wrapping into rows: **New**, **Duplicate**, **Rename...**, **Delete**, **Add to Stack**, **Use for Button**, **No Icon**, **Undo**.
 - right: the 256 x 256 editing grid, one `<canvas width=256 height=256>` filled with `drawFatCell` (FatBits cells, Requirement 10.1). Below it: the selected icon's name, with `(built-in)` for built-in icons.
 
 Behaviour:

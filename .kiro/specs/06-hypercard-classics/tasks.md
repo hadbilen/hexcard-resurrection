@@ -22,7 +22,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
   - Headless Chrome: File > New Stack, Pencil; File > Import Image with a generated PNG (`Page.setInterceptFileChooserDialog`, `DOM.setFileInputFiles`); Undo; drop the PNG (`Input.dispatchDragEvent`), Undo; Browse tool and drop: the alert, no change, page URL unchanged; Edit Background and import: background bitmap changed; screenshot and colour-check every step
   - _Requirements: 1.1, 1.3, 1.10, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11, 12.1, 12.4, 12.5, 13.1, 13.2, 15.1, 15.2, 15.4_
 
-- [ ] 3. Implement button icons
+- [x] 3. Implement button icons
 
   - [x] 3.1 Icon data, validation, rendering and built-in icons
     - `src/core/icons.ts`: constants, `isIconData`, `isIconName`, `encodeIcon`, `decodeIcon`, `iconFromRows`, `BLANK_ICON`, `freeIconName`, `iconNameError` and every icon command factory with exact apply / revert (design §icons.ts)
@@ -34,7 +34,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
     - Headless Chrome (after `npm run build`, so the player includes the renderer change): open a generated `.hexstack` file whose button uses an icon through File > Open Stack File; screenshot the card; Export Standalone HTML into a temp directory, open it with `Network.emulateNetworkConditions` offline, screenshot it, confirm the icon pixels are drawn and no request was made; open a stack with malformed icon data and one with a dangling `iconId`: "This stack is damaged" for both; colour-check every screenshot
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 11.1, 11.2, 11.3, 11.4, 12.1, 13.1, 15.1, 15.2, 15.4_
 
-  - [ ] 3.2 Icon Editor
+  - [x] 3.2 Icon Editor
     - `src/ui/IconEditor.tsx`: the window, list, editing grid, buttons, enabled states, store sync and `initialIconChoice` (design §IconEditor.tsx)
     - `src/engine/graphics/fatBits.ts`: create the module with `drawFatCell` only, which the grid uses (design §fatBits.ts); task 5 adds the rest
     - `src/core/icons.ts`: remove the `first` parameter from `createCopyIconCommand` and `freeIconName`; Duplicate always numbers the copy (design §icons.ts); update `icons.test.ts`

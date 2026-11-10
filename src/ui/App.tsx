@@ -11,6 +11,7 @@ import type { HexStore } from "../core/store.ts";
 import type { ImageFileLike } from "../engine/graphics/imageImport.ts";
 import type { PaintController } from "../engine/graphics/paintTools.ts";
 import { CardViewport } from "./CardViewport.tsx";
+import { IconEditor } from "./IconEditor.tsx";
 import { ObjectInspector, type StudioWindows } from "./ObjectInspector.tsx";
 import { ShowcaseChooser, type ShowcaseChoice } from "./ShowcaseChooser.tsx";
 import { StackGraphModal } from "./StackGraphModal.tsx";
@@ -112,6 +113,9 @@ export function App({
         <ObjectInspector key={open.id} store={store} history={history} request={open} onClose={windows.close} />
       ) : null}
       {open?.kind === "stackGraph" ? <StackGraphModal key={open.id} store={store} onClose={windows.close} /> : null}
+      {open?.kind === "iconEditor" ? (
+        <IconEditor key={open.id} store={store} history={history} modals={modals} onClose={windows.close} />
+      ) : null}
       {open?.kind === "showcaseChooser" ? (
         <ShowcaseChooser
           key={open.id}

@@ -163,7 +163,7 @@ describe("menus", () => {
       { kind: "separator" },
       { command: "edit.background", checked: true, shortcut: "Ctrl+B", disabled: false },
       { kind: "separator" },
-      { command: "edit.iconEditor", label: "Icon Editor...", disabled: true },
+      { command: "edit.iconEditor", label: "Icon Editor...", disabled: false },
     ]);
   });
 });
