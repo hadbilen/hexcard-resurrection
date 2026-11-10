@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { HexButtonPart, HexFieldPart, HexStack } from "../schema.ts";
 import { validateStack } from "../stackValidator.ts";
+import { BLANK_ICON } from "../icons.ts";
+import { SHOWCASE_STACKS } from "../../presets/index.ts";
+import { createStarterStack } from "../../ui/starterStack.ts";
 
 const emptyBitmap = { width: 512, height: 342, rleData: "" };
 
@@ -93,7 +96,7 @@ function makeStack(): HexStack {
         scriptSource: "",
       },
     ],
-    customIcons: { ico_1: "AAAA" },
+    customIcons: { ico_1: BLANK_ICON },
     scriptSource: "on openStack\nend openStack",
   };
 }
@@ -341,5 +344,63 @@ describe("validateStack: rejection leaves the current stack unchanged (Requireme
     const input = deepFreeze(makeStack());
     expect(() => validateStack(input)).not.toThrow();
     expect(validateStack(input).ok).toBe(true);
+  });
+});
+
+describe("validateStack: icons (spec 06 Requirements 8.1-8.3, 8.6)", () => {
+  it("accepts icon data under any icon name, including names shaped like Object.prototype keys", () => {
+    const input = makeStack();
+    input.customIcons = { ico_1: BLANK_ICON, constructor: BLANK_ICON, "a b ~!": `g${"A".repeat(170)}=` };
+    expect(validateStack(input)).toEqual({ ok: true, stack: input });
+  });
+
+  it.each([
+    ["too short", "A".repeat(170) + "="],
+    ["too long", "A".repeat(172) + "="],
+    ["unpadded", "A".repeat(172)],
+    ["URL-safe alphabet", "-" + "A".repeat(170) + "="],
+    ["non-canonical last character", "A".repeat(170) + "B="],
+    ["two padding characters", "A".repeat(170) + "=="],
+  ])("rejects icon data that is %s", (_label, data) => {
+    const input = makeStack();
+    input.customIcons = { ico_1: data };
+    expectRejected(input, /^customIcons\.ico_1: expected icon data/);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["leading space", " x"],
+    ["trailing space", "x "],
+    ["33 characters", "x".repeat(33)],
+    ["non-ASCII", "ic\u00f6n"],
+    ["a control character", "a\tb"],
+  ])("rejects an icon name that is %s", (_label, name) => {
+    const input = makeStack();
+    input.cards[0].parts = [];
+    input.customIcons = { [name]: BLANK_ICON };
+    expectRejected(input, /^customIcons.*expected an icon name/);
+  });
+
+  it("rejects __proto__ as an icon name", () => {
+    const input = JSON.parse(JSON.stringify(makeStack()).replace('"ico_1":', '"__proto__":')) as unknown;
+    (input as HexStack).cards[0].parts = [];
+    expectRejected(input, /^customIcons.*expected an icon name/);
+  });
+
+  it("rejects a card button whose iconId names no icon, with its path", () => {
+    const input = makeStack();
+    input.customIcons = {};
+    expectRejected(input, /^cards\[0\]\.parts\[0\]\.iconId: no icon named "ico_1" in customIcons$/);
+  });
+
+  it("rejects a background button whose iconId names no icon, and never looks at Object.prototype", () => {
+    const input = makeStack();
+    input.backgrounds[0].parts.push(makeButton({ id: "prt_bg", layerScope: "background", iconId: "toString" }));
+    expectRejected(input, /^backgrounds\[0\]\.parts\[1\]\.iconId: no icon named "toString" in customIcons$/);
+  });
+
+  it("keeps every showcase preset and the starter stack valid", () => {
+    for (const entry of SHOWCASE_STACKS) expect(validateStack(entry.create()).ok).toBe(true);
+    expect(validateStack(createStarterStack()).ok).toBe(true);
   });
 });

@@ -10,6 +10,7 @@
 // created lazily and can be replaced (tests pass a fixed-metric stub).
 
 import type { HexButtonPart, HexFieldPart, HexID, HexPart, HexRect, HexStack } from "../../core/schema.ts";
+import { ICON_SIZE, decodeIcon, isIconData } from "../../core/icons.ts";
 import type { EditingState, PartDrawContext, PartRasterizer } from "./bitmapCanvas.ts";
 import { BITMAP_HEIGHT, BITMAP_WIDTH } from "./rleCodec.ts";
 import {
@@ -340,13 +341,63 @@ function renderTitle(title: string, rect: HexRect, align: "left" | "center", bac
   return renderCrisp1BitText(title, BUTTON_TEXT.font, BUTTON_TEXT.size, [], rect, align, false, backend);
 }
 
+/** Decoded icons by data string; cleared when it reaches ICON_CACHE_LIMIT entries. */
+const ICON_CACHE_LIMIT = 256;
+const iconCache = new Map<string, Uint8Array>();
+
+/** Spec 06 Requirement 9: the decoded stack icon of a push button, or null when it has none. */
+function buttonIcon(part: HexButtonPart, ctx: PartDrawContext): Uint8Array | null {
+  const { iconId } = part;
+  if (iconId === undefined || !Object.hasOwn(ctx.stack.customIcons, iconId)) return null;
+  const data = ctx.stack.customIcons[iconId];
+  const cached = iconCache.get(data);
+  if (cached) return cached;
+  if (!isIconData(data)) return null;
+  if (iconCache.size >= ICON_CACHE_LIMIT) iconCache.clear();
+  const pixels = decodeIcon(data);
+  iconCache.set(data, pixels);
+  return pixels;
+}
+
+/** Set bits become dark where `allow` permits (inside pixels, dimming); clear bits write nothing. */
+function blitIcon(frame: Uint8Array, clip: Clip, icon: Uint8Array, ox: number, oy: number, allow: (x: number, y: number) => boolean): void {
+  for (let iy = 0; iy < ICON_SIZE; iy++) {
+    const py = oy + iy;
+    if (py < clip.y0 || py >= clip.y1) continue;
+    for (let ix = 0; ix < ICON_SIZE; ix++) {
+      if (icon[iy * ICON_SIZE + ix] !== 1) continue;
+      const px = ox + ix;
+      if (inClip(clip, px, py) && allow(px, py)) frame[py * BITMAP_WIDTH + px] = DARK;
+    }
+  }
+}
+
 function drawPushButton(frame: Uint8Array, clip: Clip, part: HexButtonPart, ctx: PartDrawContext, getBackend: () => TextRasterBackend): void {
   const { x, y, width: w, height: h } = part.rect;
   const { shape, fill } = buttonShape(part.style, w, h);
   drawShape(frame, clip, x, y, shape, fill);
 
   const box = insideBox(shape);
-  if (box && part.showName && ctx.text.length > 0) {
+  const dim = !part.enabled;
+  const allow = (px: number, py: number): boolean =>
+    shape.cls[(py - y) * w + (px - x)] === INSIDE && (!dim || dimmedInk(px, py));
+  const withTitle = part.showName && ctx.text.length > 0;
+  const icon = box ? buttonIcon(part, ctx) : null;
+  if (box && icon) {
+    // Spec 06 Requirement 9.1: icon and title line centred vertically as one block.
+    const { lineHeight } = lineMetrics(BUTTON_TEXT.font, BUTTON_TEXT.size);
+    const insideW = box.x1 - box.x0;
+    const insideH = box.y1 - box.y0;
+    const blockH = ICON_SIZE + (withTitle ? lineHeight : 0);
+    const iconX = x + box.x0 + Math.floor((insideW - ICON_SIZE) / 2);
+    const iconY = y + box.y0 + Math.max(0, Math.floor((insideH - blockH) / 2));
+    blitIcon(frame, clip, icon, iconX, iconY, allow);
+    if (withTitle) {
+      const titleRect = { x: x + box.x0, y: iconY + ICON_SIZE, width: insideW, height: lineHeight };
+      const { mask } = renderTitle(ctx.text, titleRect, "center", getBackend());
+      blitInk(frame, clip, mask, titleRect, allow);
+    }
+  } else if (box && withTitle) {
     const { lineHeight } = lineMetrics(BUTTON_TEXT.font, BUTTON_TEXT.size);
     const lineRect = {
       x: x + box.x0,
@@ -355,8 +406,7 @@ function drawPushButton(frame: Uint8Array, clip: Clip, part: HexButtonPart, ctx:
       height: lineHeight,
     };
     const { mask } = renderTitle(ctx.text, lineRect, "center", getBackend());
-    const dim = !part.enabled;
-    blitInk(frame, clip, mask, lineRect, (px, py) => shape.cls[(py - y) * w + (px - x)] === INSIDE && (!dim || dimmedInk(px, py)));
+    blitInk(frame, clip, mask, lineRect, allow);
   }
 
   if (part.hilite || (part.autoHilite && ctx.pressed)) invertInside(frame, clip, x, y, shape);

@@ -5,6 +5,7 @@ import { BITMAP_HEIGHT, BITMAP_WIDTH, TOTAL_PIXELS } from "../rleCodec.ts";
 import { type PartDrawContext, clearDecodedLayerCache, composeFrame } from "../bitmapCanvas.ts";
 import type { TextRasterBackend } from "../textRaster.ts";
 import { createPartRasterizer, fieldCaretIndexAt, hitTest } from "../partRenderer.ts";
+import { ICON_PIXELS, encodeIcon } from "../../../core/icons.ts";
 
 // Fixed-metric stub backend: every code point advances 6 px; a non-space glyph is a 4 x 6 block of
 // full alpha in the six rows above the baseline.
@@ -487,4 +488,160 @@ describe("hitTest", () => {
       }),
     );
   }, HEAVY_TEST_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Button icons (spec 06 Requirement 9)
+// ---------------------------------------------------------------------------------------------
+
+function iconData(...dark: Array<[x: number, y: number]>): string {
+  const pixels = new Uint8Array(ICON_PIXELS);
+  for (const [x, y] of dark) pixels[y * 32 + x] = 1;
+  return encodeIcon(pixels);
+}
+const CORNERS = iconData([0, 0], [31, 31]);
+const FULL = encodeIcon(new Uint8Array(ICON_PIXELS).fill(1));
+const ICON_STACK: HexStack = { ...makeStack(), customIcons: { corners: CORNERS, full: FULL } };
+const drawIcon = (part: HexButtonPart, extra: Partial<PartDrawContext> = {}, frame = lightFrame()): Uint8Array =>
+  draw(part, { stack: ICON_STACK, ...extra }, frame);
+
+// A 60 x 60 rectangle at (0,0): inside box 1..58. Icon alone at (14,14); with a title line (16 px)
+// the 48-px block starts at y 6, the icon at (14,6) and the title line at y 38 (glyph rows 45..50,
+// "ab" at columns 24..27 and 30..33).
+const iconButton = (extra: Partial<HexButtonPart> = {}): HexButtonPart =>
+  button({ rect: { x: 0, y: 0, width: 60, height: 60 }, iconId: "corners", showName: false, ...extra });
+
+describe("button icons: layout (Requirement 9.1)", () => {
+  it("centres the icon alone when showName is false", () => {
+    const f = drawIcon(iconButton());
+    expect([at(f, 14, 14), at(f, 45, 45)]).toEqual([2, 2]);
+    expect([at(f, 15, 14), at(f, 13, 14), at(f, 14, 13), at(f, 44, 45)]).toEqual([1, 1, 1, 1]);
+  });
+
+  it("centres the icon and one title line below it as one block", () => {
+    const f = drawIcon(iconButton({ showName: true }));
+    expect([at(f, 14, 6), at(f, 45, 37)]).toEqual([2, 2]);
+    expect(at(f, 14, 14)).toBe(1);
+    expect([at(f, 24, 45), at(f, 27, 50), at(f, 30, 45)]).toEqual([2, 2, 2]);
+    expect(at(f, 24, 44)).toBe(1);
+  });
+
+  it("centres the icon alone when the title is empty", () => {
+    expect(drawIcon(iconButton({ showName: true, title: "" }))).toEqual(drawIcon(iconButton()));
+  });
+});
+
+describe("button icons: bits, clipping, hilite and dimming (Requirements 9.2-9.4)", () => {
+  it("draws set bits dark and leaves clear bits showing the opaque face", () => {
+    const under = lightFrame();
+    under[idx(15, 14)] = 2; // a dark pixel under a clear bit
+    const f = drawIcon(iconButton({ style: "opaque" }), {}, under);
+    expect([at(f, 14, 14), at(f, 15, 14)]).toEqual([2, 1]);
+  });
+
+  it("leaves clear bits showing what lies under a transparent button", () => {
+    const under = lightFrame();
+    under[idx(15, 14)] = 2;
+    const f = drawIcon(iconButton({ style: "transparent" }), {}, under);
+    expect([at(f, 14, 14), at(f, 15, 14), at(f, 16, 14)]).toEqual([2, 2, 1]);
+  });
+
+  it("clips the icon to the inside area of a small button", () => {
+    const f = drawIcon(iconButton({ iconId: "full", rect: { x: 10, y: 10, width: 20, height: 20 } }));
+    expect([at(f, 11, 11), at(f, 28, 28)]).toEqual([2, 2]); // inside, under the icon
+    expect([at(f, 9, 15), at(f, 30, 15), at(f, 15, 30), at(f, 15, 9)]).toEqual([1, 1, 1, 1]); // outside the rect
+  });
+
+  it("keeps the icon off the border and corners of a roundRect", () => {
+    const f = drawIcon(iconButton({ iconId: "full", style: "roundRect", rect: { x: 0, y: 0, width: 30, height: 30 } }));
+    expect([at(f, 0, 0), at(f, 1, 0), at(f, 0, 1)]).toEqual([1, 1, 1]); // outside the rounded corner
+    expect(at(f, 15, 15)).toBe(2);
+  });
+
+  it("inverts the icon with the inside area when highlighted or pressed", () => {
+    const hilite = drawIcon(iconButton({ hilite: true }));
+    expect([at(hilite, 14, 14), at(hilite, 15, 14), at(hilite, 0, 0)]).toEqual([1, 2, 2]);
+    expect(drawIcon(iconButton({ autoHilite: true }), { pressed: true })).toEqual(hilite);
+  });
+
+  it("dims a disabled button's icon through the 50% checkerboard", () => {
+    const f = drawIcon(iconButton({ iconId: "full", enabled: false }));
+    expect([at(f, 14, 14), at(f, 15, 15), at(f, 15, 14), at(f, 14, 15)]).toEqual([2, 2, 1, 1]);
+  });
+
+  it("decodes many different icons correctly (decode cache of 256 entries)", () => {
+    for (let i = 0; i < 300; i++) {
+      const x = i % 32;
+      const y = Math.floor(i / 32);
+      const stack = { ...ICON_STACK, customIcons: { one: iconData([x, y]) } };
+      const f = draw(iconButton({ iconId: "one" }), { stack });
+      expect(at(f, 14 + x, 14 + y)).toBe(2);
+      expect(at(f, 14 + ((x + 1) % 32), 14 + y)).toBe(1);
+    }
+  }, HEAVY_TEST_TIMEOUT_MS);
+});
+
+// Digests of frames drawn by the renderer before spec 06 (commit 75f82b2), for every style and state.
+const GOLDEN: Record<string, string> = {
+  "transparent/plain": "f17fabcd", "transparent/pressed": "e1e58ebd", "transparent/hilite": "e1e58ebd",
+  "transparent/disabled": "e6c55155", "transparent/noName": "8f1757c5", "transparent/small": "00ff3e15",
+  "transparent/edge": "8f1757c5",
+  "opaque/plain": "fed080b3", "opaque/pressed": "cad88a5f", "opaque/hilite": "cad88a5f", "opaque/disabled": "f492a033",
+  "opaque/noName": "bcb47093", "opaque/small": "a5b9174f", "opaque/edge": "a2d372b5",
+  "rectangle/plain": "fa967cef", "rectangle/pressed": "cad88a5f", "rectangle/hilite": "cad88a5f",
+  "rectangle/disabled": "903db16f", "rectangle/noName": "c81be10f", "rectangle/small": "0a1ef719",
+  "rectangle/edge": "97f841ae",
+  "roundRect/plain": "599f294b", "roundRect/pressed": "cd964f67", "roundRect/hilite": "cd964f67",
+  "roundRect/disabled": "63dd09cb", "roundRect/noName": "1191e56b", "roundRect/small": "0a1ef719",
+  "roundRect/edge": "726c763a",
+  "shadow/plain": "37013f53", "shadow/pressed": "e96f9163", "shadow/hilite": "e96f9163", "shadow/disabled": "0519fad3",
+  "shadow/noName": "455fa1b3", "shadow/small": "4e92fad8", "shadow/edge": "97f841ae",
+  "default/plain": "e658b55b", "default/pressed": "8f15374f", "default/hilite": "8f15374f", "default/disabled": "dc1ad4db",
+  "default/noName": "a43ca53b", "default/small": "0a1ef719", "default/edge": "44c1dc29",
+  "checkBox/plain": "0debe3c5", "checkBox/pressed": "8c71cf05", "checkBox/hilite": "80bbc9b5",
+  "checkBox/disabled": "227b9241", "checkBox/noName": "b0c4fabd", "checkBox/small": "1e50d7cf",
+  "checkBox/edge": "383a07c1",
+  "radioButton/plain": "63e65190", "radioButton/pressed": "8f354e08", "radioButton/hilite": "c38feaa0",
+  "radioButton/disabled": "f2364f98", "radioButton/noName": "aad5698c", "radioButton/small": "bfc92ba1",
+  "radioButton/edge": "7d0113bf",
+};
+const GOLDEN_STYLES = ["transparent", "opaque", "rectangle", "roundRect", "shadow", "default", "checkBox", "radioButton"] as const;
+const GOLDEN_VARIANTS: Record<string, Partial<HexButtonPart>> = {
+  plain: {}, hilite: { hilite: true }, disabled: { enabled: false }, noName: { showName: false },
+  small: { rect: { x: 300, y: 200, width: 14, height: 9 } }, edge: { rect: { x: 500, y: 330, width: 40, height: 30 } },
+};
+function goldenFrame(style: (typeof GOLDEN_STYLES)[number], variant: string, pressed: boolean, extra: Partial<HexButtonPart> = {}): Uint8Array {
+  const part = button({ style, rect: { x: 100, y: 100, width: 90, height: 40 }, title: "Go on", ...GOLDEN_VARIANTS[variant], ...extra });
+  const frame = new Uint8Array(TOTAL_PIXELS);
+  for (let i = 0; i < frame.length; i++) frame[i] = ((i * 7) >> 3) % 3 === 0 ? 2 : 1;
+  raster(frame, part, { stack: ICON_STACK, card: ICON_STACK.cards[0], text: part.title, pressed });
+  return frame;
+}
+function digest(frame: Uint8Array): string {
+  let h = 0x811c9dc5;
+  for (const v of frame) h = Math.imul(h ^ v, 0x01000193) >>> 0;
+  return h.toString(16).padStart(8, "0");
+}
+const goldenCases = GOLDEN_STYLES.flatMap((style) =>
+  Object.keys(GOLDEN_VARIANTS).flatMap((variant) => [
+    { style, variant, pressed: false, key: `${style}/${variant}` },
+    ...(variant === "plain" ? [{ style, variant, pressed: true, key: `${style}/pressed` }] : []),
+  ]));
+
+describe("button icons: unchanged frames (Requirements 9.5, 9.6)", () => {
+  it("draws buttons without an iconId exactly as the renderer before spec 06", () => {
+    for (const c of goldenCases) expect(digest(goldenFrame(c.style, c.variant, c.pressed)), c.key).toBe(GOLDEN[c.key]);
+  }, HEAVY_TEST_TIMEOUT_MS);
+
+  it("draws no icon on checkBox and radioButton buttons, which keep their iconId", () => {
+    for (const c of goldenCases.filter((g) => g.style === "checkBox" || g.style === "radioButton")) {
+      expect(digest(goldenFrame(c.style, c.variant, c.pressed, { iconId: "full" })), c.key).toBe(GOLDEN[c.key]);
+    }
+  }, HEAVY_TEST_TIMEOUT_MS);
+
+  it("draws a button whose iconId names no stack icon as a button without one", () => {
+    for (const iconId of ["missing", "toString"]) {
+      expect(digest(goldenFrame("rectangle", "plain", false, { iconId })), iconId).toBe(GOLDEN["rectangle/plain"]);
+    }
+  });
 });

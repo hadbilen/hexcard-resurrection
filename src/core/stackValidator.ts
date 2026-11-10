@@ -8,6 +8,7 @@
  * Objects are strict: unknown keys (for example a persisted AST) are rejected (Requirement 4.5).
  */
 import { z } from "zod";
+import { ICON_DATA_PATTERN, isIconName } from "./icons.ts";
 import type { HexPart, HexStack } from "./schema.ts";
 
 export const SUPPORTED_SCHEMA_VERSION = "2.0.0";
@@ -46,6 +47,15 @@ const bitmapLayerSchema = z.strictObject({
   width: fixedWidthSchema,
   height: fixedHeightSchema,
   rleData: z.string(),
+});
+
+/** Spec 06 Requirement 8.2. */
+const ICON_NAME_MESSAGE =
+  "expected an icon name: 1 to 32 printable ASCII characters without spaces at the ends, not __proto__";
+const iconNameSchema = z.string().refine(isIconName, { error: ICON_NAME_MESSAGE });
+/** Spec 06 Requirement 8.1. */
+const iconDataSchema = z.string().regex(ICON_DATA_PATTERN, {
+  error: "expected icon data: 172 characters of canonical padded standard Base64 (128 bytes)",
 });
 
 const partBaseShape = {
@@ -130,7 +140,9 @@ const stackSchema = z.strictObject({
   }),
   backgrounds: z.array(backgroundSchema).min(1, { error: "must contain at least one background" }),
   cards: z.array(cardSchema).min(1, { error: "must contain at least one card" }),
-  customIcons: z.record(z.string(), z.string()),
+  customIcons: z.record(iconNameSchema, iconDataSchema, {
+    error: (issue) => (issue.code === "invalid_key" ? ICON_NAME_MESSAGE : undefined),
+  }),
   scriptSource: z.string(),
 }) satisfies z.ZodType<HexStack>;
 
@@ -192,6 +204,27 @@ function checkUniqueIds(stack: HexStack): ValidateStackResult | null {
   return error;
 }
 
+/** Spec 06 Requirement 8.3: every button `iconId` names a key of the stack's `customIcons`. */
+function checkIconReferences(stack: HexStack): ValidateStackResult | null {
+  const layers: Array<[key: "backgrounds" | "cards", owners: ReadonlyArray<{ parts: readonly HexPart[] }>]> = [
+    ["backgrounds", stack.backgrounds],
+    ["cards", stack.cards],
+  ];
+  for (const [key, owners] of layers) {
+    for (let i = 0; i < owners.length; i++) {
+      const parts = owners[i].parts;
+      for (let j = 0; j < parts.length; j++) {
+        const part = parts[j];
+        if (part.type !== "button" || part.iconId === undefined) continue;
+        if (!Object.hasOwn(stack.customIcons, part.iconId)) {
+          return fail([key, i, "parts", j, "iconId"], `no icon named "${part.iconId}" in customIcons`);
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Validates an untrusted value as a persisted HexStack.
  * On success returns a freshly parsed stack that shares no objects with the input.
@@ -204,6 +237,12 @@ export function validateStack(input: unknown): ValidateStackResult {
     if (version !== SUPPORTED_SCHEMA_VERSION) {
       const shown = typeof version === "string" ? `"${version}"` : String(version);
       return fail(["schemaVersion"], `unsupported schema version ${shown}, expected "${SUPPORTED_SCHEMA_VERSION}"`);
+    }
+    // Zod drops a "__proto__" record key silently (JSON.parse makes it an own key), so the
+    // stack would load without it instead of being rejected whole (spec 06 Requirement 8.3).
+    const icons: unknown = (input as Record<string, unknown>).customIcons;
+    if (typeof icons === "object" && icons !== null && Object.hasOwn(icons, "__proto__")) {
+      return fail(["customIcons", "__proto__"], ICON_NAME_MESSAGE);
     }
   }
 
@@ -233,6 +272,9 @@ export function validateStack(input: unknown): ValidateStackResult {
 
   const idError = checkUniqueIds(stack);
   if (idError) return idError;
+
+  const iconError = checkIconReferences(stack);
+  if (iconError) return iconError;
 
   return { ok: true, stack };
 }

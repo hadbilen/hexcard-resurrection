@@ -24,7 +24,7 @@ Tasks are in priority order (design §Overview, "Delivery order"): the list can 
 
 - [ ] 3. Implement button icons
 
-  - [ ] 3.1 Icon data, validation, rendering and built-in icons
+  - [x] 3.1 Icon data, validation, rendering and built-in icons
     - `src/core/icons.ts`: constants, `isIconData`, `isIconName`, `encodeIcon`, `decodeIcon`, `iconFromRows`, `BLANK_ICON`, `freeIconName`, `iconNameError` and every icon command factory with exact apply / revert (design §icons.ts)
     - `stackValidator.ts`: icon name and icon data schemas for `customIcons`, and `checkIconReferences` for dangling `iconId`s
     - `partRenderer.ts`: icon layout, set and clear bits, clipping, hilite inversion and dimming in `drawPushButton`; no icon for `checkBox` / `radioButton`; decode cache of 256 entries (design §Rendering)
