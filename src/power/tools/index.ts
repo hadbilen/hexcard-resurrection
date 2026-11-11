@@ -11,6 +11,7 @@ import type { CallToolResult } from "../results.ts";
 import { MAX_STACK_TEXT } from "../stackText.ts";
 import { MAX_SOURCE_LENGTH, runCompileHexTalk } from "./compileHexTalk.ts";
 import { runConjureScript } from "./conjureScript.ts";
+import { checkDrawCommands, checkDrawLayerArguments, MAX_COMMANDS, MAX_DRAW_TEXT_CHARACTERS, runDrawLayer } from "./drawLayer.ts";
 import { MAX_CARD_POSITION, MAX_CARD_SELECTOR, runRenderCard } from "./renderCard.ts";
 import { runValidateStack } from "./validateStack.ts";
 
@@ -30,6 +31,7 @@ export interface PowerTool {
 export interface ToolSteps {
   listStackErrors: typeof listStackErrors; // stackLoader.ts
   parseHexTalk: typeof parseHexTalk; // parser.ts
+  checkDrawCommands: typeof checkDrawCommands; // tools/drawLayer.ts
 }
 
 export interface ToolDeps {
@@ -131,9 +133,140 @@ const RENDER_CARD_SCHEMA: PowerTool["inputSchema"] = {
   required: ["stack"],
   additionalProperties: false,
 };
+
+/** An integer property of a drawing command, with its limit (and default) in the description. */
+function integerField(minimum: number, maximum: number, description: string, defaultValue?: number): ArgSchema {
+  return defaultValue === undefined
+    ? { type: "integer", minimum, maximum, description }
+    : { type: "integer", minimum, maximum, default: defaultValue, description };
+}
+const X_FIELD = (what: string): ArgSchema => integerField(0, 511, `${what}, an integer from 0 to 511.`);
+const Y_FIELD = (what: string): ArgSchema => integerField(0, 341, `${what}, an integer from 0 to 341.`);
+const PATTERN_FIELD: ArgSchema = integerField(
+  0,
+  37,
+  "Optional, default 1 (solid dark). The pattern index, an integer from 0 to 37: 0 is solid light, 1 is solid dark, the others are the 38 classic 8x8 patterns of the paint tools.",
+  1,
+);
+const OP = (name: string): ArgSchema => ({ type: "string", const: name, description: `Must be ${name}.` });
+
+const RECT_COMMAND: ArgSchema = {
+  type: "object",
+  description:
+    "A rectangle: the frame of the box, or the whole box when filled is true, with x + width at most 512 and y + height at most 342. Pixels take the state of the pattern at their own layer coordinates.",
+  properties: {
+    op: OP("rect"),
+    x: X_FIELD("Left column"),
+    y: Y_FIELD("Top row"),
+    width: integerField(1, 512, "Width in pixels, an integer from 1 to 512; x + width is at most 512."),
+    height: integerField(1, 342, "Height in pixels, an integer from 1 to 342; y + height is at most 342."),
+    pattern: PATTERN_FIELD,
+    filled: { type: "boolean", default: false, description: "Optional, default false. True draws every pixel of the box, false only its 1-pixel frame." },
+  },
+  required: ["op", "x", "y", "width", "height"],
+  additionalProperties: false,
+};
+
+const LINE_COMMAND: ArgSchema = {
+  type: "object",
+  description:
+    "A line from (x1, y1) to (x2, y2), both ends included, drawn like the Line tool. The order of the two points matters: swapping them can set different pixels.",
+  properties: {
+    op: OP("line"),
+    x1: X_FIELD("Column of the first point"),
+    y1: Y_FIELD("Row of the first point"),
+    x2: X_FIELD("Column of the second point"),
+    y2: Y_FIELD("Row of the second point"),
+    pattern: PATTERN_FIELD,
+  },
+  required: ["op", "x1", "y1", "x2", "y2"],
+  additionalProperties: false,
+};
+
+const SPRITE_COMMAND: ArgSchema = {
+  type: "object",
+  description:
+    "A sprite: rows of # (dark pixel) and . (light pixel) with its top-left corner at (x, y). Every row has the same length, and the sprite lies wholly inside the layer.",
+  properties: {
+    op: OP("sprite"),
+    x: X_FIELD("Left column of the sprite"),
+    y: Y_FIELD("Top row of the sprite"),
+    rows: {
+      type: "array",
+      minItems: 1,
+      maxItems: 64,
+      description:
+        "1 to 64 rows of the same length. Each row is 1 to 64 characters (UTF-16 code units), every one # (dark) or . (light). The rows of all sprites and the texts of all text commands in one call add up to at most 65536 characters.",
+      items: { type: "string", minLength: 1, maxLength: 64, pattern: "^[#.]+$", description: "One row: 1 to 64 characters, each # or ." },
+    },
+  },
+  required: ["op", "x", "y", "rows"],
+  additionalProperties: false,
+};
+
+const TEXT_COMMAND: ArgSchema = {
+  type: "object",
+  description:
+    "Text laid out and drawn in a box with the studio's text rasterizer and the bundled pixel fonts, like the text of a field with no inset. Lines that do not fit the box are cut off and reported in notes; characters the fonts do not cover are listed in uncoveredCharacters.",
+  properties: {
+    op: OP("text"),
+    x: X_FIELD("Left column of the box"),
+    y: Y_FIELD("Top row of the box"),
+    text: {
+      type: "string",
+      minLength: 1,
+      maxLength: 256,
+      description:
+        "The text, 1 to 256 characters (UTF-16 code units). The texts and sprite rows of all commands in one call add up to at most 65536 characters.",
+    },
+    width: integerField(1, 512, "Optional, default 512 - x. Box width in pixels, an integer from 1 to 512; x + width is at most 512."),
+    height: integerField(1, 342, "Optional, default 342 - y. Box height in pixels, an integer from 1 to 342; y + height is at most 342."),
+    font: { type: "string", enum: ["System", "Sans", "Mono", "Serif"], default: "Sans", description: "Optional, default Sans. The logical font: System, Sans, Mono or Serif." },
+    size: { type: "integer", enum: [9, 10, 12, 14, 18, 24], default: 12, description: "Optional, default 12. The text size: 9, 10, 12, 14, 18 or 24." },
+    style: {
+      type: "array",
+      uniqueItems: true,
+      description: "Optional, default an empty list. Text styles, each at most once: bold, italic, underline, outline, shadow, condense.",
+      items: { type: "string", enum: ["bold", "italic", "underline", "outline", "shadow", "condense"], description: "One text style." },
+    },
+    align: { type: "string", enum: ["left", "center", "right"], default: "left", description: "Optional, default left. Alignment in the box: left, center or right." },
+    wrap: {
+      type: "boolean",
+      default: true,
+      description: "Optional, default true. True wraps lines at spaces to the box width; false breaks lines only at line breaks.",
+    },
+    ink: { type: "string", enum: ["dark", "light"], default: "dark", description: "Optional, default dark. The state the ink pixels are set to: dark or light." },
+  },
+  required: ["op", "x", "y", "text"],
+  additionalProperties: false,
+};
+
+const DRAW_LAYER_SCHEMA: PowerTool["inputSchema"] = {
+  type: "object",
+  properties: {
+    layer: {
+      type: "string",
+      enum: ["card", "background"],
+      description:
+        "Which kind of layer to draw: card (starts all transparent) or background (starts all light). The result's rleData belongs in that kind of bitmap.",
+    },
+    commands: {
+      type: "array",
+      minItems: 1,
+      maxItems: MAX_COMMANDS,
+      description:
+        `1 to ${MAX_COMMANDS} drawing commands, drawn in list order on the 512 x 342 layer; a later command overwrites the pixels of an earlier one. ` +
+        `Each is an object whose op is rect, line, sprite or text. The sprite rows and texts of the whole call add up to at most ${MAX_DRAW_TEXT_CHARACTERS} characters (UTF-16 code units).`,
+      items: { oneOf: [RECT_COMMAND, LINE_COMMAND, SPRITE_COMMAND, TEXT_COMMAND] },
+    },
+  },
+  required: ["layer", "commands"],
+  additionalProperties: false,
+};
+
 /** Steps with the studio's functions as defaults. */
 function resolveSteps(deps: Pick<ToolDeps, "steps">): ToolSteps {
-  return { listStackErrors, parseHexTalk, ...deps.steps };
+  return { listStackErrors, parseHexTalk, checkDrawCommands, ...deps.steps };
 }
 
 export function createPowerTools(deps: ToolDeps): readonly PowerTool[] {
@@ -194,5 +327,21 @@ export function createPowerTools(deps: ToolDeps): readonly PowerTool[] {
     checkArguments: (args) => checkArguments(RENDER_CARD_SCHEMA, args, { readLimited: ["stack"] }),
     run: (args) => runRenderCard(args, steps, deps.fonts),
   };
-  return [validateStack, compileHexTalk, conjureScript, renderCard];
+  const drawLayer: PowerTool = {
+    name: "draw_layer",
+    title: "Draw HexCard layer",
+    description:
+      "Draws simple 1-bit art on a blank card or background layer from a list of drawing commands and returns the layer's canonical rleData, ready to put in a stack's bitmap. " +
+      "Commands: rect (frame or filled box), line, sprite (rows of # and .) and text (laid out and drawn with the studio's text rasterizer and the bundled pixel fonts). " +
+      "Rectangles and lines are drawn with the paint tools' own code and the 38 classic patterns. A card layer starts transparent and a background layer starts light; later commands overwrite earlier ones. " +
+      "Returns ok, the layer, the rleData (an empty string when the drawing equals the blank layer), the number of light and dark pixels, notes for text that does not fit its box, and the characters the fonts do not cover. " +
+      `Limits: 1 to ${MAX_COMMANDS} commands, every point and shape inside the 512 x 342 layer, sprites of at most 64 x 64 pixels, texts of at most 256 characters, ` +
+      `and at most ${MAX_DRAW_TEXT_CHARACTERS} characters of sprite rows and texts in one call. ` +
+      "It cannot draw over existing rleData. It reads no file and no URL, opens no network connection and runs no script.",
+    inputSchema: DRAW_LAYER_SCHEMA,
+    // Rules the schema cannot express (shapes inside the layer, equal sprite rows, the call's total) follow it.
+    checkArguments: (args) => checkDrawLayerArguments(DRAW_LAYER_SCHEMA, args, steps),
+    run: (args) => runDrawLayer(args, deps.fonts),
+  };
+  return [validateStack, compileHexTalk, conjureScript, renderCard, drawLayer];
 }

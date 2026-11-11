@@ -203,7 +203,7 @@ describe("checkArguments", () => {
 // checked the way the protocol handler checks them (the tool's own checkArguments, else the
 // generic checker on its inputSchema).
 // ---------------------------------------------------------------------------------------------
-describe("Requirement 5.3: argument bounds of validate_stack, compile_hextalk, conjure_script and render_card", () => {
+describe("Requirement 5.3: argument bounds of validate_stack, compile_hextalk, conjure_script, render_card and draw_layer", () => {
   const tools = createPowerTools({ fonts: FONTS });
   const problems = (name: string, args: Record<string, unknown>): string[] => {
     const tool = tools.find((candidate) => candidate.name === name);
@@ -211,8 +211,8 @@ describe("Requirement 5.3: argument bounds of validate_stack, compile_hextalk, c
     return tool.checkArguments ? tool.checkArguments(args) : checkArguments(tool.inputSchema, args);
   };
 
-  it("lists exactly the four tools, in order", () => {
-    expect(tools.map((tool) => tool.name)).toEqual(["validate_stack", "compile_hextalk", "conjure_script", "render_card"]);
+  it("lists exactly the five tools, in order", () => {
+    expect(tools.map((tool) => tool.name)).toEqual(["validate_stack", "compile_hextalk", "conjure_script", "render_card", "draw_layer"]);
   });
 
   describe("validate_stack", () => {
@@ -329,6 +329,139 @@ describe("Requirement 5.3: argument bounds of validate_stack, compile_hextalk, c
     });
     it("allows no other argument", () => {
       expect(problems("render_card", { stack: "{}", layer: "card" })).toEqual(["layer: is not an allowed argument"]);
+    });
+  });
+  describe("draw_layer", () => {
+    const rect = { op: "rect", x: 0, y: 0, width: 1, height: 1 };
+    const line = { op: "line", x1: 0, y1: 0, x2: 1, y2: 1 };
+    const sprite = { op: "sprite", x: 0, y: 0, rows: ["#"] };
+    const text = { op: "text", x: 0, y: 0, text: "x" };
+    const draw = (command: Record<string, unknown>) => problems("draw_layer", { layer: "card", commands: [command] });
+    /** Each bound accepted (no entry), one past it rejected with exactly this rule. */
+    const bound = (base: Record<string, unknown>, field: string, accepted: unknown[], rejected: unknown[], rule: string) => {
+      for (const value of accepted) expect(draw({ ...base, [field]: value }), `${field} ${String(value)}`).toEqual([]);
+      for (const value of rejected) expect(draw({ ...base, [field]: value }), `${field} ${String(value)}`).toEqual([`commands[0].${field}: ${rule}`]);
+    };
+
+    it("requires layer and commands, allows nothing else, and takes only card or background", () => {
+      expect(problems("draw_layer", {})).toEqual(["layer: is required", "commands: is required"]);
+      expect(problems("draw_layer", { layer: "card", commands: [rect], stack: "{}" })).toEqual(["stack: is not an allowed argument"]);
+      for (const layer of ["card", "background"]) expect(problems("draw_layer", { layer, commands: [rect] })).toEqual([]);
+      for (const layer of ["Card", "stack", "", "cards"]) {
+        expect(problems("draw_layer", { layer, commands: [rect] })).toEqual(["layer: must be one of card, background"]);
+      }
+      expect(problems("draw_layer", { layer: 1, commands: [rect] })).toEqual(["layer: must be a string"]);
+    });
+
+    it("accepts 1 to 256 commands and rejects 0 and 257", () => {
+      const many = (n: number) => Array.from({ length: n }, () => rect);
+      expect(problems("draw_layer", { layer: "card", commands: many(1) })).toEqual([]);
+      expect(problems("draw_layer", { layer: "card", commands: many(256) })).toEqual([]);
+      expect(problems("draw_layer", { layer: "card", commands: many(0) })).toEqual(["commands: must have 1 to 256 entries"]);
+      expect(problems("draw_layer", { layer: "card", commands: many(257) })).toEqual(["commands: must have 1 to 256 entries"]);
+      expect(problems("draw_layer", { layer: "card", commands: {} })).toEqual(["commands: must be an array"]);
+    });
+
+    it("takes only the four ops, each with its required fields and no other field", () => {
+      for (const command of [rect, line, sprite, text]) expect(draw(command)).toEqual([]);
+      expect(draw({ op: "oval", x: 0, y: 0 })).toEqual(["commands[0].op: must be one of rect, line, sprite, text"]);
+      expect(draw({ x: 0, y: 0 })).toEqual(["commands[0].op: must be one of rect, line, sprite, text"]);
+      expect(draw({ op: "Rect", x: 0, y: 0 })).toEqual(["commands[0].op: must be one of rect, line, sprite, text"]);
+      expect(draw({ op: "rect" })).toEqual(["commands[0].x: is required", "commands[0].y: is required", "commands[0].width: is required", "commands[0].height: is required"]);
+      expect(draw({ op: "line", x1: 0 })).toEqual(["commands[0].y1: is required", "commands[0].x2: is required", "commands[0].y2: is required"]);
+      expect(draw({ op: "sprite", x: 0, y: 0 })).toEqual(["commands[0].rows: is required"]);
+      expect(draw({ op: "text", x: 0, y: 0 })).toEqual(["commands[0].text: is required"]);
+      expect(draw({ ...rect, color: "red" })).toEqual(["commands[0].color: is not an allowed field"]);
+      expect(draw({ ...line, width: 3 })).toEqual(["commands[0].width: is not an allowed field"]);
+      expect(draw({ ...sprite, pattern: 1 })).toEqual(["commands[0].pattern: is not an allowed field"]);
+      expect(draw({ ...text, rows: ["#"] })).toEqual(["commands[0].rows: is not an allowed field"]);
+    });
+
+    it("keeps every coordinate an integer inside the layer: x, x1, x2 from 0 to 511 and y, y1, y2 from 0 to 341", () => {
+      const columns = "must be from 0 to 511";
+      const rows = "must be from 0 to 341";
+      bound(rect, "x", [0, 511], [-1, 512], columns);
+      bound(rect, "y", [0, 341], [-1, 342], rows);
+      bound({ ...sprite, rows: ["#"] }, "x", [0, 511], [-1, 512], columns);
+      bound(sprite, "y", [0, 341], [-1, 342], rows);
+      bound(text, "x", [0, 511], [-1, 512], columns);
+      bound(text, "y", [0, 341], [-1, 342], rows);
+      bound(line, "x1", [0, 511], [-1, 512], columns);
+      bound(line, "x2", [0, 511], [-1, 512], columns);
+      bound(line, "y1", [0, 341], [-1, 342], rows);
+      bound(line, "y2", [0, 341], [-1, 342], rows);
+      for (const bad of [1.5, "1", null, true]) bound(rect, "x", [], [bad], "must be an integer");
+    });
+
+    it("keeps the width and height of a rectangle from 1 to 512 and 1 to 342, and of a text box the same", () => {
+      bound(rect, "width", [1, 512], [0, 513, -4], "must be from 1 to 512");
+      bound(rect, "height", [1, 342], [0, 343], "must be from 1 to 342");
+      bound(text, "width", [1, 512], [0, 513], "must be from 1 to 512");
+      bound(text, "height", [1, 342], [0, 343], "must be from 1 to 342");
+      bound(rect, "width", [], [2.5, "3"], "must be an integer");
+    });
+
+    it("keeps the pattern of a rectangle and of a line an integer from 0 to 37, and filled a boolean", () => {
+      bound(rect, "pattern", [0, 1, 37], [-1, 38], "must be from 0 to 37");
+      bound(line, "pattern", [0, 1, 37], [-1, 38], "must be from 0 to 37");
+      bound(rect, "pattern", [], [1.5, "1"], "must be an integer");
+      bound(rect, "filled", [true, false], [1, "true", null], "must be a boolean");
+    });
+
+    it("keeps the rows of a sprite at 1 to 64 rows of 1 to 64 characters, each # or .", () => {
+      const rows = (n: number, length = 1) => Array.from({ length: n }, () => "#".repeat(length));
+      for (const value of [rows(1), rows(64), rows(1, 64), rows(64, 64), ["#.#", "..."]]) expect(draw({ ...sprite, rows: value })).toEqual([]);
+      bound(sprite, "rows", [], [rows(0), rows(65)], "must have 1 to 64 entries");
+      expect(draw({ ...sprite, rows: ["#".repeat(65)] })).toEqual(["commands[0].rows[0]: must have 1 to 64 characters"]);
+      expect(draw({ ...sprite, rows: ["#", "#".repeat(65)] })).toEqual(["commands[0].rows[1]: must have 1 to 64 characters"]);
+      expect(draw({ ...sprite, rows: [""] })).toContain("commands[0].rows[0]: must have 1 to 64 characters");
+      for (const row of ["x", " ", "0", "#x#", "#,"]) {
+        expect(draw({ ...sprite, rows: [row] }), row).toEqual(["commands[0].rows[0]: must contain only # and ."]);
+      }
+      expect(draw({ ...sprite, rows: "#" })).toEqual(["commands[0].rows: must be an array"]);
+      expect(draw({ ...sprite, rows: [1] })).toEqual(["commands[0].rows[0]: must be a string"]);
+    });
+
+    it("keeps the text of a text command at 1 to 256 characters, counted in UTF-16 code units", () => {
+      for (const value of ["x", "x".repeat(256), "\u{1F600}".repeat(128)]) expect(draw({ ...text, text: value })).toEqual([]);
+      for (const value of ["", "x".repeat(257), "\u{1F600}".repeat(129)]) {
+        expect(draw({ ...text, text: value })).toEqual(["commands[0].text: must have 1 to 256 characters"]);
+      }
+      bound(text, "text", [], [5, null], "must be a string");
+    });
+
+    it("takes font, size, style, align, wrap and ink only from their sets", () => {
+      bound(text, "font", ["System", "Sans", "Mono", "Serif"], ["sans", "Monaco", ""], "must be one of System, Sans, Mono, Serif");
+      bound(text, "size", [9, 10, 12, 14, 18, 24], [8, 11, 13, 0, 25], "must be one of 9, 10, 12, 14, 18, 24");
+      bound(text, "align", ["left", "center", "right"], ["justify", "Left"], "must be one of left, center, right");
+      bound(text, "ink", ["dark", "light"], ["gray", "Dark", ""], "must be one of dark, light");
+      bound(text, "wrap", [true, false], ["yes", 0], "must be a boolean");
+      const styles = ["bold", "italic", "underline", "outline", "shadow", "condense"];
+      for (const value of [[], ["bold"], styles]) expect(draw({ ...text, style: value })).toEqual([]);
+      expect(draw({ ...text, style: ["bold", "bold"] })).toEqual(["commands[0].style: must list each style at most once"]);
+      expect(draw({ ...text, style: ["bold", "italic", "italic"] })).toEqual(["commands[0].style: must list each style at most once"]);
+      expect(draw({ ...text, style: ["underlined"] })).toEqual(["commands[0].style[0]: must be one of bold, italic, underline, outline, shadow, condense"]);
+      expect(draw({ ...text, style: "bold" })).toEqual(["commands[0].style: must be an array"]);
+    });
+
+    it("keeps the sprite rows and texts of one call to 65536 characters in all, the last entry", () => {
+      const sprite4096 = { op: "sprite", x: 0, y: 0, rows: Array.from({ length: 64 }, () => "#".repeat(64)) };
+      const sixteen = Array.from({ length: 16 }, () => sprite4096);
+      const long = "this call adds up to more than the limit";
+      expect(problems("draw_layer", { layer: "card", commands: sixteen })).toEqual([]);
+      expect(problems("draw_layer", { layer: "card", commands: [...sixteen, text] })).toEqual([
+        "commands: the sprite rows and texts have 65537 characters in all, more than 65536",
+      ]);
+      // Texts count as well as rows, and the entry comes after the entry of a broken command.
+      const texts = Array.from({ length: 16 }, () => ({ ...text, text: "x".repeat(256) }));
+      expect(problems("draw_layer", { layer: "card", commands: [...Array.from({ length: 15 }, () => sprite4096), ...texts] })).toEqual([]);
+      expect(problems("draw_layer", { layer: "card", commands: [...Array.from({ length: 15 }, () => sprite4096), ...texts, text] })).toEqual([
+        "commands: the sprite rows and texts have 65537 characters in all, more than 65536",
+      ]);
+      expect(problems("draw_layer", { layer: "card", commands: [{ ...rect, x: 600 }, ...sixteen, { ...text, text: long }] })).toEqual([
+        "commands[0].x: must be from 0 to 511",
+        `commands: the sprite rows and texts have ${65536 + long.length} characters in all, more than 65536`,
+      ]);
     });
   });
 });

@@ -119,7 +119,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
 
 - [ ] 5. Implement draw_layer
 
-  - [ ] 5.1 Implement the draw_layer tool
+  - [x] 5.1 Implement the draw_layer tool
     - `src/power/tools/drawLayer.ts` (design §tools/drawLayer.ts): `DrawCommand`, `checkDrawCommands`, `drawCommands` (rectangles through `plotRectShape`, lines through `bresenhamLine`, pattern states through `PATTERNS` and `patternState`, sprites, text through `renderCrisp1BitText` with the Node text backend), the not-fit notes, the uncovered characters, `rleData` `""` when the drawing equals the base, and the pixel counts; the tool's `checkArguments` in the order of design §tools/drawLayer.ts, with the call's total characters last
     - `src/power/tools/index.ts`: `draw_layer` as the fifth tool, with the `oneOf` inputSchema of design §Tool input schemas; `ToolSteps` gains `checkDrawCommands`
     - Rebuild the server file with `npm run build:power`

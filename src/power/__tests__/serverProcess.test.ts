@@ -1,6 +1,6 @@
 /// <reference types="node" />
 // The committed server file as a child process, started the way mcp.json starts it (spec 07
-// Requirements 2.5, 2.7, 3.3, 3.7, 4.10, 9.7, 17.3, 17.5). Tools covered: the four of tasks 3.2 and 4.2.
+// Requirements 2.5, 2.7, 3.3, 3.7, 4.10, 9.7, 17.3, 17.5). Tools covered: the five of tasks 3.2, 4.2 and 5.1.
 
 import { spawn } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { POWER_DIR, SERVER_FILE_PATH } from "../../../scripts/buildPowerServer.ts";
+import { PATTERNS, patternState } from "../../engine/graphics/patterns.ts";
+import { decodeBitmapRLE, encodeBitmapRLE } from "../../engine/graphics/rleCodec.ts";
 import { makeStack } from "./toolFixtures.ts";
 
 const TIMEOUT = 60_000;
@@ -74,12 +76,21 @@ const request = (id: number, method: string, params?: unknown): string =>
 const call = (id: number, name: string, args: unknown): string => request(id, "tools/call", { name, arguments: args });
 
 const STACK_TEXT = JSON.stringify(makeStack());
+/** A draw_layer call that gives ok true: a filled rectangle and a text. */
+const DRAW_ARGS = {
+  layer: "card",
+  commands: [
+    { op: "rect", x: 10, y: 10, width: 60, height: 20, pattern: 5, filled: true },
+    { op: "text", x: 12, y: 12, width: 56, height: 16, text: "Hex", ink: "light" },
+  ],
+} as const;
 /** One call per tool with valid arguments that give ok true. */
 const OK_CALLS = [
   { name: "validate_stack", args: { stack: STACK_TEXT } },
   { name: "compile_hextalk", args: { source: "on mouseUp\n  go next\nend mouseUp" } },
   { name: "conjure_script", args: { prompt: "beep" } },
   { name: "render_card", args: { stack: STACK_TEXT, card: 2, scale: 1 } },
+  { name: "draw_layer", args: DRAW_ARGS },
 ] as const;
 /** One call per tool with an argument that breaks its inputSchema, and the path the error names. */
 const BAD_CALLS = [
@@ -87,8 +98,11 @@ const BAD_CALLS = [
   { name: "compile_hextalk", args: { source: "on mouseUp\nend mouseUp", extra: true }, path: "extra" },
   { name: "conjure_script", args: { prompt: "beep", objectKind: "robot" }, path: "objectKind" },
   { name: "render_card", args: { stack: STACK_TEXT, scale: 3 }, path: "scale" },
+  { name: "draw_layer", args: { layer: "card", commands: [{ op: "rect", x: 512, y: 0, width: 1, height: 1 }] }, path: "commands[0].x" },
 ] as const;
 const TOOL_NAMES = OK_CALLS.map((entry) => entry.name);
+/** The place of the render_card call among the ok calls: its answer holds an image. */
+const RENDER_INDEX = OK_CALLS.findIndex((entry) => entry.name === "render_card");
 
 const answersOf = (stdout: Buffer): any[] => {
   const text = stdout.toString("utf8");
@@ -113,7 +127,21 @@ function expectShortSession(answers: any[]): void {
     expect(answer.result.isError).toBe(false);
     expect(payloadOf(answer).ok).toBe(true);
   }
-  expectRenderCardAnswer(answers.at(-1));
+  expectRenderCardAnswer(answers[2 + RENDER_INDEX]);
+  expectDrawLayerAnswer(answers[2 + OK_CALLS.findIndex((entry) => entry.name === "draw_layer")]);
+}
+
+/** The draw_layer answer of OK_CALLS: one text content with canonical rleData that decodes to the drawn pixels. */
+function expectDrawLayerAnswer(answer: any): void {
+  expect(answer.result.content.map((content: { type: string }) => content.type)).toEqual(["text"]);
+  const payload = payloadOf(answer);
+  expect(payload).toMatchObject({ ok: true, layer: "card", notes: [], uncoveredCharacters: [] });
+  expect(payload.rleData.length).toBeGreaterThan(0);
+  const pixels = decodeBitmapRLE(payload.rleData);
+  expect(encodeBitmapRLE(pixels)).toBe(payload.rleData);
+  expect(pixels.filter((state) => state === 1).length).toBe(payload.lightPixels);
+  expect(pixels.filter((state) => state === 2).length).toBe(payload.darkPixels);
+  expect(pixels[10 * 512 + 10]).toBe(patternState(PATTERNS[5], 10, 10));
 }
 
 /** The render_card answer of OK_CALLS: the JSON text, then one image/png content holding a real PNG. */
@@ -170,7 +198,8 @@ describe("server process, started with the args of mcp.json", () => {
         expect(answer.result.isError).toBe(false);
         expect(payloadOf(answer).ok).toBe(true);
       }
-      expectRenderCardAnswer(answers[firstBad - 1]);
+      expectRenderCardAnswer(answers[2 + RENDER_INDEX]);
+      expectDrawLayerAnswer(answers[firstBad - 1]);
       BAD_CALLS.forEach((entry, i) => {
         const answer = answers[firstBad + i];
         expect(answer.result.isError).toBe(true);

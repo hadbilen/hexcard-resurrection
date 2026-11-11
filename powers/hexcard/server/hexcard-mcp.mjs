@@ -7448,7 +7448,7 @@ function classify(value) {
 		params
 	};
 }
-function messageOf$2(error) {
+function messageOf$3(error) {
 	return error instanceof Error ? error.message : String(error);
 }
 var defaultLog = (line) => {
@@ -7493,7 +7493,7 @@ function createProtocolHandler(options) {
 			result = problems.length > 0 ? errorResult(problems) : await tool.run(args);
 		} catch (error) {
 			log(`hexcard: internal error in ${tool.name}`);
-			result = errorResult([`Internal error in ${tool.name}: ${shortenMessage(messageOf$2(error))}`]);
+			result = errorResult([`Internal error in ${tool.name}: ${shortenMessage(messageOf$3(error))}`]);
 		}
 		return resultAnswer(id, result);
 	}
@@ -14724,7 +14724,7 @@ function encodeStackFile(stack) {
 // src/power/stackText.ts
 /** Requirement 5.3: the longest `stack` text, and the limit for the decompressed JSON bytes. */
 var MAX_STACK_TEXT = 4194304;
-function messageOf$1(error) {
+function messageOf$2(error) {
 	return error instanceof Error ? error.message : String(error);
 }
 /**
@@ -14743,7 +14743,7 @@ async function readAndGate(stackText, steps) {
 	} catch (error) {
 		return {
 			kind: "readError",
-			error: `stack: The stack is not valid JSON: ${messageOf$1(error)}`
+			error: `stack: The stack is not valid JSON: ${messageOf$2(error)}`
 		};
 	}
 	else try {
@@ -14751,7 +14751,7 @@ async function readAndGate(stackText, steps) {
 	} catch (error) {
 		return {
 			kind: "readError",
-			error: `stack: ${messageOf$1(error)}`
+			error: `stack: ${messageOf$2(error)}`
 		};
 	}
 	try {
@@ -14768,7 +14768,7 @@ async function readAndGate(stackText, steps) {
 	} catch (error) {
 		return {
 			kind: "checkError",
-			error: `stack: The stack could not be checked: ${messageOf$1(error)}`
+			error: `stack: The stack could not be checked: ${messageOf$2(error)}`
 		};
 	}
 }
@@ -14815,6 +14815,608 @@ function runConjureScript(args) {
 		ok: true,
 		hexTalk: spell.hexTalk,
 		notes: hint === void 0 ? [] : [hint]
+	});
+}
+// src/engine/graphics/patterns.ts
+/** The pattern bit at canvas coordinates (x, y); works for any integer, including negatives. */
+function patternBit(pattern, x, y) {
+	return pattern[y & 7] >> 7 - (x & 7) & 1;
+}
+/** Pixel state the pattern paints at (x, y): bit 1 -> 2 (dark), bit 0 -> 1 (light). */
+function patternState(pattern, x, y) {
+	return patternBit(pattern, x, y) === 1 ? 2 : 1;
+}
+/** The 38 patterns. Do not mutate the entries. */
+var PATTERNS = [
+	[
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0
+	],
+	[
+		255,
+		255,
+		255,
+		255,
+		255,
+		255,
+		255,
+		255
+	],
+	[
+		221,
+		119,
+		221,
+		119,
+		221,
+		119,
+		221,
+		119
+	],
+	[
+		170,
+		85,
+		170,
+		85,
+		170,
+		85,
+		170,
+		85
+	],
+	[
+		136,
+		34,
+		136,
+		34,
+		136,
+		34,
+		136,
+		34
+	],
+	[
+		128,
+		0,
+		8,
+		0,
+		128,
+		0,
+		8,
+		0
+	],
+	[
+		255,
+		0,
+		255,
+		0,
+		255,
+		0,
+		255,
+		0
+	],
+	[
+		170,
+		170,
+		170,
+		170,
+		170,
+		170,
+		170,
+		170
+	],
+	[
+		204,
+		204,
+		204,
+		204,
+		204,
+		204,
+		204,
+		204
+	],
+	[
+		255,
+		255,
+		0,
+		0,
+		255,
+		255,
+		0,
+		0
+	],
+	[
+		255,
+		0,
+		0,
+		0,
+		255,
+		0,
+		0,
+		0
+	],
+	[
+		136,
+		136,
+		136,
+		136,
+		136,
+		136,
+		136,
+		136
+	],
+	[
+		119,
+		119,
+		119,
+		119,
+		119,
+		119,
+		119,
+		119
+	],
+	[
+		128,
+		64,
+		32,
+		16,
+		8,
+		4,
+		2,
+		1
+	],
+	[
+		1,
+		2,
+		4,
+		8,
+		16,
+		32,
+		64,
+		128
+	],
+	[
+		136,
+		68,
+		34,
+		17,
+		136,
+		68,
+		34,
+		17
+	],
+	[
+		17,
+		34,
+		68,
+		136,
+		17,
+		34,
+		68,
+		136
+	],
+	[
+		192,
+		96,
+		48,
+		24,
+		12,
+		6,
+		3,
+		129
+	],
+	[
+		3,
+		6,
+		12,
+		24,
+		48,
+		96,
+		192,
+		129
+	],
+	[
+		146,
+		73,
+		36,
+		146,
+		73,
+		36,
+		146,
+		73
+	],
+	[
+		73,
+		146,
+		36,
+		73,
+		146,
+		36,
+		73,
+		146
+	],
+	[
+		255,
+		128,
+		128,
+		128,
+		255,
+		128,
+		128,
+		128
+	],
+	[
+		255,
+		129,
+		129,
+		129,
+		129,
+		129,
+		129,
+		255
+	],
+	[
+		255,
+		128,
+		128,
+		128,
+		255,
+		8,
+		8,
+		8
+	],
+	[
+		127,
+		127,
+		127,
+		0,
+		247,
+		247,
+		247,
+		0
+	],
+	[
+		204,
+		204,
+		0,
+		0,
+		51,
+		51,
+		0,
+		0
+	],
+	[
+		204,
+		204,
+		51,
+		51,
+		204,
+		204,
+		51,
+		51
+	],
+	[
+		240,
+		240,
+		240,
+		240,
+		15,
+		15,
+		15,
+		15
+	],
+	[
+		248,
+		116,
+		34,
+		71,
+		143,
+		23,
+		34,
+		113
+	],
+	[
+		16,
+		16,
+		16,
+		255,
+		16,
+		16,
+		16,
+		16
+	],
+	[
+		16,
+		40,
+		68,
+		130,
+		68,
+		40,
+		16,
+		0
+	],
+	[
+		60,
+		66,
+		129,
+		129,
+		129,
+		129,
+		66,
+		60
+	],
+	[
+		129,
+		66,
+		36,
+		24,
+		24,
+		36,
+		66,
+		129
+	],
+	[
+		56,
+		68,
+		130,
+		0,
+		56,
+		68,
+		130,
+		0
+	],
+	[
+		238,
+		255,
+		187,
+		255,
+		238,
+		255,
+		187,
+		255
+	],
+	[
+		177,
+		62,
+		212,
+		105,
+		139,
+		226,
+		77,
+		151
+	],
+	[
+		240,
+		240,
+		240,
+		240,
+		0,
+		0,
+		0,
+		0
+	],
+	[
+		224,
+		224,
+		224,
+		0,
+		14,
+		14,
+		14,
+		0
+	]
+].map((rows) => Uint8Array.from(rows));
+PATTERNS[1];
+/** Bresenham line from (x0, y0) to (x1, y1), both ends included, calling `plot` for every pixel. */
+function bresenhamLine(x0, y0, x1, y1, plot) {
+	const dx = Math.abs(x1 - x0);
+	const dy = -Math.abs(y1 - y0);
+	const sx = x0 < x1 ? 1 : -1;
+	const sy = y0 < y1 ? 1 : -1;
+	let err = dx + dy;
+	let x = x0;
+	let y = y0;
+	for (;;) {
+		plot(x, y);
+		if (x === x1 && y === y1) return;
+		const e2 = 2 * err;
+		if (e2 >= dy) {
+			err += dy;
+			x += sx;
+		}
+		if (e2 <= dx) {
+			err += dx;
+			y += sy;
+		}
+	}
+}
+/**
+* Spec 07 Requirement 11.6: the pixels the Rect tool sets for a drag from (x0, y0) to (x1, y1), clipped
+* to the canvas: the 1-pixel frame of the box, or the whole box when `filled`. `plot` applies the pattern.
+* Pixels are visited row by row, top to bottom, each row left to right.
+*/
+function plotRectShape(x0, y0, x1, y1, filled, plot) {
+	const left = Math.min(x0, x1);
+	const right = Math.max(x0, x1);
+	const top = Math.min(y0, y1);
+	const bottom = Math.max(y0, y1);
+	for (let y = Math.max(0, top); y <= Math.min(341, bottom); y++) for (let x = Math.max(0, left); x <= Math.min(511, right); x++) if (filled || x === left || x === right || y === top || y === bottom) plot(x, y);
+}
+// src/power/tools/drawLayer.ts
+/** Requirement 5.3: the most characters of sprite rows and texts in one call. */
+var MAX_DRAW_TEXT_CHARACTERS = 65536;
+var LAYER_SIZE = `512 x 342`;
+/**
+* The rules of Requirement 11.10 that the inputSchema cannot express, for commands that passed it:
+* a shape, sprite or text box that does not lie wholly inside the layer, and sprite rows of
+* different lengths. Every entry is `commands[i]...: <rule>`, in command order.
+*/
+function checkDrawCommands(commands) {
+	const errors = [];
+	commands.forEach((command, i) => {
+		const path = `commands[${i}]`;
+		switch (command.op) {
+			case "rect":
+				if (command.x + command.width > 512 || command.y + command.height > 342) errors.push(`${path}: the rectangle must lie inside the ${LAYER_SIZE} layer`);
+				break;
+			case "line": break;
+			case "sprite": {
+				const length = command.rows[0].length;
+				command.rows.forEach((row, j) => {
+					if (row.length !== length) errors.push(`${path}.rows[${j}]: must have the same length as rows[0] (${length} characters)`);
+				});
+				if (command.x + length > 512 || command.y + command.rows.length > 342) errors.push(`${path}: the sprite must lie inside the ${LAYER_SIZE} layer`);
+				break;
+			}
+			case "text": {
+				const width = command.width ?? 512 - command.x;
+				const height = command.height ?? 342 - command.y;
+				if (command.x + width > 512 || command.y + height > 342) errors.push(`${path}: the text box must lie inside the ${LAYER_SIZE} layer`);
+				break;
+			}
+		}
+	});
+	return errors;
+}
+/** A command that passes the inputSchema; it stands in for every item while the call's own fields are checked. */
+var PLACEHOLDER_COMMAND = {
+	op: "rect",
+	x: 0,
+	y: 0,
+	width: 1,
+	height: 1
+};
+/** Moves an entry about the only command of a one-command check to the command's real position. */
+var atPosition = (entry, index) => entry.replace(/^commands\[0\]/, `commands[${index}]`);
+function messageOf$1(error) {
+	return error instanceof Error ? error.message : String(error);
+}
+/** The characters of every `rows` entry and `text` value of the call, wherever they are valid or not. */
+function drawnCharacters(commands) {
+	let total = 0;
+	for (const command of commands) {
+		if (typeof command !== "object" || command === null) continue;
+		const { op, rows, text } = command;
+		if (op === "sprite" && Array.isArray(rows)) {
+			for (const row of rows) if (typeof row === "string") total += row.length;
+		} else if (op === "text" && typeof text === "string") total += text.length;
+	}
+	return total;
+}
+/**
+* The tool's checkArguments (Requirements 4.5, 11.10; design §tools/drawLayer.ts), in this order:
+* the call's own fields (unknown arguments, `layer`, the length of `commands`); then each command in
+* order, with its schema branch and, when that passed, `steps.checkDrawCommands` for that command;
+* last the call's total of sprite-row and text characters.
+*/
+function checkDrawLayerArguments(schema, args, steps) {
+	const commands = args.commands;
+	const list = Array.isArray(commands) ? commands : void 0;
+	const own = { ...args };
+	if (Object.prototype.hasOwnProperty.call(args, "commands")) own.commands = list === void 0 ? commands : list.map(() => PLACEHOLDER_COMMAND);
+	const errors = checkArguments(schema, own);
+	if (list === void 0) return errors;
+	try {
+		list.forEach((command, i) => {
+			const broken = checkArguments(schema, {
+				layer: "card",
+				commands: [command]
+			}).map((entry) => atPosition(entry, i));
+			errors.push(...broken);
+			if (broken.length === 0) errors.push(...steps.checkDrawCommands([command]).map((entry) => atPosition(entry, i)));
+		});
+	} catch (error) {
+		return [shortenMessage(`commands: The drawing commands could not be checked: ${messageOf$1(error)}`)];
+	}
+	const total = drawnCharacters(list);
+	if (total > 65536) errors.push(`commands: the sprite rows and texts have ${total} characters in all, more than ${MAX_DRAW_TEXT_CHARACTERS}`);
+	return errors;
+}
+/** Draws on the base of `layer` in list order (Requirement 11.1). Pure; text goes through the Node text backend. */
+function drawCommands(layer, commands, faces) {
+	const pixels = new Uint8Array(TOTAL_PIXELS).fill(layer === "card" ? 0 : 1);
+	const notes = [];
+	const uncovered = [];
+	const backend = createNodeTextBackend(faces);
+	const set = (x, y, state) => {
+		if (x >= 0 && y >= 0 && x < 512 && y < 342) pixels[y * 512 + x] = state;
+	};
+	commands.forEach((command, i) => {
+		const path = `commands[${i}]`;
+		switch (command.op) {
+			case "rect": {
+				const pattern = PATTERNS[command.pattern ?? 1];
+				const plot = (x, y) => set(x, y, patternState(pattern, x, y));
+				plotRectShape(command.x, command.y, command.x + command.width - 1, command.y + command.height - 1, command.filled ?? false, plot);
+				break;
+			}
+			case "line": {
+				const pattern = PATTERNS[command.pattern ?? 1];
+				bresenhamLine(command.x1, command.y1, command.x2, command.y2, (x, y) => set(x, y, patternState(pattern, x, y)));
+				break;
+			}
+			case "sprite":
+				command.rows.forEach((row, dy) => {
+					for (let dx = 0; dx < row.length; dx++) set(command.x + dx, command.y + dy, row[dx] === "#" ? 2 : 1);
+				});
+				break;
+			case "text": {
+				const font = command.font ?? "Sans";
+				const size = command.size ?? 12;
+				const style = command.style ?? [];
+				const width = command.width ?? 512 - command.x;
+				const height = command.height ?? 342 - command.y;
+				const result = renderCrisp1BitText(command.text, font, size, style, {
+					x: command.x,
+					y: command.y,
+					width,
+					height
+				}, command.align ?? "left", command.wrap ?? true, backend);
+				const ink = command.ink === "light" ? 1 : 2;
+				for (let dy = 0; dy < height; dy++) for (let dx = 0; dx < width; dx++) if (result.mask[dy * width + dx] === 2) set(command.x + dx, command.y + dy, ink);
+				const misfits = result.lineBoxes.filter((box) => box.width >= 1 && (box.width > width || box.y - command.y + box.height > height)).length;
+				if (misfits > 0) {
+					const lines = misfits === 1 ? "1 line of the text does not fit" : `${misfits} lines of the text do not fit`;
+					notes.push(`${path}: ${lines} in its box; make the box larger, the text shorter or the size smaller`);
+				}
+				for (const character of uncoveredCharacters(faces, command.text, cssFontString(font, size, style.includes("bold")))) uncovered.push({
+					path,
+					character
+				});
+				break;
+			}
+		}
+	});
+	return {
+		pixels,
+		notes,
+		uncovered
+	};
+}
+/** Requirements 11.7 and 11.8. The arguments passed checkDrawLayerArguments. */
+async function runDrawLayer(args, faces) {
+	const layer = args.layer;
+	const { pixels, notes, uncovered } = drawCommands(layer, args.commands, faces);
+	const base = layer === "card" ? 0 : 1;
+	let lightPixels = 0;
+	let darkPixels = 0;
+	let changed = false;
+	for (const state of pixels) {
+		if (state === 1) lightPixels++;
+		else if (state === 2) darkPixels++;
+		if (state !== base) changed = true;
+	}
+	return toolResult({
+		ok: true,
+		layer,
+		rleData: changed ? encodeBitmapRLE(pixels) : "",
+		lightPixels,
+		darkPixels,
+		...cappedList("notes", notes),
+		...cappedList("uncoveredCharacters", uncovered)
 	});
 }
 // src/power/png.ts
@@ -15152,11 +15754,219 @@ var RENDER_CARD_SCHEMA = {
 	required: ["stack"],
 	additionalProperties: false
 };
+/** An integer property of a drawing command, with its limit (and default) in the description. */
+function integerField(minimum, maximum, description, defaultValue) {
+	return defaultValue === void 0 ? {
+		type: "integer",
+		minimum,
+		maximum,
+		description
+	} : {
+		type: "integer",
+		minimum,
+		maximum,
+		default: defaultValue,
+		description
+	};
+}
+var X_FIELD = (what) => integerField(0, 511, `${what}, an integer from 0 to 511.`);
+var Y_FIELD = (what) => integerField(0, 341, `${what}, an integer from 0 to 341.`);
+var PATTERN_FIELD = integerField(0, 37, "Optional, default 1 (solid dark). The pattern index, an integer from 0 to 37: 0 is solid light, 1 is solid dark, the others are the 38 classic 8x8 patterns of the paint tools.", 1);
+var OP = (name) => ({
+	type: "string",
+	const: name,
+	description: `Must be ${name}.`
+});
+var RECT_COMMAND = {
+	type: "object",
+	description: "A rectangle: the frame of the box, or the whole box when filled is true, with x + width at most 512 and y + height at most 342. Pixels take the state of the pattern at their own layer coordinates.",
+	properties: {
+		op: OP("rect"),
+		x: X_FIELD("Left column"),
+		y: Y_FIELD("Top row"),
+		width: integerField(1, 512, "Width in pixels, an integer from 1 to 512; x + width is at most 512."),
+		height: integerField(1, 342, "Height in pixels, an integer from 1 to 342; y + height is at most 342."),
+		pattern: PATTERN_FIELD,
+		filled: {
+			type: "boolean",
+			default: false,
+			description: "Optional, default false. True draws every pixel of the box, false only its 1-pixel frame."
+		}
+	},
+	required: [
+		"op",
+		"x",
+		"y",
+		"width",
+		"height"
+	],
+	additionalProperties: false
+};
+var LINE_COMMAND = {
+	type: "object",
+	description: "A line from (x1, y1) to (x2, y2), both ends included, drawn like the Line tool. The order of the two points matters: swapping them can set different pixels.",
+	properties: {
+		op: OP("line"),
+		x1: X_FIELD("Column of the first point"),
+		y1: Y_FIELD("Row of the first point"),
+		x2: X_FIELD("Column of the second point"),
+		y2: Y_FIELD("Row of the second point"),
+		pattern: PATTERN_FIELD
+	},
+	required: [
+		"op",
+		"x1",
+		"y1",
+		"x2",
+		"y2"
+	],
+	additionalProperties: false
+};
+var SPRITE_COMMAND = {
+	type: "object",
+	description: "A sprite: rows of # (dark pixel) and . (light pixel) with its top-left corner at (x, y). Every row has the same length, and the sprite lies wholly inside the layer.",
+	properties: {
+		op: OP("sprite"),
+		x: X_FIELD("Left column of the sprite"),
+		y: Y_FIELD("Top row of the sprite"),
+		rows: {
+			type: "array",
+			minItems: 1,
+			maxItems: 64,
+			description: "1 to 64 rows of the same length. Each row is 1 to 64 characters (UTF-16 code units), every one # (dark) or . (light). The rows of all sprites and the texts of all text commands in one call add up to at most 65536 characters.",
+			items: {
+				type: "string",
+				minLength: 1,
+				maxLength: 64,
+				pattern: "^[#.]+$",
+				description: "One row: 1 to 64 characters, each # or ."
+			}
+		}
+	},
+	required: [
+		"op",
+		"x",
+		"y",
+		"rows"
+	],
+	additionalProperties: false
+};
+var TEXT_COMMAND = {
+	type: "object",
+	description: "Text laid out and drawn in a box with the studio's text rasterizer and the bundled pixel fonts, like the text of a field with no inset. Lines that do not fit the box are cut off and reported in notes; characters the fonts do not cover are listed in uncoveredCharacters.",
+	properties: {
+		op: OP("text"),
+		x: X_FIELD("Left column of the box"),
+		y: Y_FIELD("Top row of the box"),
+		text: {
+			type: "string",
+			minLength: 1,
+			maxLength: 256,
+			description: "The text, 1 to 256 characters (UTF-16 code units). The texts and sprite rows of all commands in one call add up to at most 65536 characters."
+		},
+		width: integerField(1, 512, "Optional, default 512 - x. Box width in pixels, an integer from 1 to 512; x + width is at most 512."),
+		height: integerField(1, 342, "Optional, default 342 - y. Box height in pixels, an integer from 1 to 342; y + height is at most 342."),
+		font: {
+			type: "string",
+			enum: [
+				"System",
+				"Sans",
+				"Mono",
+				"Serif"
+			],
+			default: "Sans",
+			description: "Optional, default Sans. The logical font: System, Sans, Mono or Serif."
+		},
+		size: {
+			type: "integer",
+			enum: [
+				9,
+				10,
+				12,
+				14,
+				18,
+				24
+			],
+			default: 12,
+			description: "Optional, default 12. The text size: 9, 10, 12, 14, 18 or 24."
+		},
+		style: {
+			type: "array",
+			uniqueItems: true,
+			description: "Optional, default an empty list. Text styles, each at most once: bold, italic, underline, outline, shadow, condense.",
+			items: {
+				type: "string",
+				enum: [
+					"bold",
+					"italic",
+					"underline",
+					"outline",
+					"shadow",
+					"condense"
+				],
+				description: "One text style."
+			}
+		},
+		align: {
+			type: "string",
+			enum: [
+				"left",
+				"center",
+				"right"
+			],
+			default: "left",
+			description: "Optional, default left. Alignment in the box: left, center or right."
+		},
+		wrap: {
+			type: "boolean",
+			default: true,
+			description: "Optional, default true. True wraps lines at spaces to the box width; false breaks lines only at line breaks."
+		},
+		ink: {
+			type: "string",
+			enum: ["dark", "light"],
+			default: "dark",
+			description: "Optional, default dark. The state the ink pixels are set to: dark or light."
+		}
+	},
+	required: [
+		"op",
+		"x",
+		"y",
+		"text"
+	],
+	additionalProperties: false
+};
+var DRAW_LAYER_SCHEMA = {
+	type: "object",
+	properties: {
+		layer: {
+			type: "string",
+			enum: ["card", "background"],
+			description: "Which kind of layer to draw: card (starts all transparent) or background (starts all light). The result's rleData belongs in that kind of bitmap."
+		},
+		commands: {
+			type: "array",
+			minItems: 1,
+			maxItems: 256,
+			description: `1 to 256 drawing commands, drawn in list order on the 512 x 342 layer; a later command overwrites the pixels of an earlier one. Each is an object whose op is rect, line, sprite or text. The sprite rows and texts of the whole call add up to at most ${MAX_DRAW_TEXT_CHARACTERS} characters (UTF-16 code units).`,
+			items: { oneOf: [
+				RECT_COMMAND,
+				LINE_COMMAND,
+				SPRITE_COMMAND,
+				TEXT_COMMAND
+			] }
+		}
+	},
+	required: ["layer", "commands"],
+	additionalProperties: false
+};
 /** Steps with the studio's functions as defaults. */
 function resolveSteps(deps) {
 	return {
 		listStackErrors,
 		parseHexTalk,
+		checkDrawCommands,
 		...deps.steps
 	};
 }
@@ -15192,6 +16002,14 @@ function createPowerTools(deps) {
 			inputSchema: RENDER_CARD_SCHEMA,
 			checkArguments: (args) => checkArguments(RENDER_CARD_SCHEMA, args, { readLimited: ["stack"] }),
 			run: (args) => runRenderCard(args, steps, deps.fonts)
+		},
+		{
+			name: "draw_layer",
+			title: "Draw HexCard layer",
+			description: `Draws simple 1-bit art on a blank card or background layer from a list of drawing commands and returns the layer's canonical rleData, ready to put in a stack's bitmap. Commands: rect (frame or filled box), line, sprite (rows of # and .) and text (laid out and drawn with the studio's text rasterizer and the bundled pixel fonts). Rectangles and lines are drawn with the paint tools' own code and the 38 classic patterns. A card layer starts transparent and a background layer starts light; later commands overwrite earlier ones. Returns ok, the layer, the rleData (an empty string when the drawing equals the blank layer), the number of light and dark pixels, notes for text that does not fit its box, and the characters the fonts do not cover. Limits: 1 to 256 commands, every point and shape inside the 512 x 342 layer, sprites of at most 64 x 64 pixels, texts of at most 256 characters, and at most ${MAX_DRAW_TEXT_CHARACTERS} characters of sprite rows and texts in one call. It cannot draw over existing rleData. It reads no file and no URL, opens no network connection and runs no script.`,
+			inputSchema: DRAW_LAYER_SCHEMA,
+			checkArguments: (args) => checkDrawLayerArguments(DRAW_LAYER_SCHEMA, args, steps),
+			run: (args) => runDrawLayer(args, deps.fonts)
 		}
 	];
 }
