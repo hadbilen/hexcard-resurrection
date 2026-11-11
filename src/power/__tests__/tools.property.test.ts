@@ -7,10 +7,15 @@ import { astArb } from "../../core/__tests__/hexAstArbitraries.ts";
 import { validateStack as validateStackOracle } from "../../core/__tests__/stackValidatorOracle.ts";
 import { createBlankStack } from "../../core/authoringCommands.ts";
 import { BLANK_ICON, encodeIcon, ICON_PIXELS } from "../../core/icons.ts";
+import { createHistory } from "../../core/history.ts";
 import { printHexTalk } from "../../core/parser.ts";
 import { THEME_PALETTES, type ThemePaletteName } from "../../core/schema.ts";
 import { validateStack } from "../../core/stackValidator.ts";
-import { encodeBitmapRLE, TOTAL_PIXELS } from "../../engine/graphics/rleCodec.ts";
+import { createHexStore, type CompiledScript, type HexLayer } from "../../core/store.ts";
+import { rectLoopOracle } from "../../engine/graphics/__tests__/rectLoopOracle.ts";
+import { bresenhamLine, createPaintController } from "../../engine/graphics/paintTools.ts";
+import { PATTERNS, patternState } from "../../engine/graphics/patterns.ts";
+import { BITMAP_HEIGHT, BITMAP_WIDTH, decodeBitmapRLE, encodeBitmapRLE, TOTAL_PIXELS } from "../../engine/graphics/rleCodec.ts";
 import { encodeStackFile } from "../../storage/stackFile.ts";
 import { checkStack } from "../../storage/stackLoader.ts";
 import { checkStack as checkStackOracle } from "../../storage/__tests__/checkStackOracle.ts";
@@ -433,6 +438,57 @@ async function callRenderCard(args: Record<string, unknown>): Promise<{ isError:
   return { isError: result.isError, content: result.content as Array<Record<string, any>> };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Property 4: draw_layer rectangles and lines equal the paint tools
+// ---------------------------------------------------------------------------------------------
+
+/** One drag of the Rect or Line tool, with the setting that the matching draw_layer command carries. */
+interface Drag {
+  tool: "rect" | "line";
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  /** undefined: the command leaves `pattern` out, the tools' default is solid dark (index 1). */
+  pattern: number | undefined;
+  /** undefined: the command leaves `filled` out (false). Only used by the Rect tool. */
+  filled: boolean | undefined;
+}
+
+const layerKindArb = fc.constantFrom<HexLayer>("card", "background");
+const pointArb = fc.record({ x: fc.integer({ min: 0, max: BITMAP_WIDTH - 1 }), y: fc.integer({ min: 0, max: BITMAP_HEIGHT - 1 }) });
+const dragArb: fc.Arbitrary<Drag> = fc.record({
+  tool: fc.constantFrom("rect" as const, "line" as const),
+  from: pointArb,
+  to: pointArb,
+  pattern: fc.option(fc.integer({ min: 0, max: PATTERNS.length - 1 }), { nil: undefined }),
+  filled: fc.option(fc.boolean(), { nil: undefined }),
+});
+const dragsArb = fc.array(dragArb, { minLength: 1, maxLength: 20 });
+
+/**
+ * The draw_layer command for a drag. A rectangle command names its top-left corner and size, so the
+ * drag's two corners are put in order here; the Rect tool is symmetric in its corners, the Line
+ * tool is not (Requirement 11.3), so a line keeps its two points in drag order.
+ */
+function commandOfDrag(drag: Drag): Record<string, unknown> {
+  const extra = drag.pattern === undefined ? {} : { pattern: drag.pattern };
+  if (drag.tool === "line") {
+    return { op: "line", x1: drag.from.x, y1: drag.from.y, x2: drag.to.x, y2: drag.to.y, ...extra };
+  }
+  const x = Math.min(drag.from.x, drag.to.x);
+  const y = Math.min(drag.from.y, drag.to.y);
+  return {
+    op: "rect",
+    x,
+    y,
+    width: Math.abs(drag.from.x - drag.to.x) + 1,
+    height: Math.abs(drag.from.y - drag.to.y) + 1,
+    ...extra,
+    ...(drag.filled === undefined ? {} : { filled: drag.filled }),
+  };
+}
+
+const noScripts = (): CompiledScript => ({ ast: { handlers: {} }, errors: [] });
+
 describe("tools property tests", () => {
   // Feature: 07-kiro-power, Property 1: validate_stack agrees with the gate, in both text forms
   // Validates: Requirements 6.3, 6.4, 6.7, 14.2
@@ -551,6 +607,70 @@ describe("tools property tests", () => {
     );
   }, 300_000);
 
-  // Properties 4 to 6 are added here by tasks 5.2, 5.3 and 5.4, each as its own `it` with
+  // Feature: 07-kiro-power, Property 4: draw_layer rectangles and lines equal the paint tools
+  // Validates: Requirements 11.1, 11.2, 11.3, 11.6, 14.2
+  // The paint tools run on a real store and history through createPaintController, on a blank stack
+  // (layer "" = the base of draw_layer: transparent for a card, light for a background). Each drag is
+  // `begin` at the first point and `end` at the second. After every drag the stack's layer is also
+  // compared with a layer kept by the pre-spec-07 Rect loop (rectLoopOracle) for rectangles and by
+  // bresenhamLine, the Line tool's own plotter, for lines.
+  it("Property 4: draw_layer rectangles and lines equal the paint tools", async () => {
+    const seen = { card: 0, background: 0, rects: 0, lines: 0, filled: 0, drawn: 0, blank: 0 };
+    await fc.assert(
+      fc.asyncProperty(layerKindArb, dragsArb, async (layer, drags) => {
+        const base = layer === "card" ? 0 : 1;
+        const stack = createBlankStack({ now: new Date("2026-01-01T00:00:00.000Z"), random: () => 0.5 });
+        const store = createHexStore({ stack, compile: noScripts });
+        const history = createHistory(store);
+        store.setEditLayer(layer);
+        let pattern = PATTERNS[1];
+        let rectFilled = false;
+        const paint = createPaintController({ store, history, getSettings: () => ({ pattern, rectFilled }) });
+        const layerOfStore = (): Uint8Array => {
+          const current = store.getSnapshot().stack;
+          const owner = layer === "card" ? current.cards[0] : current.backgrounds[0];
+          return decodeBitmapRLE(owner.bitmap.rleData, base);
+        };
+
+        const expected = new Uint8Array(TOTAL_PIXELS).fill(base);
+        const plotExpected = (x: number, y: number): void => {
+          if (x >= 0 && y >= 0 && x < BITMAP_WIDTH && y < BITMAP_HEIGHT) expected[y * BITMAP_WIDTH + x] = patternState(pattern, x, y);
+        };
+        for (const drag of drags) {
+          pattern = PATTERNS[drag.pattern ?? 1];
+          rectFilled = drag.filled ?? false;
+          store.setTool(drag.tool);
+          paint.begin(drag.from.x, drag.from.y);
+          paint.end(drag.to.x, drag.to.y);
+          if (drag.tool === "rect") rectLoopOracle(drag.from, drag.to, rectFilled, plotExpected);
+          else bresenhamLine(drag.from.x, drag.from.y, drag.to.x, drag.to.y, plotExpected);
+          // The controller's pixels for this drag are the oracle's (Requirements 11.6, 14.2).
+          expect(Buffer.from(layerOfStore()).equals(Buffer.from(expected))).toBe(true);
+          if (drag.tool === "rect") {
+            seen.rects++;
+            if (rectFilled) seen.filled++;
+          } else {
+            seen.lines++;
+          }
+        }
+        seen[layer]++;
+
+        const drawn = await callTool("draw_layer", { layer, commands: drags.map(commandOfDrag) });
+        expect(drawn.isError).toBe(false);
+        expect(drawn.json.ok).toBe(true);
+        expect(drawn.json.layer).toBe(layer);
+        const fromTool = decodeBitmapRLE(drawn.json.rleData, base);
+        // A deep comparison of 175,104 states, reported as one boolean so a failure stays readable.
+        expect(Buffer.from(fromTool).equals(Buffer.from(layerOfStore()))).toBe(true);
+        if (drawn.json.rleData === "") seen.blank++;
+        else seen.drawn++;
+      }),
+      { numRuns: NUM_RUNS },
+    );
+    // The generators must reach every branch, or the property would pass without testing it.
+    for (const [name, count] of Object.entries(seen)) if (name !== "blank") expect(count, name).toBeGreaterThan(0);
+  }, 600_000);
+
+  // Properties 5 and 6 are added here by tasks 5.3 and 5.4, each as its own `it` with
   // its own `// Feature: 07-kiro-power, Property <n>: <title>` comment and its own generators.
 });

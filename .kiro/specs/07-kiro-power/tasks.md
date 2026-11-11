@@ -127,7 +127,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npm run build:power`, `npx tsc -b`, `npx vitest --run`
     - _Requirements: 3.7, 4.3, 5.3, 5.4, 5.7, 10.5, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9, 11.10, 11.11, 14.1, 17.1, 17.3_
 
-  - [ ] 5.2 Write the property test for Property 4
+  - [x] 5.2 Write the property test for Property 4
     - **Property 4: draw_layer rectangles and lines equal the paint tools**
     - **Validates: Requirements 11.1, 11.2, 11.3, 11.6, 14.2**
     - `src/power/__tests__/tools.property.test.ts`, at least 100 runs, with the comment `// Feature: 07-kiro-power, Property 4: draw_layer rectangles and lines equal the paint tools`; a real store, history and `createPaintController` for the same drags, and the Rect-loop oracle of task 2
