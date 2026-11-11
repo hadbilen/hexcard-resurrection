@@ -60,7 +60,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npx tsc -b`, `npx vitest --run`
     - _Requirements: 6.3, 6.4, 6.7, 14.2, 17.2_
 
-  - [ ] 3.4 Write the property test for Property 2
+  - [x] 3.4 Write the property test for Property 2
     - **Property 2: compile_hextalk round trip**
     - **Validates: Requirements 7.3, 7.4**
     - `src/power/__tests__/tools.property.test.ts`, at least 100 runs, with the comment `// Feature: 07-kiro-power, Property 2: compile_hextalk round trip`, using the AST generators of `src/core/__tests__/hexAstArbitraries.ts` (task 2)

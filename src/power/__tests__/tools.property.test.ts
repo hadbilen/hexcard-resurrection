@@ -1,10 +1,12 @@
 // Spec 07 property tests (design §Correctness Properties, §Testing Strategy; Requirement 17.2).
-// One section per property, each with its own generators; later tasks add Properties 2 to 6 below
+// One section per property, each with its own generators; later tasks add Properties 3 to 6 below
 // the marker at the end of the file. Each property is one fast-check test run at least 100 times.
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import { astArb } from "../../core/__tests__/hexAstArbitraries.ts";
 import { validateStack as validateStackOracle } from "../../core/__tests__/stackValidatorOracle.ts";
 import { BLANK_ICON, encodeIcon, ICON_PIXELS } from "../../core/icons.ts";
+import { printHexTalk } from "../../core/parser.ts";
 import { validateStack } from "../../core/stackValidator.ts";
 import { encodeBitmapRLE, TOTAL_PIXELS } from "../../engine/graphics/rleCodec.ts";
 import { encodeStackFile } from "../../storage/stackFile.ts";
@@ -433,6 +435,35 @@ describe("tools property tests", () => {
     expect(seen.firstEntryNotCompared).toBeGreaterThan(0);
   }, 120_000);
 
-  // Properties 2 to 6 are added here by tasks 3.4, 4.3, 5.2, 5.3 and 5.4, each as its own `it` with
+  // Feature: 07-kiro-power, Property 2: compile_hextalk round trip
+  // Validates: Requirements 7.3, 7.4
+  // The generators are the parser round-trip property's own (src/core/__tests__/hexAstArbitraries.ts,
+  // design decision D17), so compile_hextalk is tested on exactly the ASTs that property covers.
+  it("Property 2: compile_hextalk round trip", async () => {
+    await fc.assert(
+      fc.asyncProperty(astArb, async (ast) => {
+        const printed = printHexTalk(ast);
+        // The handler names of A in order: astArb inserts handlers in generation order, under keys
+        // that start with a letter, so the key order is that order.
+        const handlers = Object.values(ast.handlers).map((handler) => handler.eventName);
+
+        const first = await callTool("compile_hextalk", { source: printed });
+        expect(first.isError).toBe(false);
+        expect(first.json.ok).toBe(true);
+        expect(first.json.canonical).toBe(printed);
+        expect(first.json.handlers).toEqual(handlers);
+
+        // Compiling the canonical form again gives the same canonical form and handler names.
+        const second = await callTool("compile_hextalk", { source: first.json.canonical });
+        expect(second.isError).toBe(false);
+        expect(second.json.ok).toBe(true);
+        expect(second.json.canonical).toBe(first.json.canonical);
+        expect(second.json.handlers).toEqual(first.json.handlers);
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  }, 120_000);
+
+  // Properties 3 to 6 are added here by tasks 4.3, 5.2, 5.3 and 5.4, each as its own `it` with
   // its own `// Feature: 07-kiro-power, Property <n>: <title>` comment and its own generators.
 });
