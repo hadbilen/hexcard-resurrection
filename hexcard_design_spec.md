@@ -769,7 +769,8 @@ The Kiroween 2026 rules require the `/.kiro` directory at the repository root (i
 │   ├── 03-1bit-canvas-dither/      # rleCodec, compositor + part renderer, text raster, dither, patterns, transitions, paint tools
 │   ├── 04-ui-audio-showcase/       # System 7 shell, inspector, synth, Spellcaster, storage/export, player build, presets
 │   ├── 05-authoring-loop/          # authoringCommands.ts, menuCommands.ts: menus, shortcuts, new/delete cards, backgrounds, parts
-│   └── 06-hypercard-classics/       # find.ts, messageBox.ts, recentCards.ts, icons.ts, fatBits.ts, imageImport.ts: Message Box, Find, Recent, Import Image, FatBits, icons
+│   ├── 06-hypercard-classics/       # find.ts, messageBox.ts, recentCards.ts, icons.ts, fatBits.ts, imageImport.ts: Message Box, Find, Recent, Import Image, FatBits, icons
+│   └── 07-kiro-power/              # powers/hexcard/: Kiro power (MCP server, skills) with validate_stack, compile_hextalk, conjure_script, render_card, draw_layer; server sources in src/power/
 └── hooks/                          # Kiro IDE 1.0 hook format: {"version":"v1","hooks":[...]}
     ├── validate-ast-safety.json    # PostFileSave on src/core, src/ai, src/storage
     └── enforce-1bit-ui.json        # PostFileSave on src/ui, src/engine/graphics, CSS
@@ -787,5 +788,6 @@ The canonical directory tree lives in `.kiro/steering/structure.md` (it is loade
 1. `hauntedMansion.ts` — **"The Haunted Stack of 1987"**: 1-bit horror/puzzle adventure with inventory in background fields (`sharedText: false`), LFSR dissolve transitions and harpsichord motifs.
 2. `retroSynthDeck.ts` — **"HexSynth Sequencer"**: harpsichord and 8-bit step sequencer driven by `PlaySound`.
 3. `apiWeatherOracle.ts` — **"HexOracle 1987"**: live data dashboard built on `fetch` (§4.3 policy) with offline fallback data.
+4. `powerShowcase.ts` (data in `powerShowcase.json`) — a stack built in a Kiro chat with the HexCard Kiro power (`powers/hexcard/`), its skills and its five tools.
 
 All presets are authored as HexTalk `scriptSource` and canonical `rleData`, and are validated by the same stack validator as user imports.

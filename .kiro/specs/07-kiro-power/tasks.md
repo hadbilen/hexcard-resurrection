@@ -10,7 +10,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
 
 ## Tasks
 
-- [ ] 1. Make the specification document changes
+- [x] 1. Make the specification document changes
   - `.kiro/steering/structure.md`: `07-kiro-power` in the `.kiro/specs/` comment and "next to 01-07"; the new top-level `powers/` entry; `buildPowerServer.ts` and `checkPowerChrome.ts` under `scripts/`; the `src/power/` folder with one line per file; `powerShowcase.ts` and `powerShowcase.json` under `src/presets/` and the `4 showcase stacks (..., Kiro power stack)` comment; `07` added to `stackValidator.ts`, `partRenderer.ts`, `paintTools.ts`, `stackLoader.ts` and the presets `index.ts` (design §Document changes, item 1)
   - `hexcard_design_spec.md` §8: `06-hypercard-classics/` becomes `├──`, followed by the `07-kiro-power/` entry (item 2); §9: the fourth entry after `apiWeatherOracle.ts` (item 3)
   - Spec 04 `requirements.md` Requirement 7.5: the sentence in brackets about the fourth showcase stack (item 4)
