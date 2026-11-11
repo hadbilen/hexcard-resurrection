@@ -67,7 +67,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npx tsc -b`, `npx vitest --run`
     - _Requirements: 7.3, 7.4, 14.3, 17.2_
 
-  - [ ] 3.5 Create the power package, the server entry, the build script and the committed server file
+  - [x] 3.5 Create the power package, the server entry, the build script and the committed server file
     - `powers/hexcard/plugin.json` and `powers/hexcard/mcp.json` exactly as design §plugin.json and §mcp.json
     - `src/power/zodJitless.ts` and `src/power/main.ts` (design §zodJitless.ts, §main.ts) without the font steps: until task 4.2, `main.ts` runs the start check and then serves the three tools of task 3.2; `zodJitless.ts` stays its first import, and the version comes from `plugin.json` through `?raw`
     - `scripts/buildPowerServer.ts` (design §Build script): `SERVER_FILE_ARG`, `POWER_DIR`, `SERVER_FILE_PATH`, `BUILD_POWER_COMMAND`, `buildPowerServer` and `main` with `--check`; one unminified chunk with the banner, failure on a second chunk, the repository's absolute root path or `file://`; the licence table and the rule that every bundled package has a licence entry; it writes `server/hexcard-mcp.mjs`, `LICENSE` and the three files of `licenses/` (design §Licence files)

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "hexcard": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "--permission",
+        "--allow-fs-read=${PLUGIN_ROOT}/server/hexcard-mcp.mjs",
+        "--disallow-code-generation-from-strings",
+        "${PLUGIN_ROOT}/server/hexcard-mcp.mjs"
+      ]
+    }
+  }
+}
