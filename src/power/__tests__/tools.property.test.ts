@@ -523,6 +523,130 @@ const spriteCaseArb: fc.Arbitrary<SpriteCase> = fc
     }),
   );
 
+// ---------------------------------------------------------------------------------------------
+// Property 6: draw_layer output is canonical, valid and stable
+// ---------------------------------------------------------------------------------------------
+
+type Command = Record<string, unknown>;
+
+/** Calls a tool as callTool does, but returns the JSON text of the first content unparsed. */
+async function callToolText(name: ToolName, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }> {
+  const tool = tools.find((candidate) => candidate.name === name);
+  if (tool === undefined) throw new Error(`no tool named ${name}`);
+  const problems = tool.checkArguments ? tool.checkArguments(args) : checkArguments(tool.inputSchema, args);
+  if (problems.length > 0) throw new Error(`arguments of ${name} rejected: ${problems.join("; ")}`);
+  const result = await tool.run(args);
+  const first = result.content[0];
+  if (first.type !== "text") throw new Error(`first content of ${name} is not text`);
+  return { isError: result.isError, text: first.text };
+}
+
+// Printable ASCII, U+0020 to U+007E, one code unit per character.
+const printableChar = fc.integer({ min: 0x20, max: 0x7e }).map((code) => String.fromCharCode(code));
+// Mostly short texts, some up to the limit of 256 characters (Requirement 5.3).
+const drawTextArb = fc.oneof(
+  { weight: 4, arbitrary: fc.string({ unit: printableChar, minLength: 1, maxLength: 24 }) },
+  { weight: 1, arbitrary: fc.string({ unit: printableChar, minLength: 1, maxLength: 256 }) },
+);
+const spacesArb = fc.integer({ min: 1, max: 40 }).map((count) => " ".repeat(count));
+
+const patternIndexArb = fc.integer({ min: 0, max: PATTERNS.length - 1 });
+
+// The four command kinds, each within the limits of Requirement 5.3. Optional fields are absent in
+// some commands, so the defaults of Requirements 11.2, 11.3 and 11.5 occur too.
+const rectCommandArb: fc.Arbitrary<Command> = fc
+  .tuple(fc.integer({ min: 0, max: BITMAP_WIDTH - 1 }), fc.integer({ min: 0, max: BITMAP_HEIGHT - 1 }))
+  .chain(([x, y]) =>
+    fc.record(
+      {
+        op: fc.constant("rect"),
+        x: fc.constant(x),
+        y: fc.constant(y),
+        width: fc.integer({ min: 1, max: BITMAP_WIDTH - x }),
+        height: fc.integer({ min: 1, max: BITMAP_HEIGHT - y }),
+        pattern: patternIndexArb,
+        filled: fc.boolean(),
+      },
+      { requiredKeys: ["op", "x", "y", "width", "height"] },
+    ),
+  );
+const lineCommandArb: fc.Arbitrary<Command> = fc.record(
+  {
+    op: fc.constant("line"),
+    x1: fc.integer({ min: 0, max: BITMAP_WIDTH - 1 }),
+    y1: fc.integer({ min: 0, max: BITMAP_HEIGHT - 1 }),
+    x2: fc.integer({ min: 0, max: BITMAP_WIDTH - 1 }),
+    y2: fc.integer({ min: 0, max: BITMAP_HEIGHT - 1 }),
+    pattern: patternIndexArb,
+  },
+  { requiredKeys: ["op", "x1", "y1", "x2", "y2"] },
+);
+/** A sprite of `width` x `height` cells; `cell` is the character set a cell is drawn from. */
+const spriteCommandOf = (cell: fc.Arbitrary<string>): fc.Arbitrary<Command> =>
+  fc.tuple(fc.integer({ min: 1, max: 64 }), fc.integer({ min: 1, max: 64 })).chain(([width, height]) =>
+    fc.record({
+      op: fc.constant("sprite"),
+      x: fc.integer({ min: 0, max: BITMAP_WIDTH - width }),
+      y: fc.integer({ min: 0, max: BITMAP_HEIGHT - height }),
+      rows: fc.array(fc.string({ unit: cell, minLength: width, maxLength: width }), { minLength: height, maxLength: height }),
+    }),
+  );
+const spriteCommandArb = spriteCommandOf(fc.constantFrom("#", "."));
+/** A text command whose text is `text`; the box is the default (to the layer's edges) or a smaller one. */
+const textCommandOf = (text: fc.Arbitrary<string>, ink: fc.Arbitrary<"dark" | "light">): fc.Arbitrary<Command> =>
+  fc
+    .tuple(fc.integer({ min: 0, max: BITMAP_WIDTH - 1 }), fc.integer({ min: 0, max: BITMAP_HEIGHT - 1 }))
+    .chain(([x, y]) =>
+      fc.record(
+        {
+          op: fc.constant("text"),
+          x: fc.constant(x),
+          y: fc.constant(y),
+          text,
+          // Half of the boxes are small, so that lines that do not fit (a note) occur.
+          width: fc.oneof(fc.integer({ min: 1, max: BITMAP_WIDTH - x }), fc.integer({ min: 1, max: Math.min(60, BITMAP_WIDTH - x) })),
+          height: fc.oneof(fc.integer({ min: 1, max: BITMAP_HEIGHT - y }), fc.integer({ min: 1, max: Math.min(40, BITMAP_HEIGHT - y) })),
+          font: fc.constantFrom("System", "Sans", "Mono", "Serif"),
+          size: fc.constantFrom(9, 10, 12, 14, 18, 24),
+          style: fc.subarray(["bold", "italic", "underline", "outline", "shadow", "condense"]),
+          align: fc.constantFrom("left", "center", "right"),
+          wrap: fc.boolean(),
+          ink,
+        },
+        { requiredKeys: ["op", "x", "y", "text"] },
+      ),
+    );
+const textCommandArb = textCommandOf(drawTextArb, fc.constantFrom("dark", "light"));
+
+const anyCommandArb: fc.Arbitrary<Command> = fc.oneof(rectCommandArb, lineCommandArb, spriteCommandArb, textCommandArb);
+
+interface StableCase {
+  layer: HexLayer;
+  commands: Command[];
+}
+
+// Lists of 1 to 12 commands of any kind (the sprites and texts of 12 commands add up to far fewer
+// than 65,536 characters). One list in five is "inert": every command leaves the layer equal to its
+// base, so the `""` result of Requirement 11.8 occurs for both layer kinds. A background is light, so
+// its inert commands draw only light: pattern 0, `.` cells, light ink. A card is transparent, so its
+// inert commands are texts of spaces, which have no ink.
+const lightOnlyBackgroundCommandArb: fc.Arbitrary<Command> = fc.oneof(
+  rectCommandArb.map((command) => ({ ...command, pattern: 0 })),
+  lineCommandArb.map((command) => ({ ...command, pattern: 0 })),
+  spriteCommandOf(fc.constant(".")),
+  textCommandOf(drawTextArb, fc.constant("light")),
+);
+const stableCaseArb: fc.Arbitrary<StableCase> = fc.oneof(
+  { weight: 4, arbitrary: fc.record({ layer: layerKindArb, commands: fc.array(anyCommandArb, { minLength: 1, maxLength: 12 }) }) },
+  {
+    weight: 1,
+    arbitrary: fc.oneof(
+      fc.record({ layer: fc.constant<HexLayer>("background"), commands: fc.array(lightOnlyBackgroundCommandArb, { minLength: 1, maxLength: 12 }) }),
+      fc.record({ layer: fc.constant<HexLayer>("card"), commands: fc.array(textCommandOf(spacesArb, fc.constantFrom("dark", "light")), { minLength: 1, maxLength: 12 }) }),
+    ),
+  },
+);
+
 describe("tools property tests", () => {
   // Feature: 07-kiro-power, Property 1: validate_stack agrees with the gate, in both text forms
   // Validates: Requirements 6.3, 6.4, 6.7, 14.2
@@ -740,6 +864,60 @@ describe("tools property tests", () => {
     for (const [name, count] of Object.entries(seen)) if (name !== "singleCell") expect(count, name).toBeGreaterThan(0);
   }, 300_000);
 
-  // Property 6 is added here by task 5.4, as its own `it` with its own
-  // `// Feature: 07-kiro-power, Property 6: <title>` comment and its own generators.
+  // Feature: 07-kiro-power, Property 6: draw_layer output is canonical, valid and stable
+  // Validates: Requirements 11.7, 11.8, 11.11
+  // The oracles use only the codec and the studio's gate: the pixel counts are taken from the layer
+  // decoded from the returned rleData (base 0 for a card, 1 for a background, which only matters for
+  // ""), and the minimal stack is the blank stack with that rleData in the card or background layer.
+  it("Property 6: draw_layer output is canonical, valid and stable", async () => {
+    const seen = { card: 0, background: 0, emptyCard: 0, emptyBackground: 0, drawn: 0, rect: 0, line: 0, sprite: 0, text: 0 };
+    await fc.assert(
+      fc.asyncProperty(stableCaseArb, async ({ layer, commands }) => {
+        const base = layer === "card" ? 0 : 1;
+        const args = { layer, commands };
+
+        const first = await callToolText("draw_layer", args);
+        expect(first.isError).toBe(false);
+        const json = JSON.parse(first.text);
+        expect(json.ok).toBe(true);
+        expect(json.layer).toBe(layer);
+
+        // Canonical (Requirements 11.7, 11.8): decoding and encoding again gives the same text.
+        const rleData: string = json.rleData;
+        expect(encodeBitmapRLE(decodeBitmapRLE(rleData))).toBe(rleData);
+
+        // The counts are those of the decoded layer, base pixels included.
+        const decoded = decodeBitmapRLE(rleData, base);
+        let light = 0;
+        let dark = 0;
+        for (const state of decoded) {
+          if (state === 1) light++;
+          else if (state === 2) dark++;
+        }
+        expect(json.lightPixels).toBe(light);
+        expect(json.darkPixels).toBe(dark);
+
+        // A minimal stack that holds the rleData passes validate_stack with no note.
+        const stack = createBlankStack({ now: new Date("2026-01-01T00:00:00.000Z"), random: () => 0.5 });
+        (layer === "card" ? stack.cards[0] : stack.backgrounds[0]).bitmap.rleData = rleData;
+        const checked = await callTool("validate_stack", { stack: JSON.stringify(stack) });
+        expect(checked.isError).toBe(false);
+        expect(checked.json.ok).toBe(true);
+        expect(checked.json.notes).toEqual([]);
+
+        // Stable (Requirement 11.11): the same arguments give the same JSON text.
+        const second = await callToolText("draw_layer", args);
+        expect(second).toEqual(first);
+
+        seen[layer]++;
+        if (rleData !== "") seen.drawn++;
+        else if (layer === "card") seen.emptyCard++;
+        else seen.emptyBackground++;
+        for (const command of commands) seen[command.op as "rect" | "line" | "sprite" | "text"]++;
+      }),
+      { numRuns: NUM_RUNS },
+    );
+    // The generators must reach every branch, or the property would pass without testing it.
+    for (const [name, count] of Object.entries(seen)) expect(count, name).toBeGreaterThan(0);
+  }, 300_000);
 });

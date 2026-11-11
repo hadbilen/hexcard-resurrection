@@ -141,7 +141,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npx tsc -b`, `npx vitest --run`
     - _Requirements: 11.1, 11.4, 17.2_
 
-  - [ ] 5.4 Write the property test for Property 6
+  - [x] 5.4 Write the property test for Property 6
     - **Property 6: draw_layer output is canonical, valid and stable**
     - **Validates: Requirements 11.7, 11.8, 11.11**
     - `src/power/__tests__/tools.property.test.ts`, at least 100 runs, with the comment `// Feature: 07-kiro-power, Property 6: draw_layer output is canonical, valid and stable`; texts drawn from printable ASCII
