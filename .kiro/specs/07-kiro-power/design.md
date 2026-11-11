@@ -357,7 +357,7 @@ export function formatArgPath(path: readonly (string | number)[]): string;
 - Order: for an object, its unknown keys first (in input order, `<path>: is not an allowed argument` at the top level and `... is not an allowed field` below it), then each declared property in schema order (`is required` when missing); for an array, its length rule, then each item in order. An item of a `oneOf` is checked against the branch its `op` names (`<path>.op: must be one of rect, line, sprite, text` when none).
 - Messages: `must be a string`, `must be an integer`, `must be a boolean`, `must be an object`, `must be an array`, `must be from 0 to 511`, `must be one of card, background`, `must have at most 65536 characters`, `must have 1 to 64 characters`, `must have 1 to 256 entries`, `must contain only # and .`, `must list each style at most once`, `must be an integer from 1 to 100000 or a string of at most 256 characters`.
 - Lengths are counted in UTF-16 code units (`String.prototype.length`, the requirements' Glossary). JSON Schema's own `maxLength` counts code points, so the descriptions say "characters (UTF-16 code units)". For text outside the Basic Multilingual Plane the server is the stricter of the two.
-- Every message goes through `shortenMessage`, because an unknown key is text from the arguments.
+- An unknown key is text from the arguments, so it is shortened with `quoteText` where the error path is built; every other part of a checker message is fixed text, so the message meets Requirement 5.7 without `shortenMessage`.
 
 #### `results.ts` (Requirements 5.6, 5.7)
 ~~~typescript

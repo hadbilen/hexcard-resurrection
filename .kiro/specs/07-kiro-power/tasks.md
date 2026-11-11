@@ -33,7 +33,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
 - [ ] 3. Build the power package and the server core with validate_stack, compile_hextalk and conjure_script
   - Order inside this task: the protocol modules and the three tools (3.1 to 3.4) come before the power package and the build script (3.5), unlike the list in design §Overview, because the build script bundles `src/power/main.ts`, which imports the protocol handler and the tools
 
-  - [ ] 3.1 Build the protocol core: results, argument checker, stdio loop, protocol handler and start check
+  - [x] 3.1 Build the protocol core: results, argument checker, stdio loop, protocol handler and start check
     - `src/power/results.ts`: `LIST_LIMIT`, `QUOTE_LIMIT`, `quoteText`, `shortenMessage`, `shortenGateError`, `cappedList`, `toolResult`, `errorResult` (design §results.ts)
     - `src/power/argumentCheck.ts`: the `ArgSchema` subset, `checkArguments` with the order, paths and messages of design §argumentCheck.ts, `formatArgPath`, lengths in UTF-16 code units, an unknown keyword thrown as a programming error
     - `src/power/stdio.ts`: `serveLines` and `MAX_LINE_BYTES`, with discard mode, one overflow answer and each answer written before the next line is handled (design §stdio.ts)
