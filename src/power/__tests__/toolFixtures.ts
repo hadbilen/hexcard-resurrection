@@ -3,8 +3,13 @@
 import { createBlankStack } from "../../core/authoringCommands.ts";
 import type { HexButtonPart, HexFieldPart, HexStack } from "../../core/schema.ts";
 import { encodeStackFile } from "../../storage/stackFile.ts";
+import { bundledFontBytes } from "../fontBytes.ts";
+import { parseFaces } from "../nodeTextBackend.ts";
 import { createProtocolHandler } from "../protocol.ts";
 import { createPowerTools, type ToolDeps, type PowerTool } from "../tools/index.ts";
+
+/** The bundled fonts, parsed once per test file, as main.ts parses them at start-up. */
+export const FONTS = parseFaces(bundledFontBytes());
 
 export const GOOD_SCRIPT = "on mouseUp\n  go next\nend mouseUp";
 
@@ -50,14 +55,16 @@ export interface Called {
   /** The first content's text, as sent. */
   text: string;
   contentTypes: string[];
+  /** Every content of the result, as sent (render_card: the text, then the image). */
+  content: Array<Record<string, any>>;
 }
 
 /** Calls tools through the protocol handler, as the server does (argument check, then run). */
-export function makeCaller(deps: ToolDeps = {}): {
+export function makeCaller(deps: Partial<ToolDeps> = {}): {
   tools: readonly PowerTool[];
   call: (name: string, args: unknown) => Promise<Called>;
 } {
-  const tools = createPowerTools(deps);
+  const tools = createPowerTools({ fonts: FONTS, ...deps });
   const handler = createProtocolHandler({ tools, serverVersion: "0.0.0", log: () => undefined });
   const encoder = new TextEncoder();
   let nextId = 1;
@@ -75,6 +82,7 @@ export function makeCaller(deps: ToolDeps = {}): {
         json: JSON.parse(first.text),
         text: first.text,
         contentTypes: answer.result.content.map((c: { type: string }) => c.type),
+        content: answer.result.content,
       };
     },
   };

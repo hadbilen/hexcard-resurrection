@@ -1,9 +1,9 @@
 /// <reference types="node" />
 // The committed server file as a child process, started the way mcp.json starts it (spec 07
-// Requirements 2.5, 2.7, 3.3, 3.7, 4.10, 17.3, 17.5). Tools covered: the three of task 3.2.
+// Requirements 2.5, 2.7, 3.3, 3.7, 4.10, 9.7, 17.3, 17.5). Tools covered: the four of tasks 3.2 and 4.2.
 
 import { spawn } from "node:child_process";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -79,12 +79,14 @@ const OK_CALLS = [
   { name: "validate_stack", args: { stack: STACK_TEXT } },
   { name: "compile_hextalk", args: { source: "on mouseUp\n  go next\nend mouseUp" } },
   { name: "conjure_script", args: { prompt: "beep" } },
+  { name: "render_card", args: { stack: STACK_TEXT, card: 2, scale: 1 } },
 ] as const;
 /** One call per tool with an argument that breaks its inputSchema, and the path the error names. */
 const BAD_CALLS = [
   { name: "validate_stack", args: { stack: 5 }, path: "stack" },
   { name: "compile_hextalk", args: { source: "on mouseUp\nend mouseUp", extra: true }, path: "extra" },
   { name: "conjure_script", args: { prompt: "beep", objectKind: "robot" }, path: "objectKind" },
+  { name: "render_card", args: { stack: STACK_TEXT, scale: 3 }, path: "scale" },
 ] as const;
 const TOOL_NAMES = OK_CALLS.map((entry) => entry.name);
 
@@ -95,7 +97,7 @@ const answersOf = (stdout: Buffer): any[] => {
 };
 const payloadOf = (answer: any): any => JSON.parse(answer.result.content[0].text);
 
-/** initialize, tools/list and the ok calls, ids 1 to 5. */
+/** initialize, tools/list and the ok calls, ids 1 to 6. */
 const SHORT_SESSION = [
   request(1, "initialize", { protocolVersion: "2025-11-25" }),
   line({ jsonrpc: "2.0", method: "notifications/initialized" }),
@@ -104,13 +106,24 @@ const SHORT_SESSION = [
 ];
 
 function expectShortSession(answers: any[]): void {
-  expect(answers.map((answer) => answer.id)).toEqual([1, 2, 3, 4, 5]);
+  expect(answers.map((answer) => answer.id)).toEqual([1, 2, ...OK_CALLS.map((_, i) => 3 + i)]);
   expect(answers[0].result.serverInfo.name).toBe("hexcard");
   expect(answers[1].result.tools.map((tool: { name: string }) => tool.name)).toEqual(TOOL_NAMES);
   for (const answer of answers.slice(2)) {
     expect(answer.result.isError).toBe(false);
     expect(payloadOf(answer).ok).toBe(true);
   }
+  expectRenderCardAnswer(answers.at(-1));
+}
+
+/** The render_card answer of OK_CALLS: the JSON text, then one image/png content holding a real PNG. */
+function expectRenderCardAnswer(answer: any): void {
+  expect(answer.result.content.map((content: { type: string }) => content.type)).toEqual(["text", "image"]);
+  expect(answer.result.content[1].mimeType).toBe("image/png");
+  const png = Buffer.from(answer.result.content[1].data, "base64");
+  expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+  expect(png.readUInt32BE(16)).toBe(512); // IHDR width
+  expect(png.readUInt32BE(20)).toBe(342); // IHDR height
 }
 
 describe("server process, started with the args of mcp.json", () => {
@@ -123,19 +136,24 @@ describe("server process, started with the args of mcp.json", () => {
         line({ jsonrpc: "2.0", method: "notifications/initialized" }),
         request(2, "tools/list"),
         ...OK_CALLS.map((entry, i) => call(3 + i, entry.name, entry.args)),
-        ...BAD_CALLS.map((entry, i) => call(6 + i, entry.name, entry.args)),
-        request(9, "resources/list"),
+        ...BAD_CALLS.map((entry, i) => call(3 + OK_CALLS.length + i, entry.name, entry.args)),
+        request(3 + OK_CALLS.length + BAD_CALLS.length, "resources/list"),
         "{not json\n",
         Buffer.alloc(33_554_433, 0x61),
         "\n",
-        request(10, "ping"),
+        request(4 + OK_CALLS.length + BAD_CALLS.length, "ping"),
       ];
       const run = await runServer(argsFor(POWER_DIR), input);
       expect(run.status).toBe(0);
       expect(run.stderr).toBe("");
       expect(run.exitDelay).toBeLessThan(1000);
       const answers = answersOf(run.stdout);
-      expect(answers.map((answer) => answer.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, 10]);
+      const firstBad = 2 + OK_CALLS.length;
+      const unknownMethod = firstBad + BAD_CALLS.length;
+      expect(answers.map((answer) => answer.id)).toEqual([
+        1, 2, ...OK_CALLS.map((_, i) => 3 + i), ...BAD_CALLS.map((_, i) => 3 + OK_CALLS.length + i),
+        3 + OK_CALLS.length + BAD_CALLS.length, null, null, 4 + OK_CALLS.length + BAD_CALLS.length,
+      ]);
       for (const answer of answers) expect(answer.jsonrpc).toBe("2.0");
 
       expect(answers[0].result).toEqual({
@@ -148,21 +166,22 @@ describe("server process, started with the args of mcp.json", () => {
       for (const tool of tools) {
         expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
       }
-      for (const answer of answers.slice(2, 5)) {
+      for (const answer of answers.slice(2, firstBad)) {
         expect(answer.result.isError).toBe(false);
         expect(payloadOf(answer).ok).toBe(true);
       }
+      expectRenderCardAnswer(answers[firstBad - 1]);
       BAD_CALLS.forEach((entry, i) => {
-        const answer = answers[5 + i];
+        const answer = answers[firstBad + i];
         expect(answer.result.isError).toBe(true);
         const payload = payloadOf(answer);
         expect(payload.ok).toBe(false);
         expect(payload.errors.some((error: string) => error.startsWith(`${entry.path}:`))).toBe(true);
       });
-      expect(answers[8].error.code).toBe(-32601);
-      expect(answers[9].error.code).toBe(-32700);
-      expect(answers[10].error.code).toBe(-32600);
-      expect(answers[11].result).toEqual({});
+      expect(answers[unknownMethod].error.code).toBe(-32601);
+      expect(answers[unknownMethod + 1].error.code).toBe(-32700);
+      expect(answers[unknownMethod + 2].error.code).toBe(-32600);
+      expect(answers[unknownMethod + 3].result).toEqual({});
     },
     TIMEOUT,
   );
@@ -244,6 +263,45 @@ describe("server process, started with the args of mcp.json", () => {
       expect(run.status).toBe(0);
       expectShortSession(answersOf(run.stdout));
       expect(run.stderr).toBe("FUNCTION_TRAP 0\n");
+    },
+    TIMEOUT,
+  );
+  it(
+    "gives byte-identical render_card text and PNG data from two processes, and between two calls of one process (Requirement 9.7)",
+    async () => {
+      const render = (id: number, scale: 1 | 2) => call(id, "render_card", { stack: STACK_TEXT, card: 1, scale });
+      const session = [request(1, "initialize", { protocolVersion: "2025-11-25" }), render(2, 1), render(3, 2), call(4, "validate_stack", { stack: STACK_TEXT }), render(5, 1), render(6, 2)];
+      const first = answersOf((await runServer(argsFor(POWER_DIR), session, { cwd: tempDir() })).stdout);
+      const second = answersOf((await runServer(argsFor(POWER_DIR), session, { cwd: tempDir() })).stdout);
+      expect(second).toEqual(first);
+      for (const [a, b] of [[1, 4], [2, 5]]) {
+        expect(first[a].result.content[0].text).toBe(first[b].result.content[0].text);
+        expect(first[a].result.content[1].data).toBe(first[b].result.content[1].data);
+      }
+      // The two scales are different images of the same card.
+      expect(first[1].result.content[1].data).not.toBe(first[2].result.content[1].data);
+      expect(Buffer.from(first[2].result.content[1].data, "base64").readUInt32BE(16)).toBe(1024);
+    },
+    TIMEOUT,
+  );
+  it(
+    "refuses to start when an embedded font cannot be read: one standard error line, empty standard output, status 1 (design §Error Handling)",
+    async () => {
+      const dir = tempDir();
+      const copy = join(dir, "hexcard-mcp.mjs");
+      const marker = "data:font/ttf;base64,";
+      const text = readFileSync(SERVER_FILE_PATH, "utf8");
+      const at = text.indexOf(marker);
+      expect(at).toBeGreaterThan(0);
+      // Cut the first embedded font down to 3 bytes: the TrueType reader must reject it.
+      const end = text.indexOf('"', at);
+      writeFileSync(copy, text.slice(0, at + marker.length) + "AAAA" + text.slice(end));
+      const args = [MCP_ARGS[0], `--allow-fs-read=${copy}`, MCP_ARGS[2], copy];
+      const run = await runServer(args, [request(1, "initialize", { protocolVersion: "2025-11-25" })], { cwd: dir });
+      expect(run.status).toBe(1);
+      expect(run.stdout.length).toBe(0);
+      expect(run.stderr.split("\n")).toHaveLength(2);
+      expect(run.stderr).toMatch(/^hexcard: refusing to start: the embedded fonts could not be read \(.+\)\.\n$/);
     },
     TIMEOUT,
   );

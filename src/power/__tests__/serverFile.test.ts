@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parseAst } from "vite";
 import { beforeAll, describe, expect, it } from "vitest";
+import { tableFontFiles } from "../../engine/graphics/textRaster.ts";
 import { BUILD_POWER_COMMAND, SERVER_FILE_PATH, buildPowerServer, type PowerBuild } from "../../../scripts/buildPowerServer.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
@@ -172,5 +173,20 @@ describe("the committed server file", () => {
     expect(power.bundledPackages).not.toContain("react");
     expect(power.bundledPackages).not.toContain("react-dom");
     expect(power.bundledPackages).toEqual(["zod"]);
+  });
+
+  it("carries the exact bytes of every font file of the size table as a base64 data: URL (Requirement 3.1)", () => {
+    const files = tableFontFiles();
+    expect(files).toHaveLength(9);
+    for (const file of files) {
+      const base64 = readFileSync(`${REPO_ROOT}/public/fonts/${file}`).toString("base64");
+      expect(power.serverFile.includes(`"data:font/ttf;base64,${base64}"`), file).toBe(true);
+      expect(power.serverFile.split(base64).length - 1, `${file} appears once`).toBe(1);
+    }
+    // No second copy of any font in another form: the file names are not read at run time.
+    expect(power.serverFile).not.toMatch(/import\.meta\.glob/);
+  });
+  it("imports node:zlib for the PNG encoder and nothing beyond node:url, node:path and node:zlib (Requirements 2.4, 3.2)", () => {
+    expect(inspect(power.serverFile).importSources.sort()).toEqual(["node:path", "node:url", "node:zlib"]);
   });
 });

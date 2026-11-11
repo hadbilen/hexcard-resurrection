@@ -15,6 +15,7 @@ import { checkStack as checkStackOracle } from "../../storage/__tests__/checkSta
 import { checkArguments } from "../argumentCheck.ts";
 import { QUOTE_LIMIT } from "../results.ts";
 import { createPowerTools, type ToolName } from "../tools/index.ts";
+import { FONTS } from "./toolFixtures.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Shared by all properties
@@ -23,7 +24,7 @@ import { createPowerTools, type ToolName } from "../tools/index.ts";
 /** Every property runs this many cases (Requirement 17.2: at least 100). */
 const NUM_RUNS = 200;
 
-const tools = createPowerTools();
+const tools = createPowerTools({ fonts: FONTS });
 
 /** Calls a tool through its `checkArguments` and `run`, as the protocol handler does. */
 async function callTool(name: ToolName, args: Record<string, unknown>): Promise<{ isError: boolean; json: any }> {

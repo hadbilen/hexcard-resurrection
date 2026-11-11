@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { checkArguments, formatArgPath, type ArgSchema } from "../argumentCheck.ts";
 import { MAX_STACK_TEXT } from "../stackText.ts";
 import { createPowerTools } from "../tools/index.ts";
-import { makeCaller } from "./toolFixtures.ts";
+import { FONTS, makeCaller } from "./toolFixtures.ts";
 
 const rect: ArgSchema = {
   type: "object",
@@ -203,16 +203,16 @@ describe("checkArguments", () => {
 // checked the way the protocol handler checks them (the tool's own checkArguments, else the
 // generic checker on its inputSchema).
 // ---------------------------------------------------------------------------------------------
-describe("Requirement 5.3: argument bounds of validate_stack, compile_hextalk and conjure_script", () => {
-  const tools = createPowerTools();
+describe("Requirement 5.3: argument bounds of validate_stack, compile_hextalk, conjure_script and render_card", () => {
+  const tools = createPowerTools({ fonts: FONTS });
   const problems = (name: string, args: Record<string, unknown>): string[] => {
     const tool = tools.find((candidate) => candidate.name === name);
     if (tool === undefined) throw new Error(`no tool ${name}`);
     return tool.checkArguments ? tool.checkArguments(args) : checkArguments(tool.inputSchema, args);
   };
 
-  it("lists exactly the three tools, in order", () => {
-    expect(tools.map((tool) => tool.name)).toEqual(["validate_stack", "compile_hextalk", "conjure_script"]);
+  it("lists exactly the four tools, in order", () => {
+    expect(tools.map((tool) => tool.name)).toEqual(["validate_stack", "compile_hextalk", "conjure_script", "render_card"]);
   });
 
   describe("validate_stack", () => {
@@ -285,6 +285,50 @@ describe("Requirement 5.3: argument bounds of validate_stack, compile_hextalk an
       expect(problems("conjure_script", { prompt: "" })).toEqual([]);
       expect(problems("conjure_script", { prompt: 5 })).toEqual(["prompt: must be a string"]);
       expect(problems("conjure_script", { prompt: "go next", tier: 3 })).toEqual(["tier: is not an allowed argument"]);
+    });
+  });
+
+  describe("render_card", () => {
+    it("treats the stack like validate_stack: a string, read-limited at 4194304 characters", async () => {
+      expect(problems("render_card", {})).toEqual(["stack: is required"]);
+      expect(problems("render_card", { stack: 1 })).toEqual(["stack: must be a string"]);
+      expect(problems("render_card", { stack: "x".repeat(MAX_STACK_TEXT) })).toEqual([]);
+      expect(problems("render_card", { stack: "x".repeat(MAX_STACK_TEXT + 1) })).toEqual([]);
+      const { call } = makeCaller();
+      const past = await call("render_card", { stack: "x".repeat(MAX_STACK_TEXT + 1) });
+      expect(past.isError).toBe(true);
+      expect(past.json.errors).toEqual([`stack: The stack text has more than ${MAX_STACK_TEXT} characters`]);
+    });
+    it("accepts card positions 1 and 100000 and rejects 0 and 100001, 1.5 and a boolean", () => {
+      const rule = ["card: must be an integer from 1 to 100000 or a string of at most 256 characters"];
+      expect(problems("render_card", { stack: "{}", card: 1 })).toEqual([]);
+      expect(problems("render_card", { stack: "{}", card: 100000 })).toEqual([]);
+      expect(problems("render_card", { stack: "{}", card: 0 })).toEqual(rule);
+      expect(problems("render_card", { stack: "{}", card: 100001 })).toEqual(rule);
+      expect(problems("render_card", { stack: "{}", card: -3 })).toEqual(rule);
+      expect(problems("render_card", { stack: "{}", card: 1.5 })).toEqual(rule);
+      expect(problems("render_card", { stack: "{}", card: true })).toEqual(rule);
+      expect(problems("render_card", { stack: "{}", card: null })).toEqual(rule);
+    });
+    it("accepts a card string of 256 characters (UTF-16 code units) and rejects 257", () => {
+      const rule = ["card: must be an integer from 1 to 100000 or a string of at most 256 characters"];
+      expect(problems("render_card", { stack: "{}", card: "x".repeat(256) })).toEqual([]);
+      expect(problems("render_card", { stack: "{}", card: "x".repeat(257) })).toEqual(rule);
+      expect(problems("render_card", { stack: "{}", card: "\u{1F600}".repeat(128) })).toEqual([]);
+      expect(problems("render_card", { stack: "{}", card: "\u{1F600}".repeat(129) })).toEqual(rule);
+      expect(problems("render_card", { stack: "{}", card: "" })).toEqual([]);
+    });
+    it("accepts scale 1 and 2 and rejects every other value", () => {
+      expect(problems("render_card", { stack: "{}", scale: 1 })).toEqual([]);
+      expect(problems("render_card", { stack: "{}", scale: 2 })).toEqual([]);
+      for (const scale of [0, 3, -1]) {
+        expect(problems("render_card", { stack: "{}", scale })).toEqual(["scale: must be one of 1, 2"]);
+      }
+      expect(problems("render_card", { stack: "{}", scale: 1.5 })).toEqual(["scale: must be an integer"]);
+      expect(problems("render_card", { stack: "{}", scale: "1" })).toEqual(["scale: must be an integer"]);
+    });
+    it("allows no other argument", () => {
+      expect(problems("render_card", { stack: "{}", layer: "card" })).toEqual(["layer: is not an allowed argument"]);
     });
   });
 });

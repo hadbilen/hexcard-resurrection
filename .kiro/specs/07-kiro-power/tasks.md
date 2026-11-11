@@ -92,7 +92,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npm run build:power` (the server file stays unchanged), `npx tsc -b`, `npx vitest --run`
     - _Requirements: 10.1, 10.2, 10.5, 10.6, 14.1, 14.4, 14.5_
 
-  - [ ] 4.2 Implement the PNG encoder and render_card
+  - [x] 4.2 Implement the PNG encoder and render_card
     - `src/power/png.ts`: `encodeFramePng` (design §png.ts)
     - `src/power/tools/renderCard.ts` (design §tools/renderCard.ts): `readAndGate`, card selection, `composeFrame` with `createPartRasterizer` and the Node text backend, the PNG, the summary of design §Data Models with the uncovered characters of every visible part, and `clearDecodedLayerCache` and `clearIconCache` in `finally`
     - `src/power/tools/index.ts`: `render_card` as the fourth tool, with its inputSchema and a description that states the pixel-match limit of Requirement 10.4; `ToolDeps` gains `fonts`
