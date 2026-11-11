@@ -150,7 +150,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
 
 - [ ] 6. Write the two skills
 
-  - [ ] 6.1 Write the author-hexcard-stack skill
+  - [x] 6.1 Write the author-hexcard-stack skill
     - `powers/hexcard/skills/author-hexcard-stack/SKILL.md`: the front matter and the sections of design §Skills, covering Requirements 12.2 to 12.6, 12.8, 12.9 and 12.11 and the pixel-match limit of 10.4
     - `references/schema.md` (design spec §2.1 verbatim), `references/patterns.md` (the 38 patterns) and `references/fonts.md` (files, selecting settings, covered characters beyond printable ASCII), in the formats of design §Skills
     - Skill examples with the `hexcard:` info-string markers of design §Skills: the minimal stack, the shared-text stack with two cards, and the drawing example with its `rle-from` stack. Every `rleData`, message and canonical form in the skill is copied from an actual tool call (for example through the committed server file over stdio), never written by hand

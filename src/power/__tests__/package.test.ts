@@ -198,3 +198,38 @@ describe("licence files (Requirement 1.7)", () => {
     ).toEqual(["@scope/pkg", "react", "zod"]);
   });
 });
+
+/**
+ * The YAML front matter of a SKILL.md: `key: value` lines between the opening and closing `---`.
+ * A double-quoted value is read as a JSON string (the skills use no YAML escapes beyond JSON's).
+ */
+function skillFrontMatter(skill: string): Record<string, string> {
+  const text = readPower(`skills/${skill}/SKILL.md`);
+  expect(text.startsWith("---\n"), `${skill}: SKILL.md must start with front matter`).toBe(true);
+  const end = text.indexOf("\n---\n", 4);
+  expect(end).toBeGreaterThan(0);
+  const fields: Record<string, string> = {};
+  for (const line of text.slice(4, end).split("\n")) {
+    const match = /^([a-z-]+): (.+)$/.exec(line);
+    expect(match, `${skill}: front matter line "${line}"`).not.toBeNull();
+    const value = match![2];
+    fields[match![1]] = value.startsWith('"') ? (JSON.parse(value) as string) : value;
+  }
+  return fields;
+}
+
+describe("skill front matter (Requirement 12.1)", () => {
+  it("author-hexcard-stack has only a name equal to its folder and a description of the required words", () => {
+    const fields = skillFrontMatter("author-hexcard-stack");
+    expect(Object.keys(fields)).toEqual(["name", "description"]);
+    expect(fields.name).toBe("author-hexcard-stack");
+    expect(fields.name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    expect(fields.name.length).toBeLessThanOrEqual(64);
+    const description = fields.description;
+    expect(description.length).toBeGreaterThanOrEqual(1);
+    expect(description.length).toBeLessThanOrEqual(1024);
+    expect(description).toContain("HexCard");
+    for (const activity of ["build", "check", "draw", "preview", "fix"]) expect(description).toMatch(new RegExp(`\\b${activity}`, "i"));
+    for (const object of [".hexstack file", "cards", "backgrounds", "buttons", "fields", "pictures"]) expect(description).toContain(object);
+  });
+});
