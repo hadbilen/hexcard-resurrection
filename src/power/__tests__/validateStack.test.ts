@@ -9,6 +9,9 @@ import { checkStack } from "../../storage/stackLoader.ts";
 import { MAX_STACK_TEXT } from "../stackText.ts";
 import { GOOD_SCRIPT, button, clone, field, makeCaller, makeStack, toHexstack } from "./toolFixtures.ts";
 
+// Per-test budget for the heavy test, so CPU contention in the parallel suite cannot time it out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 /** Valid Base64 whose PackBits stream does not give 512 x 342 pixels. */
 const BAD_LAYER = "AAAA";
 const DARK_LAYER = encodeBitmapRLE(new Uint8Array(TOTAL_PIXELS).fill(2));
@@ -287,7 +290,7 @@ describe("validate_stack: notes on layers (Requirement 6.5)", () => {
     const result = await validate(JSON.stringify(stack));
     expect(result.json.notes).toHaveLength(100);
     expect(result.json.notesNotShown).toBe(1);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });
 
 describe("validate_stack: the hexstack output (Requirement 6.6)", () => {

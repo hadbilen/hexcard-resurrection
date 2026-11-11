@@ -5,6 +5,9 @@ import { conjureLocally, handlerHint, mergeSpell, type SpellObjectKind } from ".
 import { TIER1_CORPUS } from "../../ai/__tests__/tier1Corpus.ts";
 import { makeCaller } from "./toolFixtures.ts";
 
+// Per-test budget for the heavy test, so CPU contention in the parallel suite cannot time it out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 const KINDS: SpellObjectKind[] = ["button", "field", "card", "background", "stack"];
 const { call } = makeCaller();
 const conjure = (prompt: string, objectKind?: string) => call("conjure_script", objectKind === undefined ? { prompt } : { prompt, objectKind });
@@ -118,7 +121,7 @@ describe("conjure_script: parity with the studio's Spellcaster tab (Requirement 
         expect(result.json.suggestions, entry.prompt).toEqual(spell.suggestions.map((s) => s.prompt));
       }
     }
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });
 
 describe("conjure_script: arguments (Requirements 4.5, 8.5)", () => {

@@ -27,6 +27,9 @@ import { FIRST_LAUNCH_SHOWCASE, SHOWCASE_STACKS, findShowcase } from "../index.t
 import { PRESET_ART } from "../presetArt.ts";
 import { LEAD_NOTES } from "../retroSynthDeck.ts";
 
+// Per-test budget for the heavy test, so CPU contention in the parallel suite cannot time it out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------------------------
@@ -166,7 +169,7 @@ describe("showcase stacks", () => {
 
   it("src/presets/presetArt.ts is exactly the output of scripts/buildPresetArt.ts", () => {
     expect(readFileSync(PRESET_ART_PATH, "utf8")).toBe(renderPresetArtModule());
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });
 
 // ---------------------------------------------------------------------------------------------

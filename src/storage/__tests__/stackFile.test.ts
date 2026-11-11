@@ -13,6 +13,9 @@ import {
 } from "../stackFile.ts";
 import { makeStack } from "./fixtures.ts";
 
+// Per-test budget for the heavy test, so CPU contention in the parallel suite cannot time it out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 async function deflate(text: string): Promise<string> {
   const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("deflate-raw"));
   return bytesToBase64Url(new Uint8Array(await new Response(stream).arrayBuffer()));
@@ -54,7 +57,7 @@ describe("stack payload (deflate-raw + Base64URL)", () => {
       }),
       { numRuns: 50 },
     );
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("rejects text outside the Base64URL alphabet, padding and impossible lengths", async () => {
     for (const bad of ["ab+c", "ab/c", "abc=", "ab c", "abcde"]) {

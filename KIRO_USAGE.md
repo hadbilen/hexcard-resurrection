@@ -359,3 +359,21 @@ Dates are commit dates (UTC+3). Times are from `tasks.meta.json` and are given o
   - Kiro: `src/power/__tests__/tools.property.test.ts` gains Property 3 (200 runs, comment `// Feature: 07-kiro-power, Property 3: render_card PNG holds the frame`). A blank stack with a random theme from `THEME_PALETTES` and a card layer of random light and dark pixels (two random bit strings combined by plain, and, or, all light or all dark) is rendered at scale 1 or 2; the test's own reader (`pngReader.ts`, inflate through `node:zlib`) checks size, bit depth, colour type, a palette of exactly [lightBitHex, darkBitHex], every k x k block against the picture, and that a second call returns the same base64 PNG data and the same JSON text. Existing properties 1 and 2 unchanged.
   - Verification: `npx tsc -b` exit 0; `npx vitest --run` 79 files passed, 2079 tests passed (one earlier full run had two 5 s timeouts in `imageImport.test.ts` and `rleCodec.test.ts` under CPU load; the rerun passed).
   - Outcome: commit-pending. Evidence: `src/power/__tests__/tools.property.test.ts`.
+- **[chat]** Explicit timeouts for slow tests, a user-approved fix in a regular chat (not a spec task). (2026-11-11)
+  - Problem (from the developer): since spec 07 task 4.3 the full suite takes about 110 s, and one run had two 5 s timeouts in `rleCodec.test.ts` ("restores 40 seeded fuzz layers with varying run structure") and `imageImport.test.ts` ("writes dark as 2 and light as 1 ..."). GitHub Actions runners are slower, so deployments could become flaky.
+  - Measured: one `npx vitest --run --reporter=verbose` run (79 files, 2079 tests, 55 s). 37 test cases took 500 ms or more (largest: `tools.property` Property 3, 21.8 s). 13 of those already had an explicit timeout (`partRenderer` 1, `parser.roundtrip` 2, `serverProcess` 3, `serverFile` 1, `tools.property` 3, `paintTools.rect` 1, `imageImport.property` 1, `find.property` 1). The other 24 cases, declared in 15 `it(...)` calls, used the default 5 s timeout. Several were close to the 500 ms line (518, 525, 527 ms), and the numbers come from one run.
+  - Changed: each of these 15 `it(...)` calls got `HEAVY_TEST_TIMEOUT_MS` (`30_000`, a per-file constant as in the partrenderer-test-timeouts bugfix) as its third argument. No assertion, `numRuns` or generator changed, and `vite.config.ts` is unchanged.
+    - `rleCodec.test.ts`: "restores 40 seeded fuzz layers ...", "property: decode(encode(P)) equals P ..."
+    - `imageImport.test.ts`: "writes dark as 2 and light as 1 on a transparent card layer ..."
+    - `paintTools.test.ts`: "every brush pixel equals the pattern ...", "is deterministic for a seed, and differs between seeds"
+    - `transitions.test.ts`: the `it.each(GEOMETRIC)` test "%s copies only destination pixels ..." (10 cases)
+    - `nestingDepth.test.ts`: "reports the same first token however far the source goes beyond the limit"
+    - `authoringCommands.property.test.ts`: "keep the stack valid, and full undo restores ..."
+    - `stackFile.test.ts`: "Property: the payload round-trips any stack text content"
+    - `presets.test.ts`: "src/presets/presetArt.ts is exactly the output of scripts/buildPresetArt.ts"
+    - `menuCommands.test.ts`: "connects every enabled item to a handler with an observable effect" (loop, 1 case of 500 ms or more)
+    - `serverFile.test.ts`: "imports only allowed node: built-ins ...", "references no network global ..."
+    - `conjureScript.test.ts`: "matches the Spellcaster for every prompt of the Tier 1 corpus"
+    - `validateStack.test.ts`: "caps notes at 100 and counts the rest"
+  - Verification: `npx tsc -b` exit 0 and `npx vitest --run` three times in a row, each 79 files passed, 2079 tests passed (57.9 s, 48.1 s, 51.7 s).
+  - Outcome: commit-pending. Evidence: the 12 test files named above.

@@ -10,6 +10,9 @@ import type { HexExprNode, HexScriptAST, HexStatementNode } from "../ast.ts";
 import { validateAst } from "../astValidator.ts";
 import { parseHexTalk, printHexTalk } from "../parser.ts";
 
+// Per-test budget for the heavy test, so CPU contention in the parallel suite cannot time it out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------------------------
@@ -212,7 +215,7 @@ describe("parseHexTalk nesting limit", () => {
     expect(Object.keys(blocks.ast.handlers)).toEqual(["b"]);
     const chain = parseHexTalk(`on h\n  get 1${" + 1".repeat(100_000)}\nend h\n`);
     expect(chain.errors).toEqual([{ line: 2, column: 9 + 4 * (HEX_MAX_DEPTH - 2), message: TOO_DEEP }]);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });
 
 describe("validateAst nesting limit", () => {

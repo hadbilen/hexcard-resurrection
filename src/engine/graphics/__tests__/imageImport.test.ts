@@ -24,6 +24,9 @@ import {
 } from "../imageImport.ts";
 import { BITMAP_WIDTH, decodeBitmapRLE, encodeBitmapRLE, TOTAL_PIXELS } from "../rleCodec.ts";
 
+// Per-test budget for the heavy test, so CPU contention in the parallel suite cannot time it out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------------------------
 // Hand-built headers
 // ---------------------------------------------------------------------------------------------
@@ -264,7 +267,7 @@ describe("importImageFile: pixels and history (Requirements 6.7-6.9)", () => {
     expect(t.store.getSnapshot().stack.backgrounds[0].bitmap.rleData).toBe(backgroundRle);
     expect(t.history.undoLabel()).toBe("Import Image");
     expect(validateStack(t.store.getSnapshot().stack).ok).toBe(true);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("writes into the background layer in Edit Background mode and leaves the card layer alone", async () => {
     const cardRle = layer(0);

@@ -16,6 +16,9 @@ import { createHexStore, resolveEditTarget, type CompiledScript } from "../store
 import { SHOWCASE_STACKS } from "../../presets/index.ts";
 import { createStarterStack } from "../../ui/starterStack.ts";
 
+// Per-test budget for the heavy property test, so CPU contention in the parallel suite cannot time it out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 const ACTIONS = [
   "newCard", "deleteCard", "newBackground", "newButton", "newField", "deletePart", "toggleEditBackground", "undo", "redo",
 ] as const;
@@ -170,5 +173,5 @@ describe("structural commands: random action sequences", () => {
       }),
       { numRuns: 100 },
     );
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });

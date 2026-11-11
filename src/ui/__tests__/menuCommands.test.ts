@@ -41,6 +41,9 @@ import {
 import { createMessageBox, type MessageBoxController } from "../MessageBox.tsx";
 import { createStarterStack } from "../starterStack.ts";
 
+// Per-test budget for the heavy tests, so CPU contention in the parallel suite cannot time them out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------------------------
 // Fixtures: crd_1 and crd_2 on bkg_1, crd_3 on bkg_2. The stack script handles every lifecycle
 // message, so the recording runner below logs each one as `<message>@<current card>`.
@@ -550,7 +553,7 @@ describe("menu coverage (Requirement 15.3)", () => {
         expect(await t.choose(entry.command), entry.command).toBe(true);
         expect(observe(t), `${entry.command} in "${representative.name}"`).not.toEqual(before);
       }
-    });
+    }, HEAVY_TEST_TIMEOUT_MS);
   }
 
   it("ignores a disabled item: runMenuCommand neither runs nor reports it", async () => {

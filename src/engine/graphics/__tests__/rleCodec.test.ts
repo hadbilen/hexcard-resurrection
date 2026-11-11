@@ -9,6 +9,9 @@ import {
   encodeBitmapRLE,
 } from "../rleCodec";
 
+// Per-test budget for the heavy tests, so CPU contention in the parallel suite cannot time them out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 function toBase64(bytes: number[]): string {
   return btoa(String.fromCharCode(...bytes));
 }
@@ -142,7 +145,7 @@ describe("round trip", () => {
       }
       expect(decodeBitmapRLE(encodeBitmapRLE(p))).toEqual(p);
     }
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("property: decode(encode(P)) equals P for any valid buffer", () => {
     // **Validates: Requirements 1.1, 1.2**

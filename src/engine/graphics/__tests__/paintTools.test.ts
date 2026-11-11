@@ -8,6 +8,9 @@ import { PATTERNS, patternState } from "../patterns.ts";
 import { bresenhamLine, createPaintController, type PaintSettings } from "../paintTools.ts";
 import { BITMAP_WIDTH as W, TOTAL_PIXELS, decodeBitmapRLE, encodeBitmapRLE } from "../rleCodec.ts";
 
+// Per-test budget for the heavy tests, so CPU contention in the parallel suite cannot time them out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 const SOLID_DARK = PATTERNS[1];
 const SOLID_LIGHT = PATTERNS[0];
 const GREY = PATTERNS[3];
@@ -147,7 +150,7 @@ describe("pencil and brush with world-aligned patterns (Requirement 7.2)", () =>
       ),
       { numRuns: 25 },
     );
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("a light pattern paints opaque light pixels, not transparent ones", () => {
     const t = setup({ tool: "brush", settings: { pattern: SOLID_LIGHT, brushSize: 2 } });
@@ -232,7 +235,7 @@ describe("spray", () => {
   it("is deterministic for a seed, and differs between seeds", () => {
     expect(Array.from(sprayed(7))).toEqual(Array.from(sprayed(7)));
     expect(Array.from(sprayed(7))).not.toEqual(Array.from(sprayed(8)));
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("keeps every dot within the radius", () => {
     const card = sprayed(3);

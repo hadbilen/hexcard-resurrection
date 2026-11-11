@@ -11,6 +11,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { tableFontFiles } from "../../engine/graphics/textRaster.ts";
 import { BUILD_POWER_COMMAND, SERVER_FILE_PATH, buildPowerServer, type PowerBuild } from "../../../scripts/buildPowerServer.ts";
 
+// Per-test budget for the heavy tests, so CPU contention in the parallel suite cannot time them out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
 
 /** Requirement 3.2: modules the server file must not import (also without `node:` and as a sub-path). */
@@ -143,14 +146,14 @@ describe("the committed server file", () => {
       }
     }
     expect(findings.dynamicImports).toBe(0);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("references no network global, require, process.getBuiltinModule or process.env (Requirements 2.5, 3.2, 3.3)", () => {
     const findings = inspect(power.serverFile);
     expect(findings.references).toEqual([]);
     expect(findings.globalReads).toEqual([]);
     expect(findings.processReads).toEqual([]);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("the inspection finds each forbidden form in a sample", () => {
     const findings = inspect(

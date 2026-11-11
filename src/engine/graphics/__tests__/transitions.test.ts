@@ -6,6 +6,9 @@ import { DISSOLVE_PIXELS_PER_FRAME, createDissolveState, stepDissolveFrame } fro
 import { packOpaqueColour } from "../bitmapCanvas.ts";
 import { EFFECT_FRAMES, type GeometricEffect, composeEffectFrame, playEffect, revealEffectStep } from "../transitions.ts";
 
+// Per-test budget for the heavy tests, so CPU contention in the parallel suite cannot time them out.
+const HEAVY_TEST_TIMEOUT_MS = 30_000;
+
 const SPEEDS: VisualEffectSpeed[] = ["verySlow", "slow", "normal", "fast"];
 const GEOMETRIC: GeometricEffect[] = [
   "venetianBlinds", "checkerboard", "irisOpen", "irisClose",
@@ -107,7 +110,7 @@ describe("revealEffectStep (Requirement 6.3)", () => {
       }
       expect(display).toEqual(to);
     }
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   it("wipeRight at half way covers exactly the left half", () => {
     const display = solid(FROM_VALUE);
