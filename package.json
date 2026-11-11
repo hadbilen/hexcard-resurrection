@@ -13,7 +13,8 @@
     "test": "vitest --run",
     "test:watch": "vitest",
     "build:preset-art": "node --input-type=module -e \"import { runnerImport } from 'vite'; const { module } = await runnerImport('./scripts/buildPresetArt.ts'); module.main(process.argv.slice(1));\" --",
-    "build:power": "node --input-type=module -e \"import { runnerImport } from 'vite'; const { module } = await runnerImport('./scripts/buildPowerServer.ts'); await module.main(process.argv.slice(1));\" --"
+    "build:power": "node --input-type=module -e \"import { runnerImport } from 'vite'; const { module } = await runnerImport('./scripts/buildPowerServer.ts'); await module.main(process.argv.slice(1));\" --",
+    "check:power-chrome": "node --input-type=module -e \"import { runnerImport } from 'vite'; const { module } = await runnerImport('./scripts/checkPowerChrome.ts'); await module.main(process.argv.slice(1));\" --"
   },
   "dependencies": {
     "react": "^19.3.1",

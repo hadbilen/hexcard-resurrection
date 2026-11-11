@@ -109,7 +109,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npx tsc -b`, `npx vitest --run`
     - _Requirements: 9.4, 9.7, 17.2_
 
-  - [ ] 4.4 Write the headless Chrome check and run it for the three showcase stacks
+  - [x] 4.4 Write the headless Chrome check and run it for the three showcase stacks
     - `scripts/checkPowerChrome.ts` and the `package.json` script `check:power-chrome` in the `runnerImport` form, with the option `--chrome <path>` (design §Headless Chrome check): the committed server file started with the `args` of `mcp.json`; the text phase (a check page built from `textRaster.ts`, every covered character alone and in runs of 24, canvas backend against Node text backend, for every face and render size); the card phase at UI scale 1 and 2, each on a fresh profile (every card of every `SHOWCASE_STACKS` entry opened through the menu, the two reads 1 s apart, `render_card` of the auto-saved stack or the `create()` output, the PNG against the canvas pixels at k = 1 and against a canvas screenshot at k = 2, only the theme's two colours in every screenshot); the summary and images in a new temp folder, nothing written into the repository
     - Run `npm run build`, then `npm run check:power-chrome`. The report quotes the summary: the Chrome version, characters compared per face and render size, cards compared per stack and scale, every differing case and the colour counts
     - A difference that the server code causes is fixed in this task (rebuild with `npm run build:power`, run the check again). A difference that a rule of `requirements.md` or `design.md` causes is reported as a gap (Requirement 15.6), and the task stays unticked
