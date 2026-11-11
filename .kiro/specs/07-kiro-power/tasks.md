@@ -102,7 +102,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npm run build:power`, `npx tsc -b`, `npx vitest --run`
     - _Requirements: 2.4, 3.1, 3.7, 4.3, 5.2, 5.3, 5.5, 5.7, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 10.1, 10.4, 10.5, 14.1, 17.1, 17.3_
 
-  - [ ] 4.3 Write the property test for Property 3
+  - [x] 4.3 Write the property test for Property 3
     - **Property 3: render_card PNG holds the frame**
     - **Validates: Requirements 9.4, 9.7**
     - `src/power/__tests__/tools.property.test.ts`, at least 100 runs, with the comment `// Feature: 07-kiro-power, Property 3: render_card PNG holds the frame`; the test's own PNG reader inflates the image data with `node:zlib`

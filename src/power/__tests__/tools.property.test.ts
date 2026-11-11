@@ -5,8 +5,10 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { astArb } from "../../core/__tests__/hexAstArbitraries.ts";
 import { validateStack as validateStackOracle } from "../../core/__tests__/stackValidatorOracle.ts";
+import { createBlankStack } from "../../core/authoringCommands.ts";
 import { BLANK_ICON, encodeIcon, ICON_PIXELS } from "../../core/icons.ts";
 import { printHexTalk } from "../../core/parser.ts";
+import { THEME_PALETTES, type ThemePaletteName } from "../../core/schema.ts";
 import { validateStack } from "../../core/stackValidator.ts";
 import { encodeBitmapRLE, TOTAL_PIXELS } from "../../engine/graphics/rleCodec.ts";
 import { encodeStackFile } from "../../storage/stackFile.ts";
@@ -15,6 +17,7 @@ import { checkStack as checkStackOracle } from "../../storage/__tests__/checkSta
 import { checkArguments } from "../argumentCheck.ts";
 import { QUOTE_LIMIT } from "../results.ts";
 import { createPowerTools, type ToolName } from "../tools/index.ts";
+import { pngOfContent, readPng } from "./pngReader.ts";
 import { FONTS } from "./toolFixtures.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -390,6 +393,46 @@ function shortenLongTexts(error: string, texts: readonly string[]): string {
   return out;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Property 3: render_card PNG holds the frame
+// ---------------------------------------------------------------------------------------------
+
+const themeArb = fc.constantFrom(...(Object.keys(THEME_PALETTES) as ThemePaletteName[]));
+const scaleArb = fc.constantFrom(1 as const, 2 as const);
+
+// A picture of TOTAL_PIXELS states, each 1 (light) or 2 (dark). Two random bit strings are combined by
+// one of five rules, so the dark share is about 0, 25, 50, 75 or 100 percent and runs of equal pixels
+// of every length occur (the PNG compressor and the bitmap codec see both noise and flat areas).
+const PICTURE_BYTES = TOTAL_PIXELS / 8;
+const layerPictureArb: fc.Arbitrary<Uint8Array> = fc
+  .tuple(
+    fc.uint8Array({ minLength: PICTURE_BYTES, maxLength: PICTURE_BYTES }),
+    fc.uint8Array({ minLength: PICTURE_BYTES, maxLength: PICTURE_BYTES }),
+    fc.constantFrom("plain", "and", "or", "allLight", "allDark"),
+  )
+  .map(([a, b, rule]) => {
+    const picture = new Uint8Array(TOTAL_PIXELS);
+    for (let i = 0; i < TOTAL_PIXELS; i++) {
+      const bitA = (a[i >> 3] >> (i & 7)) & 1;
+      const bitB = (b[i >> 3] >> (i & 7)) & 1;
+      const dark = rule === "plain" ? bitA : rule === "and" ? bitA & bitB : rule === "or" ? bitA | bitB : rule === "allDark" ? 1 : 0;
+      picture[i] = dark ? 2 : 1;
+    }
+    return picture;
+  });
+
+const hexToRgb = (hex: string): [number, number, number] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
+
+/** Calls render_card through its `checkArguments` and `run`; unlike callTool it keeps every content. */
+async function callRenderCard(args: Record<string, unknown>): Promise<{ isError: boolean; content: Array<Record<string, any>> }> {
+  const tool = tools.find((candidate) => candidate.name === "render_card");
+  if (tool === undefined) throw new Error("no tool named render_card");
+  const problems = tool.checkArguments ? tool.checkArguments(args) : checkArguments(tool.inputSchema, args);
+  if (problems.length > 0) throw new Error(`arguments of render_card rejected: ${problems.join("; ")}`);
+  const result = await tool.run(args);
+  return { isError: result.isError, content: result.content as Array<Record<string, any>> };
+}
+
 describe("tools property tests", () => {
   // Feature: 07-kiro-power, Property 1: validate_stack agrees with the gate, in both text forms
   // Validates: Requirements 6.3, 6.4, 6.7, 14.2
@@ -465,6 +508,49 @@ describe("tools property tests", () => {
     );
   }, 120_000);
 
-  // Properties 3 to 6 are added here by tasks 4.3, 5.2, 5.3 and 5.4, each as its own `it` with
+  // Feature: 07-kiro-power, Property 3: render_card PNG holds the frame
+  // Validates: Requirements 9.4, 9.7
+  // The stack is a blank stack (one background with rleData "", one card, no parts) whose card layer
+  // is replaced by a picture of light and dark pixels only. The card layer then covers the whole
+  // background, so the composed frame is that picture; the expected image is computed from the
+  // picture alone, not from composeFrame.
+  it("Property 3: render_card PNG holds the frame", async () => {
+    await fc.assert(
+      fc.asyncProperty(themeArb, scaleArb, layerPictureArb, async (themeName, k, picture) => {
+        const theme = THEME_PALETTES[themeName];
+        const stack = createBlankStack({ now: new Date("2026-01-01T00:00:00.000Z"), random: () => 0.5 });
+        stack.themePalette = { name: themeName, darkBitHex: theme.darkBitHex, lightBitHex: theme.lightBitHex };
+        stack.cards[0].bitmap.rleData = encodeBitmapRLE(picture);
+        const args = { stack: JSON.stringify(stack), scale: k };
+
+        const first = await callRenderCard(args);
+        expect(first.isError).toBe(false);
+        expect(first.content.map((content) => content.type)).toEqual(["text", "image"]);
+        expect(first.content[1].mimeType).toBe("image/png");
+
+        const png = readPng(pngOfContent(first.content[1] as never));
+        expect([png.width, png.height, png.bitDepth, png.colourType, png.interlace]).toEqual([512 * k, 342 * k, 1, 3, 0]);
+        // The palette is exactly [lightBitHex, darkBitHex].
+        expect(png.palette).toEqual([hexToRgb(theme.lightBitHex), hexToRgb(theme.darkBitHex)]);
+
+        // The k x k block of every frame pixel has the palette index of the pixel's state (1 -> 0, 2 -> 1).
+        const expected = new Uint8Array(png.width * png.height);
+        for (let y = 0; y < 342 * k; y++) {
+          const frameRow = Math.floor(y / k) * 512;
+          for (let x = 0; x < 512 * k; x++) expected[y * png.width + x] = picture[frameRow + Math.floor(x / k)] === 2 ? 1 : 0;
+        }
+        expect(Buffer.from(png.indices).equals(Buffer.from(expected))).toBe(true);
+
+        // A second call with the same arguments returns the same PNG data and the same JSON text.
+        const second = await callRenderCard(args);
+        expect(second.isError).toBe(false);
+        expect(second.content[1].data).toBe(first.content[1].data);
+        expect(second.content[0].text).toBe(first.content[0].text);
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  }, 300_000);
+
+  // Properties 4 to 6 are added here by tasks 5.2, 5.3 and 5.4, each as its own `it` with
   // its own `// Feature: 07-kiro-power, Property <n>: <title>` comment and its own generators.
 });
