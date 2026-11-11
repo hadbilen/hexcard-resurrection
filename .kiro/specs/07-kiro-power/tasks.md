@@ -134,7 +134,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npx tsc -b`, `npx vitest --run`
     - _Requirements: 11.1, 11.2, 11.3, 11.6, 14.2, 17.2_
 
-  - [ ] 5.3 Write the property test for Property 5
+  - [x] 5.3 Write the property test for Property 5
     - **Property 5: sprites set exactly their cells**
     - **Validates: Requirements 11.1, 11.4**
     - `src/power/__tests__/tools.property.test.ts`, at least 100 runs, with the comment `// Feature: 07-kiro-power, Property 5: sprites set exactly their cells`

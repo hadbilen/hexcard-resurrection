@@ -489,6 +489,40 @@ function commandOfDrag(drag: Drag): Record<string, unknown> {
 
 const noScripts = (): CompiledScript => ({ ast: { handlers: {} }, errors: [] });
 
+// ---------------------------------------------------------------------------------------------
+// Property 5: sprites set exactly their cells
+// ---------------------------------------------------------------------------------------------
+
+/** A sprite command: `rows` are `height` strings of `width` characters, all `#` or `.`, wholly inside the layer. */
+interface SpriteCase {
+  layer: HexLayer;
+  x: number;
+  y: number;
+  rows: string[];
+}
+
+// Sizes 1..64 in both directions (Requirement 5.3). The share of `#` cells is 0, 10, 50, 90 or 100
+// percent, so all-light, all-dark and mixed sprites all occur. A 1 x 1 sprite is rare (about 1 in 4096)
+// and is counted but not required.
+const spriteCaseArb: fc.Arbitrary<SpriteCase> = fc
+  .tuple(layerKindArb, fc.integer({ min: 1, max: 64 }), fc.integer({ min: 1, max: 64 }), fc.constantFrom(0, 10, 50, 90, 100))
+  .chain(([layer, width, height, darkShare]) =>
+    fc.record({
+      layer: fc.constant(layer),
+      // Any position that leaves the whole sprite inside the 512 x 342 layer, edges included.
+      x: fc.integer({ min: 0, max: BITMAP_WIDTH - width }),
+      y: fc.integer({ min: 0, max: BITMAP_HEIGHT - height }),
+      rows: fc.array(fc.integer({ min: 0, max: 99 }), { minLength: width * height, maxLength: width * height }).map((draws) =>
+        Array.from({ length: height }, (_, row) =>
+          draws
+            .slice(row * width, (row + 1) * width)
+            .map((draw) => (draw < darkShare ? "#" : "."))
+            .join(""),
+        ),
+      ),
+    }),
+  );
+
 describe("tools property tests", () => {
   // Feature: 07-kiro-power, Property 1: validate_stack agrees with the gate, in both text forms
   // Validates: Requirements 6.3, 6.4, 6.7, 14.2
@@ -671,6 +705,41 @@ describe("tools property tests", () => {
     for (const [name, count] of Object.entries(seen)) if (name !== "blank") expect(count, name).toBeGreaterThan(0);
   }, 600_000);
 
-  // Properties 5 and 6 are added here by tasks 5.3 and 5.4, each as its own `it` with
-  // its own `// Feature: 07-kiro-power, Property <n>: <title>` comment and its own generators.
+  // Feature: 07-kiro-power, Property 5: sprites set exactly their cells
+  // Validates: Requirements 11.1, 11.4
+  // The expected layer is built from the sprite alone: the base (0 for a card, 1 for a background),
+  // then state 2 at every `#` cell and state 1 at every `.` cell, counted from the sprite's position.
+  it("Property 5: sprites set exactly their cells", async () => {
+    const seen = { card: 0, background: 0, allDark: 0, allLight: 0, mixed: 0, singleCell: 0, atEdge: 0 };
+    await fc.assert(
+      fc.asyncProperty(spriteCaseArb, async ({ layer, x, y, rows }) => {
+        const base = layer === "card" ? 0 : 1;
+        const expected = new Uint8Array(TOTAL_PIXELS).fill(base);
+        rows.forEach((row, dy) => {
+          for (let dx = 0; dx < row.length; dx++) expected[(y + dy) * BITMAP_WIDTH + x + dx] = row[dx] === "#" ? 2 : 1;
+        });
+
+        const drawn = await callTool("draw_layer", { layer, commands: [{ op: "sprite", x, y, rows }] });
+        expect(drawn.isError).toBe(false);
+        expect(drawn.json.ok).toBe(true);
+        expect(drawn.json.layer).toBe(layer);
+        // One boolean for the 175,104 states, so a failure stays readable.
+        expect(Buffer.from(decodeBitmapRLE(drawn.json.rleData, base)).equals(Buffer.from(expected))).toBe(true);
+
+        seen[layer]++;
+        const joined = rows.join("");
+        if (!joined.includes(".")) seen.allDark++;
+        else if (!joined.includes("#")) seen.allLight++;
+        else seen.mixed++;
+        if (joined.length === 1) seen.singleCell++;
+        if (x + rows[0].length === BITMAP_WIDTH || y + rows.length === BITMAP_HEIGHT || x === 0 || y === 0) seen.atEdge++;
+      }),
+      { numRuns: NUM_RUNS },
+    );
+    // The generators must reach every branch, or the property would pass without testing it.
+    for (const [name, count] of Object.entries(seen)) if (name !== "singleCell") expect(count, name).toBeGreaterThan(0);
+  }, 300_000);
+
+  // Property 6 is added here by task 5.4, as its own `it` with its own
+  // `// Feature: 07-kiro-power, Property 6: <title>` comment and its own generators.
 });
