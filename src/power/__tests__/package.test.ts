@@ -1,6 +1,7 @@
 /// <reference types="node" />
-// The power package (spec 07 Requirements 1.1 to 1.7, 2.1 to 2.3; design §Power package, §Licence
-// files): plugin.json, mcp.json, the folder entries and the licence texts.
+// The power package (spec 07 Requirements 1.1 to 1.7, 2.1 to 2.3, 12.1, 13.1; design §Power package,
+// §Licence files, §Skills): plugin.json, mcp.json, the folder entries, the licence texts and the
+// skill front matter.
 
 import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
@@ -218,7 +219,36 @@ function skillFrontMatter(skill: string): Record<string, string> {
   return fields;
 }
 
-describe("skill front matter (Requirement 12.1)", () => {
+describe("skills folder (Requirement 1.1)", () => {
+  it("is at the power's root and holds exactly the two skill folders, each with a SKILL.md", () => {
+    const skills = join(POWER_DIR, "skills");
+    expect(lstatSync(skills).isDirectory()).toBe(true);
+    expect(readdirSync(skills).sort()).toEqual(["author-hexcard-stack", "write-hextalk"]);
+    for (const skill of ["author-hexcard-stack", "write-hextalk"]) {
+      expect(lstatSync(join(skills, skill)).isDirectory(), skill).toBe(true);
+      expect(lstatSync(join(skills, skill, "SKILL.md")).isFile(), skill).toBe(true);
+    }
+  });
+});
+
+describe("skill front matter (Requirements 12.1, 13.1)", () => {
+  it("write-hextalk has only a name equal to its folder and a description of the required words", () => {
+    const fields = skillFrontMatter("write-hextalk");
+    expect(Object.keys(fields)).toEqual(["name", "description"]);
+    expect(fields.name).toBe("write-hextalk");
+    expect(fields.name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    expect(fields.name.length).toBeLessThanOrEqual(64);
+    const description = fields.description;
+    expect(description.length).toBeGreaterThanOrEqual(1);
+    expect(description.length).toBeLessThanOrEqual(1024);
+    expect(description).toContain("HexTalk");
+    expect(description).toContain("HexCard");
+    // A form of each verb: write, writes, writing, written; check, checks, ...; fix, fixes, ...
+    for (const verb of ["writ", "check", "fix"]) expect(description).toMatch(new RegExp(`\\b${verb}`, "i"));
+    // Each word, a plural form counting; \b keeps "HexCard" from counting as "card".
+    for (const word of ["button", "field", "card", "background", "stack"]) expect(description).toMatch(new RegExp(`\\b${word}s?\\b`, "i"));
+  });
+
   it("author-hexcard-stack has only a name equal to its folder and a description of the required words", () => {
     const fields = skillFrontMatter("author-hexcard-stack");
     expect(Object.keys(fields)).toEqual(["name", "description"]);

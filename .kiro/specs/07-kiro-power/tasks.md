@@ -158,7 +158,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npm run build:power`, `npx tsc -b`, `npx vitest --run`
     - _Requirements: 10.4, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, 12.9, 12.10, 12.11, 17.4, 17.5_
 
-  - [ ] 6.2 Write the write-hextalk skill
+  - [x] 6.2 Write the write-hextalk skill
     - `powers/hexcard/skills/write-hextalk/SKILL.md`: the front matter and the sections of design §Skills, covering Requirements 13.3 to 13.6; `references/grammar.md` (design spec §4.1 verbatim, named in `SKILL.md`)
     - A mistake example for every case of Requirement 13.4, each message copied from an actual `compile_hextalk` call; the `field N` / `button N` example followed by its `hexcard:canonical` block
     - Tests: `skills.test.ts` gains this skill (HexTalk, mistake and canonical-form blocks, failure when it holds no HexTalk example or no mistake example, drift of `grammar.md` against design spec §4.1); `package.test.ts` gains the front matter of Requirement 13.1 and the rest of Requirement 1.1 (`skills/` holds exactly the two skill folders)

@@ -1,7 +1,7 @@
 /// <reference types="node" />
-// The skills of the power (spec 07 Requirements 10.4, 12.2 to 12.11, 17.4; design §Skills): every
-// marked skill example run through the tools, and the reference files checked for drift against
-// design spec §2.1, PATTERNS, TEXT_SIZE_TABLE and the cmaps of the bundled fonts.
+// The skills of the power (spec 07 Requirements 10.4, 12.2 to 12.11, 13.2, 13.4, 17.4; design
+// §Skills): every marked skill example run through the tools, and the reference files checked for
+// drift against design spec §2.1 and §4.1, PATTERNS, TEXT_SIZE_TABLE and the cmaps of the bundled fonts.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -16,6 +16,7 @@ import { FONTS, makeCaller } from "./toolFixtures.ts";
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SKILLS_DIR = join(REPO_ROOT, "powers", "hexcard", "skills");
 const AUTHOR_SKILL = join(SKILLS_DIR, "author-hexcard-stack");
+const WRITE_SKILL = join(SKILLS_DIR, "write-hextalk");
 
 const { call } = makeCaller();
 
@@ -39,6 +40,8 @@ interface FencedBlock {
   body: string;
   /** 1-based line of the opening fence. */
   line: number;
+  /** The first non-blank line after the closing fence, if any (a mistake example's error line). */
+  nextLine: string | undefined;
 }
 
 /** The fenced code blocks of a Markdown text (CommonMark fences of ``` or ~~~, at most 3 spaces of indent). */
@@ -52,24 +55,31 @@ function fencedBlocks(text: string, where: string): FencedBlock[] {
     const close = new RegExp(`^ {0,3}${fence[0] === "`" ? "`" : "~"}{${fence.length},}\\s*$`);
     const end = lines.findIndex((line, j) => j > i && close.test(line));
     if (end < 0) throw new Error(`${where}:${i + 1}: unclosed fenced block`);
-    blocks.push({ info: open[2].trim(), body: lines.slice(i + 1, end).join("\n"), line: i + 1 });
+    const nextLine = lines.slice(end + 1).find((line) => line.trim() !== "");
+    blocks.push({ info: open[2].trim(), body: lines.slice(i + 1, end).join("\n"), line: i + 1, nextLine });
     i = end;
   }
   return blocks;
 }
 
 interface SkillExample {
+  /** The info string's first word, such as `json` or `hextalk`. */
+  language: string;
   kind: string;
   attributes: Record<string, string>;
   body: string;
   /** `<file relative to skills/>:<line>`, for failure messages. */
   where: string;
+  /** The first non-blank line after the block. */
+  nextLine: string | undefined;
+  /** The info string of the next fenced block of the same file, marked or not. */
+  nextBlockInfo: string | undefined;
 }
 
 /** The marked examples of a fenced-block list: info string `<language> hexcard:<kind> [key=value ...]`. */
 function examplesOf(blocks: readonly FencedBlock[], file: string): SkillExample[] {
   const examples: SkillExample[] = [];
-  for (const block of blocks) {
+  for (const [index, block] of blocks.entries()) {
     const words = block.info.split(/\s+/).filter((word) => word !== "");
     const where = `${file}:${block.line}`;
     const markerAt = words.findIndex((word) => word.startsWith("hexcard:"));
@@ -81,7 +91,15 @@ function examplesOf(blocks: readonly FencedBlock[], file: string): SkillExample[
       if (pair === null) throw new Error(`${where}: "${word}" is not a key=value attribute`);
       attributes[pair[1]] = pair[2];
     }
-    examples.push({ kind: words[1].slice("hexcard:".length), attributes, body: block.body, where });
+    examples.push({
+      language: words[0],
+      kind: words[1].slice("hexcard:".length),
+      attributes,
+      body: block.body,
+      where,
+      nextLine: block.nextLine,
+      nextBlockInfo: blocks[index + 1]?.info,
+    });
   }
   return examples;
 }
@@ -106,6 +124,15 @@ describe("skill example reader", () => {
       ["draw", { id: "a" }, "[]"],
     ]);
     expect(() => fencedBlocks("```json\n{}", "sample.md")).toThrow(/unclosed/);
+  });
+
+  it("gives each marked block the next non-blank line and the next block's info string", () => {
+    const text = ["```hextalk hexcard:mistake", "x", "```", "", "compile_hextalk: line 1, column 1: m", "", "```hextalk hexcard:hextalk", "y", "```"].join("\n");
+    const examples = examplesOf(fencedBlocks(text, "sample.md"), "sample.md");
+    expect(examples.map((example) => [example.language, example.kind, example.nextLine, example.nextBlockInfo])).toEqual([
+      ["hextalk", "mistake", "compile_hextalk: line 1, column 1: m", "hextalk hexcard:hextalk"],
+      ["hextalk", "hextalk", undefined, undefined],
+    ]);
   });
 });
 
@@ -287,5 +314,166 @@ describe("author-hexcard-stack statements", () => {
 
   it("recommends printable ASCII for all card text (Requirement 12.9)", () => {
     expect(skillProse()).toContain("Use printable ASCII (U+0020 to U+007E) for all text a card shows");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// write-hextalk: the examples (Requirements 13.4, 17.4)
+// ---------------------------------------------------------------------------------------------
+
+/** A mistake example's stated error line (design §Skills). */
+const STATED_ERROR = /^compile_hextalk: line (\d+), column (\d+): (.*)$/;
+
+interface Mistake {
+  wrong: string;
+  message: string;
+  fix: string;
+}
+
+const BUILT_IN_FUNCTIONS = new Set(["random", "round", "trunc", "abs", "length", "min", "max"]);
+/** A layer word in front of a part reference (grammar: CardWord | BgWord). */
+const LAYER_WORD = String.raw`(?:card|cd|background|bkgnd|bg)`;
+const withoutLayerWord = (kind: string): RegExp => new RegExp(String.raw`(?<!\b${LAYER_WORD} )\b${kind} \d`, "i");
+
+/** The cases of Requirement 13.4, each recognised from a mistake example's wrong script, message and fix. */
+const MISTAKE_CASES: ReadonlyArray<readonly [string, (mistake: Mistake) => boolean]> = [
+  ["an end naming another handler", (m) => /^expected "end \w+" but found "end \w+"$/.test(m.message)],
+  ["pass naming another message", (m) => /^\s*pass\b/m.test(m.wrong) && m.message.startsWith("pass must name the enclosing handler")],
+  ["exit naming another handler", (m) => /\bexit\b/.test(m.wrong) && m.message.startsWith("exit must name the enclosing handler")],
+  ["else if on one line", (m) => /^\s*else if\b/m.test(m.wrong)],
+  ["a one-line if ... then ... else", (m) => /^\s*if\b.*\bthen\b.*\S.*\belse\b/m.test(m.wrong)],
+  ["a quote inside a string literal, fixed with quote", (m) => !/\bquote\b/.test(m.wrong) && /& quote &/.test(m.fix)],
+  ["send", (m) => /^\s*send\b/m.test(m.wrong) && m.message === 'unknown command "send"'],
+  ["do", (m) => /^\s*do\b/m.test(m.wrong) && m.message === 'unknown command "do"'],
+  [
+    "a user-defined function",
+    (m) => /^\s*function\b/m.test(m.wrong) || [...m.wrong.matchAll(/\b([A-Za-z]\w*)\(/g)].some((call) => !BUILT_IN_FUNCTIONS.has(call[1].toLowerCase())),
+  ],
+  ["a chunk expression", (m) => /\b(?:char|word|item|line) \S+ of\b/.test(m.wrong)],
+  ["a reserved word as a variable name", (m) => m.message.startsWith("expected a variable or a field but found ")],
+  ["a second handler with the same name", (m) => /^handler ".+" is already defined in this script$/.test(m.message)],
+];
+
+describe("write-hextalk examples (Requirements 13.4, 17.4)", () => {
+  const examples = skillExamples(WRITE_SKILL);
+  const hexTalks = examples.filter((example) => example.kind === "hextalk");
+  const mistakes = examples.filter((example) => example.kind === "mistake");
+  const canonicals = examples.filter((example) => example.kind === "canonical");
+
+  it("uses only the hextalk, mistake and canonical markers, each in a hextalk block", () => {
+    for (const example of examples) {
+      expect(["hextalk", "mistake", "canonical"], example.where).toContain(example.kind);
+      expect(example.language, example.where).toBe("hextalk");
+    }
+  });
+
+  it("holds at least one HexTalk example and one mistake example", () => {
+    expect(hexTalks.length, "write-hextalk holds no HexTalk example").toBeGreaterThan(0);
+    expect(mistakes.length, "write-hextalk holds no mistake example").toBeGreaterThan(0);
+  });
+
+  it("passes every HexTalk example through compile_hextalk with ok true", async () => {
+    for (const example of hexTalks) {
+      const result = await call("compile_hextalk", { source: example.body });
+      expect(result.isError, example.where).toBe(false);
+      expect(result.json, example.where).toMatchObject({ ok: true });
+    }
+  });
+
+  /** Each mistake example with its stated error checked against compile_hextalk and its fix block. */
+  async function checkedMistakes(): Promise<Mistake[]> {
+    const checked: Mistake[] = [];
+    for (const [index, example] of examples.entries()) {
+      if (example.kind !== "mistake") continue;
+      const stated = STATED_ERROR.exec(example.nextLine ?? "");
+      expect(stated, `${example.where}: the next non-blank line must read "compile_hextalk: line L, column C: <message>"`).not.toBeNull();
+      const result = await call("compile_hextalk", { source: example.body });
+      expect(result.isError, example.where).toBe(false);
+      expect(result.json.ok, example.where).toBe(false);
+      expect(result.json.compileErrors, `${example.where}: compile_hextalk must return exactly the stated error`).toEqual([
+        { line: Number(stated![1]), column: Number(stated![2]), message: stated![3] },
+      ]);
+      expect(example.nextBlockInfo?.split(/\s+/).slice(0, 2), `${example.where}: the next fenced block must be the fix, a hextalk hexcard:hextalk block`).toEqual([
+        "hextalk",
+        "hexcard:hextalk",
+      ]);
+      // The fix is the next marked example: the block right after, as checked above. compile_hextalk accepts it (test above).
+      checked.push({ wrong: example.body, message: stated![3], fix: examples[index + 1].body });
+    }
+    return checked;
+  }
+
+  it("gives every mistake example exactly the one error the skill states, followed by its fixed script", async () => {
+    expect((await checkedMistakes()).length).toBe(mistakes.length);
+  });
+
+  it("holds a mistake example for every case of Requirement 13.4", async () => {
+    const checked = await checkedMistakes();
+    for (const [name, matches] of MISTAKE_CASES) {
+      expect(checked.some(matches), `write-hextalk holds no mistake example for ${name}`).toBe(true);
+    }
+  });
+
+  it("gives every canonical block exactly the canonical form of its HexTalk example", async () => {
+    const byId = new Map<string, SkillExample>();
+    for (const example of hexTalks) {
+      const id = example.attributes.id;
+      if (id === undefined) continue;
+      expect(byId.has(id), `${example.where}: the HexTalk example id ${id} is used twice`).toBe(false);
+      byId.set(id, example);
+    }
+    expect(canonicals.length, "write-hextalk holds no canonical-form block").toBeGreaterThan(0);
+    for (const canonical of canonicals) {
+      const source = byId.get(canonical.attributes.of);
+      expect(source, `${canonical.where}: no HexTalk example has the id ${canonical.attributes.of}`).toBeDefined();
+      const result = await call("compile_hextalk", { source: source!.body });
+      // A fenced block's body has no final line break; a non-empty canonical form ends with one.
+      expect(`${canonical.body}\n`, `${canonical.where}: differs from the canonical form compile_hextalk returns`).toBe(result.json.canonical);
+    }
+  });
+
+  it("shows field N and button N without a layer word next to the canonical form with their layer words", () => {
+    const sources = new Map(hexTalks.map((example) => [example.attributes.id, example.body]));
+    const shown = canonicals.some((canonical) => {
+      const source = sources.get(canonical.attributes.of) ?? "";
+      return (
+        withoutLayerWord("field").test(source) &&
+        withoutLayerWord("button").test(source) &&
+        /\bbg field \d/.test(canonical.body) &&
+        /\bcard button \d/.test(canonical.body)
+      );
+    });
+    expect(shown, "write-hextalk holds no field N / button N example followed by its canonical form").toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// write-hextalk: the reference file (Requirement 13.2)
+// ---------------------------------------------------------------------------------------------
+
+/** Design spec §4.1: the lines after the `### 4.1.` heading and before the `### 4.2.` heading. */
+function designSection41(): string {
+  const lines = readFileSync(join(REPO_ROOT, "hexcard_design_spec.md"), "utf8").split("\n");
+  const heading = lines.findIndex((line) => line.startsWith("### 4.1."));
+  const next = lines.findIndex((line, i) => i > heading && line.startsWith("### 4.2."));
+  expect(heading).toBeGreaterThanOrEqual(0);
+  expect(next).toBeGreaterThan(heading);
+  return trimBlankLines(lines.slice(heading + 1, next));
+}
+
+const readWriteSkill = (path: string): string => readFileSync(join(WRITE_SKILL, path), "utf8");
+
+describe("write-hextalk reference file", () => {
+  it("references/grammar.md holds design spec §4.1 verbatim after its source line (Requirement 13.2)", () => {
+    const lines = readWriteSkill("references/grammar.md").split("\n");
+    expect(lines[0]).toMatch(/^Source: `hexcard_design_spec\.md` §4\.1/);
+    expect(lines[1]).toBe("");
+    expect(trimBlankLines(lines.slice(1)), "references/grammar.md differs from hexcard_design_spec.md §4.1").toBe(designSection41());
+  });
+
+  it("SKILL.md names references/grammar.md as the file that holds the HexTalk grammar", () => {
+    const prose = readWriteSkill("SKILL.md").replace(/\s+/g, " ");
+    expect(prose).toContain("The file `references/grammar.md` holds the HexTalk grammar");
+    expect(statSync(join(WRITE_SKILL, "references/grammar.md")).isFile()).toBe(true);
   });
 });
