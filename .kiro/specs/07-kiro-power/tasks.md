@@ -44,7 +44,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npx tsc -b`, `npx vitest --run`
     - _Requirements: 2.7, 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 5.6, 5.7, 17.1_
 
-  - [ ] 3.2 Implement stack reading and the tools validate_stack, compile_hextalk and conjure_script
+  - [x] 3.2 Implement stack reading and the tools validate_stack, compile_hextalk and conjure_script
     - `src/power/stackText.ts`: `MAX_STACK_TEXT` and `readAndGate` with the length, JSON or `.hexstack` reading and gate steps of design §stackText.ts, through `listStackErrors` of task 2
     - `src/power/tools/validateStack.ts`, `compileHexTalk.ts` and `conjureScript.ts` (design §tools/validateStack.ts, §tools/compileHexTalk.ts, §tools/conjureScript.ts), with the result shapes of design §Data Models; `conjure_script` imports `conjureLocally`, never `conjureScript`
     - `src/power/tools/index.ts`: `createPowerTools` returning these three tools in this order, with the titles, descriptions and inputSchemas of design §tools/index.ts and §Tool input schemas and the four annotations of Requirement 4.3

@@ -3,6 +3,9 @@
 // schema that uses every keyword of the subset.
 import { describe, expect, it } from "vitest";
 import { checkArguments, formatArgPath, type ArgSchema } from "../argumentCheck.ts";
+import { MAX_STACK_TEXT } from "../stackText.ts";
+import { createPowerTools } from "../tools/index.ts";
+import { makeCaller } from "./toolFixtures.ts";
 
 const rect: ArgSchema = {
   type: "object",
@@ -192,5 +195,96 @@ describe("checkArguments", () => {
       checkArguments({ type: "object", properties: {} } as unknown as ArgSchema, {}),
     ).toThrow(/additionalProperties/);
     expect(() => checkArguments({ type: "string", pattern: "^a.*$" }, "a")).toThrow(/unsupported pattern/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Task 3.2: the bounds of Requirement 5.3 for validate_stack, compile_hextalk and conjure_script,
+// checked the way the protocol handler checks them (the tool's own checkArguments, else the
+// generic checker on its inputSchema).
+// ---------------------------------------------------------------------------------------------
+describe("Requirement 5.3: argument bounds of validate_stack, compile_hextalk and conjure_script", () => {
+  const tools = createPowerTools();
+  const problems = (name: string, args: Record<string, unknown>): string[] => {
+    const tool = tools.find((candidate) => candidate.name === name);
+    if (tool === undefined) throw new Error(`no tool ${name}`);
+    return tool.checkArguments ? tool.checkArguments(args) : checkArguments(tool.inputSchema, args);
+  };
+
+  it("lists exactly the three tools, in order", () => {
+    expect(tools.map((tool) => tool.name)).toEqual(["validate_stack", "compile_hextalk", "conjure_script"]);
+  });
+
+  describe("validate_stack", () => {
+    it("accepts a stack of 4194304 characters, and treats one more as a read error, not an argument error", async () => {
+      expect(problems("validate_stack", { stack: "x".repeat(MAX_STACK_TEXT) })).toEqual([]);
+      expect(problems("validate_stack", { stack: "x".repeat(MAX_STACK_TEXT + 1) })).toEqual([]);
+      const { call } = makeCaller();
+      const past = await call("validate_stack", { stack: "x".repeat(MAX_STACK_TEXT + 1) });
+      expect(past.isError).toBe(true);
+      expect(past.json.errors).toEqual([`stack: The stack text has more than ${MAX_STACK_TEXT} characters`]);
+    });
+
+    it("counts the stack length in UTF-16 code units", async () => {
+      const { call } = makeCaller();
+      // 2,097,152 emoji are 4,194,304 code units; one more emoji is 4,194,306.
+      const emoji = "\u{1F600}";
+      expect((await call("validate_stack", { stack: emoji.repeat(MAX_STACK_TEXT / 2) })).json.errors[0]).not.toMatch(/more than/);
+      expect((await call("validate_stack", { stack: emoji.repeat(MAX_STACK_TEXT / 2 + 1) })).json.errors[0]).toMatch(/more than/);
+    });
+
+    it("requires a string stack, allows only a boolean hexstack, and rejects other arguments", () => {
+      expect(problems("validate_stack", {})).toEqual(["stack: is required"]);
+      expect(problems("validate_stack", { stack: 1 })).toEqual(["stack: must be a string"]);
+      expect(problems("validate_stack", { stack: "" })).toEqual([]);
+      expect(problems("validate_stack", { stack: "{}", hexstack: true })).toEqual([]);
+      expect(problems("validate_stack", { stack: "{}", hexstack: false })).toEqual([]);
+      expect(problems("validate_stack", { stack: "{}", hexstack: 1 })).toEqual(["hexstack: must be a boolean"]);
+      expect(problems("validate_stack", { stack: "{}", hexstack: "true" })).toEqual(["hexstack: must be a boolean"]);
+      expect(problems("validate_stack", { stack: "{}", url: "https://example.com" })).toEqual(["url: is not an allowed argument"]);
+    });
+  });
+
+  describe("compile_hextalk", () => {
+    it("accepts a source of 65536 characters and rejects 65537", () => {
+      expect(problems("compile_hextalk", { source: "x".repeat(65536) })).toEqual([]);
+      expect(problems("compile_hextalk", { source: "x".repeat(65537) })).toEqual(["source: must have at most 65536 characters"]);
+    });
+
+    it("counts UTF-16 code units, accepts the empty source, and requires a string source", () => {
+      expect(problems("compile_hextalk", { source: "\u{1F600}".repeat(32768) })).toEqual([]);
+      expect(problems("compile_hextalk", { source: "\u{1F600}".repeat(32769) })).toEqual(["source: must have at most 65536 characters"]);
+      expect(problems("compile_hextalk", { source: "" })).toEqual([]);
+      expect(problems("compile_hextalk", {})).toEqual(["source: is required"]);
+      expect(problems("compile_hextalk", { source: null })).toEqual(["source: must be a string"]);
+      expect(problems("compile_hextalk", { source: "", extra: true })).toEqual(["extra: is not an allowed argument"]);
+    });
+  });
+
+  describe("conjure_script", () => {
+    it("accepts a prompt of 600 characters and rejects 601", () => {
+      expect(problems("conjure_script", { prompt: "x".repeat(600) })).toEqual([]);
+      expect(problems("conjure_script", { prompt: "x".repeat(601) })).toEqual(["prompt: must have at most 600 characters"]);
+      expect(problems("conjure_script", { prompt: "\u{1F600}".repeat(300) })).toEqual([]);
+      expect(problems("conjure_script", { prompt: "\u{1F600}".repeat(301) })).toEqual(["prompt: must have at most 600 characters"]);
+    });
+
+    it("accepts each of the five object kinds, and rejects any value outside the set", () => {
+      for (const objectKind of ["button", "field", "card", "background", "stack"]) {
+        expect(problems("conjure_script", { prompt: "go next", objectKind })).toEqual([]);
+      }
+      const rule = ["objectKind: must be one of button, field, card, background, stack"];
+      for (const objectKind of ["Button", "part", "", "cards", " button"]) {
+        expect(problems("conjure_script", { prompt: "go next", objectKind })).toEqual(rule);
+      }
+      expect(problems("conjure_script", { prompt: "go next", objectKind: 1 })).toEqual(["objectKind: must be a string"]);
+    });
+
+    it("requires a string prompt and allows no other argument", () => {
+      expect(problems("conjure_script", {})).toEqual(["prompt: is required"]);
+      expect(problems("conjure_script", { prompt: "" })).toEqual([]);
+      expect(problems("conjure_script", { prompt: 5 })).toEqual(["prompt: must be a string"]);
+      expect(problems("conjure_script", { prompt: "go next", tier: 3 })).toEqual(["tier: is not an allowed argument"]);
+    });
   });
 });
