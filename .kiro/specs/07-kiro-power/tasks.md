@@ -52,7 +52,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
     - Verification: `npx tsc -b`, `npx vitest --run`
     - _Requirements: 4.3, 4.4, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 8.1, 8.2, 8.3, 8.4, 8.5, 14.1, 17.1_
 
-  - [ ] 3.3 Write the property test for Property 1
+  - [x] 3.3 Write the property test for Property 1
     - **Property 1: validate_stack agrees with the gate, in both text forms**
     - **Validates: Requirements 6.3, 6.4, 6.7, 14.2**
     - `src/power/__tests__/tools.property.test.ts`, at least 100 runs, with the comment `// Feature: 07-kiro-power, Property 1: validate_stack agrees with the gate, in both text forms`

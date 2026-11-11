@@ -1,5 +1,10 @@
 {
-  "pbtResults": {},
+  "pbtResults": {
+    "3.3 Write the property test for Property 1": {
+      "status": "passed",
+      "lastRunTimestamp": 1794383473254
+    }
+  },
   "executionHistory": {
     "1. Make the specification document changes": [
       {
@@ -32,6 +37,23 @@
         "executionId": "58550e1b-be84-47ff-a226-98be27181da6",
         "chatSessionId": "sess_df242355-8d14-4242-812a-2b5fb898ebee",
         "timestamp": 1794382649793
+      }
+    ],
+    "3.3 Write the property test for Property 1": [
+      {
+        "executionId": "7829591f-91b9-443b-a6dc-c1503af7d94d",
+        "chatSessionId": "sess_18025c5b-c2d3-464b-bbd9-ac25f318058a",
+        "timestamp": 1794382955417
+      },
+      {
+        "executionId": "7829591f-91b9-443b-a6dc-c1503af7d94d",
+        "chatSessionId": "sess_18025c5b-c2d3-464b-bbd9-ac25f318058a",
+        "timestamp": 1794383489504
+      },
+      {
+        "executionId": "7d587adc-58eb-4b11-908a-59bb77849117",
+        "chatSessionId": "sess_18025c5b-c2d3-464b-bbd9-ac25f318058a",
+        "timestamp": 1794388722810
       }
     ]
   }
