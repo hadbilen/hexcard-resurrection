@@ -83,7 +83,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
 
 - [ ] 4. Implement render_card with the Node text backend, and check it in headless Chrome
 
-  - [ ] 4.1 Implement the TrueType reader and the Node text backend
+  - [x] 4.1 Implement the TrueType reader and the Node text backend
     - `src/power/trueType.ts`: `TrueTypeError`, `parseTrueType` (the tables, the cmap subtable order, simple and composite glyphs, the rejected inputs) and `fillOutline` (nonzero winding sampled at pixel centres) (design §trueType.ts)
     - `src/power/nodeTextBackend.ts`: `parseFaces`, `faceOf`, `createNodeTextBackend` with `measureText` and `drawText` only, `coveredCodePoints` and `uncoveredCharacters` (design §nodeTextBackend.ts)
     - `src/power/fontBytes.ts`: `bundledFontBytes` through `import.meta.glob` with `?inline` (design §fontBytes.ts)
