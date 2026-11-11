@@ -359,6 +359,11 @@ function buttonIcon(part: HexButtonPart, ctx: PartDrawContext): Uint8Array | nul
   return pixels;
 }
 
+/** Spec 07 Requirement 5.5: forgets every decoded icon (render_card calls it after every call). */
+export function clearIconCache(): void {
+  iconCache.clear();
+}
+
 /** Set bits become dark where `allow` permits (inside pixels, dimming); clear bits write nothing. */
 function blitIcon(frame: Uint8Array, clip: Clip, icon: Uint8Array, ox: number, oy: number, allow: (x: number, y: number) => boolean): void {
   for (let iy = 0; iy < ICON_SIZE; iy++) {

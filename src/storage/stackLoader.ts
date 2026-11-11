@@ -15,7 +15,12 @@
  */
 import type { HexHistory } from "../core/history.ts";
 import type { HexStack } from "../core/schema.ts";
-import { validateStack } from "../core/stackValidator.ts";
+import {
+  formatGateError,
+  listStackValidationErrors,
+  type GateError,
+  type StackValidationReport,
+} from "../core/stackValidator.ts";
 import type { HexStore } from "../core/store.ts";
 import { clearDecodedLayerCache } from "../engine/graphics/bitmapCanvas.ts";
 import { decodeBitmapRLE } from "../engine/graphics/rleCodec.ts";
@@ -48,24 +53,36 @@ function describe(error: unknown): string {
 }
 
 /**
- * Steps 1 and 2 without side effects: validates `input` and decodes every bitmap layer.
- * Returns the validated stack (sharing no objects with `input`) or the first error.
+ * Spec 07 Requirement 6.4: the validation errors, then (when the schema passed) every layer that
+ * decodeBitmapRLE rejects, background layers before card layers. No side effects.
  */
-export function checkStack(input: unknown): CheckStackResult {
-  const validated = validateStack(input);
-  if (!validated.ok) return validated;
-  const { stack } = validated;
-  const layers: Array<[path: string, rleData: string, emptyFill: 0 | 1]> = [
-    ...stack.backgrounds.map((background, i): [string, string, 0 | 1] => [`backgrounds[${i}].bitmap.rleData`, background.bitmap.rleData, 1]),
-    ...stack.cards.map((card, i): [string, string, 0 | 1] => [`cards[${i}].bitmap.rleData`, card.bitmap.rleData, 0]),
+export function listStackErrors(input: unknown): StackValidationReport {
+  const report = listStackValidationErrors(input);
+  const { stack } = report;
+  if (stack === null) return report;
+  const errors: GateError[] = [...report.errors];
+  const layers: Array<[path: readonly PropertyKey[], rleData: string, emptyFill: 0 | 1]> = [
+    ...stack.backgrounds.map((background, i): [PropertyKey[], string, 0 | 1] => [["backgrounds", i, "bitmap", "rleData"], background.bitmap.rleData, 1]),
+    ...stack.cards.map((card, i): [PropertyKey[], string, 0 | 1] => [["cards", i, "bitmap", "rleData"], card.bitmap.rleData, 0]),
   ];
   for (const [path, rleData, emptyFill] of layers) {
     try {
       decodeBitmapRLE(rleData, emptyFill);
     } catch (error) {
-      return { ok: false, error: `${path}: ${describe(error)}` };
+      errors.push({ path, message: [describe(error)] });
     }
   }
+  return { errors, stack };
+}
+
+/**
+ * Steps 1 and 2 without side effects: validates `input` and decodes every bitmap layer.
+ * Returns the validated stack (sharing no objects with `input`) or the first error.
+ */
+export function checkStack(input: unknown): CheckStackResult {
+  const { errors, stack } = listStackErrors(input);
+  if (errors.length > 0) return { ok: false, error: formatGateError(errors[0]) };
+  if (stack === null) throw new Error("listStackErrors returned neither an error nor a stack");
   return { ok: true, stack };
 }
 

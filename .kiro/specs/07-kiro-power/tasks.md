@@ -18,7 +18,7 @@ Every task ends with `npx tsc -b` and `npx vitest --run`, and the report quotes 
   - Verification: `npx tsc -b`, `npx vitest --run`
   - _Requirements: 14.6, 15.1, 15.2, 15.3, 15.4, 15.5_
 
-- [ ] 2. Make the changes to existing modules
+- [x] 2. Make the changes to existing modules
   - Before any module changes, copy the code that Properties 1 and 4 and the listing tests compare against ("kept in the test as an oracle", design §Correctness Properties and §Testing Strategy) into test helpers: `src/core/__tests__/stackValidatorOracle.ts` (today's `stackValidator.ts`, unchanged apart from import paths), `src/storage/__tests__/checkStackOracle.ts` (today's `checkStack`, calling that oracle) and `src/engine/graphics/__tests__/rectLoopOracle.ts` (today's Rect loop of `drawShape`). Tasks 3.3 and 5.2 reuse them
   - `src/core/stackValidator.ts`: `GateMessagePiece`, `GateError`, `StackValidationReport`, `formatGateError` and `listStackValidationErrors` with the error order of design §stackValidator.ts; the structural checks become collectors with unchanged messages and walks; `validateStack` returns the first entry, formatted
   - `src/storage/stackLoader.ts`: `listStackErrors` (layer decode errors after the validation errors, backgrounds before cards); `checkStack` returns the first entry (design §stackLoader.ts)

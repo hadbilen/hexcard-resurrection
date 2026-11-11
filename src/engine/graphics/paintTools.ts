@@ -146,6 +146,30 @@ export function bresenhamLine(x0: number, y0: number, x1: number, y1: number, pl
   }
 }
 
+/**
+ * Spec 07 Requirement 11.6: the pixels the Rect tool sets for a drag from (x0, y0) to (x1, y1), clipped
+ * to the canvas: the 1-pixel frame of the box, or the whole box when `filled`. `plot` applies the pattern.
+ * Pixels are visited row by row, top to bottom, each row left to right.
+ */
+export function plotRectShape(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  filled: boolean,
+  plot: (x: number, y: number) => void,
+): void {
+  const left = Math.min(x0, x1);
+  const right = Math.max(x0, x1);
+  const top = Math.min(y0, y1);
+  const bottom = Math.max(y0, y1);
+  for (let y = Math.max(0, top); y <= Math.min(H - 1, bottom); y++) {
+    for (let x = Math.max(0, left); x <= Math.min(W - 1, right); x++) {
+      if (filled || x === left || x === right || y === top || y === bottom) plot(x, y);
+    }
+  }
+}
+
 /** Offsets of a stamp of the given diameter, relative to the pointer position. */
 function stampOffsets(size: number, round: boolean): Array<[number, number]> {
   const offsets: Array<[number, number]> = [];
@@ -385,15 +409,7 @@ export function createPaintController(options: PaintControllerOptions): PaintCon
       bresenhamLine(s.start.x, s.start.y, to.x, to.y, put);
       return;
     }
-    const x0 = Math.min(s.start.x, to.x);
-    const x1 = Math.max(s.start.x, to.x);
-    const y0 = Math.min(s.start.y, to.y);
-    const y1 = Math.max(s.start.y, to.y);
-    for (let y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) {
-      for (let x = Math.max(0, x0); x <= Math.min(W - 1, x1); x++) {
-        if (s.settings.rectFilled || x === x0 || x === x1 || y === y0 || y === y1) put(x, y);
-      }
-    }
+    plotRectShape(s.start.x, s.start.y, to.x, to.y, s.settings.rectFilled, put);
   }
 
   /** Requirement 7.4: 4-connected region of equal composed colour, filled with the pattern. */
